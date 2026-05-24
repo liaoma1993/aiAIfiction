@@ -14,6 +14,10 @@ from app.models.outline import Outline, OutlineNode
 from app.models.generation_task import GenerationTask, TaskLog
 from app.models.chapter import Chapter
 from app.models.chapter_version import ChapterVersion
+from app.models.story_state_trail import StoryStateTrail
+from app.models.content_audit import ContentAuditLog
+from app.models.audit_log import AuditLog
+from app.models.template import Template
 
 __all__ = [
     "BaseModel",
@@ -28,4 +32,8 @@ __all__ = [
     "TaskLog",
     "Chapter",
     "ChapterVersion",
+    "StoryStateTrail",
+    "ContentAuditLog",
+    "AuditLog",
+    "Template",
 ]

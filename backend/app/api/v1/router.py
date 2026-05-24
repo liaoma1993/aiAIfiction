@@ -11,6 +11,7 @@ from app.api.v1.chapters import router as chapters_router
 from app.api.v1.characters import router as characters_router
 from app.api.v1.outlines import router as outlines_router
 from app.api.v1.projects import router as projects_router
+from app.api.v1.templates import router as templates_router
 from app.api.v1.world_settings import router as world_settings_router
 
 api_router = APIRouter()
@@ -22,6 +23,7 @@ api_router.include_router(world_settings_router)
 api_router.include_router(characters_router)
 api_router.include_router(outlines_router)
 api_router.include_router(chapters_router)
+api_router.include_router(templates_router)
 
 
 @api_router.get("/health")
