@@ -5,7 +5,8 @@ API v1
 """
 
 from app.api.v1.auth import router as auth_router
+from app.api.v1.chapters import router as chapters_router
 from app.api.v1.outlines import router as outlines_router
 from app.api.v1.projects import router as projects_router
 
-__all__ = ["auth_router", "projects_router", "outlines_router"]
+__all__ = ["auth_router", "projects_router", "outlines_router", "chapters_router"]
