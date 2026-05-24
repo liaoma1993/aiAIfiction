@@ -1,0 +1,164 @@
+# ============================================================
+# AI Fiction - 多服务编排配置 (生产环境覆盖)
+# 使用方式: docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+# 注意事项:
+#   - 生产环境必须设置环境变量: POSTGRES_PASSWORD, REDIS_PASSWORD, SECRET_KEY
+#   - MinIO 密码建议修改: MINIO_SECRET_KEY
+#   - 所有数据库端口不对外暴露，仅通过 Docker 内部网络通信
+# ============================================================
+
+services:
+  # ---------- PostgreSQL（生产优化） ----------
+  postgres:
+    restart: always
+    ports: !reset []  # 不暴露端口到宿主机
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?err}  # 生产必须设置密码
+    deploy:
+      resources:
+        limits:
+          cpus: "2"
+          memory: 2G
+        reservations:
+          cpus: "0.5"
+          memory: 512M
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "5"
+
+  # ---------- Redis（生产优化） ----------
+  redis:
+    restart: always
+    ports: !reset []  # 不暴露端口
+    command: >
+      redis-server
+      --appendonly yes
+      --requirepass ${REDIS_PASSWORD:?err}
+      --maxmemory 512mb
+      --maxmemory-policy allkeys-lru
+    deploy:
+      resources:
+        limits:
+          cpus: "1"
+          memory: 1G
+        reservations:
+          cpus: "0.25"
+          memory: 256M
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "5"
+
+  # ---------- MinIO（生产优化） ----------
+  minio:
+    restart: always
+    ports: !reset []  # 不暴露端口到宿主机（后端通过 Docker 网络访问）
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY:?err}  # 生产必须设置密码
+    deploy:
+      resources:
+        limits:
+          cpus: "1"
+          memory: 1G
+        reservations:
+          cpus: "0.25"
+          memory: 256M
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "5"
+
+  # ---------- FastAPI 后端（生产） ----------
+  backend:
+    build:
+      context: ./backend
+      target: production
+    restart: always
+    ports:
+      - "${BACKEND_PORT:-8000}:8000"
+    volumes: !reset []  # 生产环境不使用挂载卷
+    # CMD 参数传递给 ENTRYPOINT 脚本中的 uvicorn
+    command: ["--workers", "4", "--limit-concurrency", "200"]
+    environment:
+      ENVIRONMENT: production
+      # 覆盖 Redis 连接 URL，包含生产环境密码
+      REDIS_URL: redis://:${REDIS_PASSWORD:?err}@redis:6379/0
+      CELERY_BROKER_URL: redis://:${REDIS_PASSWORD:?err}@redis:6379/1
+      CELERY_RESULT_BACKEND: redis://:${REDIS_PASSWORD:?err}@redis:6379/2
+    deploy:
+      resources:
+        limits:
+          cpus: "2"
+          memory: 2G
+        reservations:
+          cpus: "0.5"
+          memory: 512M
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "5"
+
+  # ---------- Celery Worker（生产） ----------
+  celery-worker:
+    build:
+      context: ./backend
+      target: production
+    restart: always
+    volumes: !reset []
+    # 覆盖 ENTRYPOINT（Celery 使用独立的入口，不经过 uvicorn 启动脚本）
+    entrypoint: ["celery"]
+    command: ["-A", "app.tasks", "worker", "--loglevel=warning", "--concurrency=8"]
+    environment:
+      ENVIRONMENT: production
+      REDIS_URL: redis://:${REDIS_PASSWORD:?err}@redis:6379/0
+      CELERY_BROKER_URL: redis://:${REDIS_PASSWORD:?err}@redis:6379/1
+      CELERY_RESULT_BACKEND: redis://:${REDIS_PASSWORD:?err}@redis:6379/2
+    deploy:
+      resources:
+        limits:
+          cpus: "2"
+          memory: 2G
+        reservations:
+          cpus: "0.5"
+          memory: 512M
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "5"
+
+  # ---------- Celery Beat（生产） ----------
+  celery-beat:
+    build:
+      context: ./backend
+      target: production
+    restart: always
+    volumes: !reset []
+    # 覆盖 ENTRYPOINT（Celery Beat 使用独立的入口）
+    entrypoint: ["celery"]
+    command: ["-A", "app.tasks", "beat", "--loglevel=info"]
+    environment:
+      ENVIRONMENT: production
+      CELERY_BROKER_URL: redis://:${REDIS_PASSWORD:?err}@redis:6379/1
+      CELERY_RESULT_BACKEND: redis://:${REDIS_PASSWORD:?err}@redis:6379/2
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 512M
+        reservations:
+          cpus: "0.1"
+          memory: 128M
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "5"
