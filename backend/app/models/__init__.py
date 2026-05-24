@@ -12,6 +12,8 @@ from app.models.world_setting import WorldSetting
 from app.models.character import Character
 from app.models.outline import Outline, OutlineNode
 from app.models.generation_task import GenerationTask, TaskLog
+from app.models.chapter import Chapter
+from app.models.chapter_version import ChapterVersion
 
 __all__ = [
     "BaseModel",
@@ -24,4 +26,6 @@ __all__ = [
     "OutlineNode",
     "GenerationTask",
     "TaskLog",
+    "Chapter",
+    "ChapterVersion",
 ]
