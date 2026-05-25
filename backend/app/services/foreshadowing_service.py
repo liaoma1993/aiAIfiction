@@ -4,6 +4,7 @@ AI Fiction - 伏笔管理服务
 提供伏笔计划的 CRUD、列表查询、完成度报告等服务。
 """
 
+import logging
 import uuid
 from collections import defaultdict
 from typing import Optional
@@ -11,10 +12,14 @@ from typing import Optional
 from sqlalchemy import func, select, desc
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.llm.provider_pool import pool as _llm_pool
 from app.models.foreshadowing_plan import ForeshadowingPlan
 from app.models.chapter import Chapter
+from app.models.outline import OutlineNode
 from app.schemas.foreshadowing import ForeshadowingCreate, ForeshadowingUpdate
 from app.utils.exceptions import ValidationException
+
+logger = logging.getLogger(__name__)
 
 
 def _model_to_dict(fs: ForeshadowingPlan) -> dict:
@@ -340,3 +345,126 @@ async def get_foreshadowing_report(
         "broken_chain": broken_chain,
         "suggestions": suggestions,
     }
+
+
+async def generate_foreshadowing_from_outline(
+    db: AsyncSession,
+    project_id: uuid.UUID,
+    nodes: list[OutlineNode],
+    project_genre: str = "",
+    project_brief: str = "",
+) -> list[ForeshadowingPlan]:
+    """LLM 辅助方法：根据大纲节点自动识别并生成伏笔计划
+
+    使用 LLM 分析大纲中的关键事件和剧情节点，识别潜在伏笔机会，
+    生成结构化的 ForeshadowingPlan 并持久化。
+
+    Args:
+        db: 数据库会话
+        project_id: 项目 ID
+        nodes: 大纲节点列表（按章节号排序）
+        project_genre: 小说类型
+        project_brief: 故事梗概
+
+    Returns:
+        创建成功的 ForeshadowingPlan 列表
+    """
+    if not nodes:
+        return []
+
+    # 组装大纲摘要供 LLM 分析
+    outline_text = ""
+    for node in nodes[:50]:  # 最多取前 50 个节点
+        outline_text += (
+            f"第{node.chapter_number}章 {node.title or ''}\n"
+            f"概要: {node.summary[:200]}\n"
+            f"关键事件: {', '.join(node.key_events[:5]) if node.key_events else '无'}\n"
+            f"伏笔项: {', '.join(node.foreshadowing_items[:3]) if node.foreshadowing_items else '无'}\n"
+            f"回收项: {', '.join(node.foreshadowing_resolved[:3]) if node.foreshadowing_resolved else '无'}\n\n"
+        )
+
+    try:
+        llm = _llm_pool.get_provider_for_stage("outline_gen")
+    except Exception:
+        logger.warning("No LLM provider available for foreshadowing generation")
+        return []
+
+    messages = [
+        {
+            "role": "system",
+            "content": (
+                "你是一个专业的小说伏笔规划师。请根据提供的大纲，识别并设计伏笔计划。"
+                "伏笔应贯穿全文，有明确的埋设和揭晓节点。"
+                "请以 JSON 数组格式返回伏笔计划列表。"
+            ),
+        },
+        {
+            "role": "user",
+            "content": (
+                f"小说类型：{project_genre}\n"
+                f"故事梗概：{project_brief[:500]}\n\n"
+                f"大纲内容：\n{outline_text[:8000]}\n\n"
+                "请分析以上大纲，设计 5-10 个伏笔计划。返回 JSON 数组格式：\n"
+                "[\n"
+                "  {\n"
+                '    "name": "伏笔名称",\n'
+                '    "description": "详细描述（这个伏笔要揭示什么）",\n'
+                '    "type": "clue/identity/prop/event/relationship",\n'
+                '    "importance": "critical/major/minor",\n'
+                '    "plant_chapter_number": 5,\n'
+                '    "plant_detail": "如何埋设的建议",\n'
+                '    "reveal_chapter_number": 25,\n'
+                '    "reveal_type": "gradual/dramatic/twist/flashback",\n'
+                '    "reveal_detail": "如何揭晓的建议",\n'
+                "  }\n"
+                "]\n"
+            ),
+        },
+    ]
+
+    try:
+        response = await llm.generate_json(
+            messages, temperature=0.6, max_tokens=2000
+        )
+    except Exception:
+        logger.exception("LLM foreshadowing generation failed")
+        return []
+
+    if not isinstance(response, list):
+        # 响应可能是 {"foreshadowings": [...]} 格式
+        if isinstance(response, dict):
+            response = response.get("foreshadowings", [])
+        if not isinstance(response, list):
+            return []
+
+    # 批量创建伏笔计划
+    created: list[ForeshadowingPlan] = []
+    for item in response:
+        if not isinstance(item, dict) or not item.get("name"):
+            continue
+        try:
+            plan = ForeshadowingPlan(
+                project_id=project_id,
+                name=item["name"],
+                description=item.get("description"),
+                type=item.get("type", "clue"),
+                importance=item.get("importance", "major"),
+                status="planned",
+                plant_chapter_number=item.get("plant_chapter_number"),
+                plant_detail=item.get("plant_detail"),
+                reveal_chapter_number=item.get("reveal_chapter_number"),
+                reveal_type=item.get("reveal_type"),
+                reveal_detail=item.get("reveal_detail"),
+            )
+            db.add(plan)
+            created.append(plan)
+        except Exception:
+            logger.exception("Failed to create foreshadowing plan: %s", item.get("name"))
+
+    if created:
+        await db.flush()
+        for plan in created:
+            await db.refresh(plan)
+
+    logger.info("Generated %d foreshadowing plans from outline", len(created))
+    return created
