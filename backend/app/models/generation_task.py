@@ -72,6 +72,12 @@ class GenerationTask(BaseModel):
         default=dict,
     )
 
+    precision_config: Mapped[dict | None] = mapped_column(
+        JSONB,
+        nullable=True,
+        comment='精细度控制配置: {preset, world_constraint_strictness, character_consistency_strictness, foreshadowing_tracking_precision, relationship_awareness, creativity_level, quality_threshold, style_intensity}',
+    )
+
     error_message: Mapped[str | None] = mapped_column(
         Text,
         nullable=True,
@@ -148,7 +154,8 @@ class TaskLog(Base):
         nullable=False,
     )
 
-    metadata: Mapped[dict] = mapped_column(
+    meta_data: Mapped[dict] = mapped_column(
+        "metadata",
         JSONB,
         nullable=False,
         default=dict,
