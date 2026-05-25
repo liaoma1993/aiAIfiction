@@ -5,11 +5,16 @@ AI Fiction - 角色业务逻辑
 """
 import uuid
 
-from sqlalchemy import select, update
+from sqlalchemy import select, update, desc
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.character import Character
-from app.schemas.character import CharacterCreate, CharacterUpdate
+from app.models.story_state_trail import StoryStateTrail
+from app.schemas.character import (
+    CharacterConstraintsUpdate,
+    CharacterCreate,
+    CharacterUpdate,
+)
 
 
 async def create_character(
@@ -42,6 +47,7 @@ async def create_character(
     )
     db.add(character)
     await db.flush()
+    await db.refresh(character)
     return character
 
 
@@ -124,6 +130,7 @@ async def update_character(
         setattr(character, field, value)
 
     await db.flush()
+    await db.refresh(character)
     return character
 
 
@@ -183,3 +190,121 @@ async def reorder_characters(
             .values(sort_order=index)
         )
     await db.flush()
+
+
+# ============================================================
+# 角色约束管理
+# ============================================================
+
+
+async def update_character_constraints(
+    db: AsyncSession,
+    project_id: uuid.UUID,
+    character_id: uuid.UUID,
+    data: CharacterConstraintsUpdate,
+) -> Character | None:
+    """部分更新角色约束字段（PATCH /constraints）
+
+    只更新 data 中显式传入的字段（exclude_unset=True）。
+    传入 null 值的字段将被清空，未传入的字段保持不变。
+
+    Args:
+        db: 数据库会话
+        project_id: 项目 ID
+        character_id: 角色 ID
+        data: 约束更新数据
+
+    Returns:
+        更新后的 Character 实例，若角色不存在则返回 None
+    """
+    result = await db.execute(
+        select(Character).where(
+            Character.id == character_id,
+            Character.project_id == project_id,
+        )
+    )
+    character = result.scalar_one_or_none()
+
+    if character is None:
+        return None
+
+    # 顶层 merge：只处理显式传入的字段
+    update_dict = data.model_dump(exclude_unset=True)
+    for field, value in update_dict.items():
+        setattr(character, field, value)
+
+    await db.flush()
+    await db.refresh(character)
+    return character
+
+
+async def get_character_consistency(
+    db: AsyncSession,
+    project_id: uuid.UUID,
+) -> dict:
+    """获取角色一致性仪表盘数据
+
+    查询项目下所有角色，构建一致性信息：
+    - consistency_score 初始值 -1（暂无数据），后续由 Stage 6 更新
+    - constraint_card 从 behavior_patterns / linguistic_style / emotional_expression 提取
+    - recent_behavior_summary 从 StoryStateTrail 最新快照中解析
+
+    Args:
+        db: 数据库会话
+        project_id: 项目 ID
+
+    Returns:
+        {"characters": [...], "affected_chapters": []}
+    """
+    result = await db.execute(
+        select(Character)
+        .where(Character.project_id == project_id)
+        .order_by(Character.sort_order, Character.created_at)
+    )
+    characters = list(result.scalars().all())
+
+    # 查询最新一次状态快照
+    trail_result = await db.execute(
+        select(StoryStateTrail)
+        .where(StoryStateTrail.project_id == project_id)
+        .order_by(desc(StoryStateTrail.snapshot_at))
+        .limit(1)
+    )
+    latest_trail = trail_result.scalar_one_or_none()
+
+    character_list: list[dict] = []
+    for char in characters:
+        # 构建约束卡：从 JSONB 字段提取关键约束
+        constraint_card: dict = {}
+        if char.behavior_patterns:
+            constraint_card["behavior_patterns"] = char.behavior_patterns
+        if char.linguistic_style:
+            constraint_card["linguistic_style"] = char.linguistic_style
+        if char.emotional_expression:
+            constraint_card["emotional_expression"] = char.emotional_expression
+
+        # 从最新快照中解析该角色的行为摘要
+        recent_behavior_summary: list[str] = []
+        if latest_trail and char.id:
+            char_id_str = str(char.id)
+            char_data = latest_trail.character_matrix.get(char_id_str, {})
+            if isinstance(char_data, dict):
+                behavior = char_data.get("behavior_summary")
+                if isinstance(behavior, list):
+                    recent_behavior_summary = behavior
+
+        character_list.append({
+            "character_id": char.id,
+            "character_name": char.name,
+            "role_type": char.role_type,
+            "consistency_score": -1,
+            "consistency_trend": [],
+            "recent_deviations": [],
+            "constraint_card": constraint_card,
+            "recent_behavior_summary": recent_behavior_summary,
+        })
+
+    return {
+        "characters": character_list,
+        "affected_chapters": [],
+    }
