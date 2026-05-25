@@ -36,6 +36,8 @@ class OutlineNodeCreate(BaseModel):
         default_factory=list, description="本章回收的伏笔"
     )
     sort_order: int = Field(default=0, description="排序序号")
+    is_key_scene: Optional[bool] = Field(None, description="是否标记为关键场景")
+    scene_template: Optional[dict] = Field(None, description="场景模板配置")
 
 
 class OutlineNodeUpdate(BaseModel):
@@ -62,6 +64,8 @@ class OutlineNodeUpdate(BaseModel):
         default=None, description="本章回收的伏笔"
     )
     sort_order: Optional[int] = Field(default=None, description="排序序号")
+    is_key_scene: Optional[bool] = Field(None, description="是否标记为关键场景")
+    scene_template: Optional[dict] = Field(None, description="场景模板配置")
 
 
 class OutlineConfirmRequest(BaseModel):
@@ -105,6 +109,8 @@ class OutlineNodeResponse(BaseModel):
     foreshadowing_items: list[str]
     foreshadowing_resolved: list[str]
     sort_order: int
+    is_key_scene: bool = False
+    scene_template: Optional[dict] = None
     created_at: datetime
     updated_at: datetime
 
@@ -123,3 +129,10 @@ class OutlineResponse(BaseModel):
     updated_at: datetime
 
     model_config = {"from_attributes": True}
+
+
+class SceneTemplateUpdate(BaseModel):
+    """场景模板更新请求（PUT /outline/nodes/{nid}/scene-template）"""
+
+    is_key_scene: bool = Field(..., description="是否关键场景")
+    scene_template: dict = Field(..., description="场景模板")
