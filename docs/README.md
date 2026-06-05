@@ -10,8 +10,9 @@
 4. [记忆管理](memory-management.md)
 5. [提示词管理](prompt-management.md)
 6. [技术架构](architecture.md)
-7. [一键启动与 Docker 部署](deployment.md)
-8. [开发与二次开发](development.md)
+7. [数据库说明](database.md)
+8. [一键启动与 Docker 部署](deployment.md)
+9. [开发与二次开发](development.md)
 
 ## 面向用户
 
@@ -25,6 +26,7 @@
 | 文档 | 内容 |
 |---|---|
 | [技术架构](architecture.md) | 前后端结构、数据模型、任务系统、LLM Provider |
+| [数据库说明](database.md) | SQLite/PostgreSQL 选择、自动建库、备份恢复、迁移建议 |
 | [一键启动与 Docker 部署](deployment.md) | 数据库自动创建、DATABASE_URL、SQLite/PostgreSQL、Docker Compose |
 | [AI 工作流](ai-workflows.md) | 项目策划、世界观、角色、大纲、章节、质量审计的任务链路 |
 | [提示词管理](prompt-management.md) | 当前 prompt 清单、设计原则、局部修复策略、可视化管理方案 |

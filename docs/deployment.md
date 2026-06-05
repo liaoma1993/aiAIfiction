@@ -6,6 +6,12 @@ AI Fiction Studio 支持三种启动方式：
 2. Docker Compose 单机 SQLite 版。
 3. Docker Compose PostgreSQL 版。
 
+SQLite 与 PostgreSQL 的详细差异、选择建议、备份恢复和迁移说明见：
+
+```text
+docs/database.md
+```
+
 ## 数据库是否会自动创建
 
 会。
