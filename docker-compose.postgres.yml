@@ -1,12 +1,27 @@
 services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: aifiction-postgres
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-aifiction}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-aifiction}
+      POSTGRES_DB: ${POSTGRES_DB:-aifiction}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    restart: unless-stopped
+
   backend:
     build:
       context: ./backend
     container_name: aifiction-backend
+    depends_on:
+      - postgres
     environment:
       APP_ENV: production
       LOG_LEVEL: INFO
-      DATABASE_URL: sqlite+aiosqlite:////data/aifiction.db
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-aifiction}:${POSTGRES_PASSWORD:-aifiction}@postgres:5432/${POSTGRES_DB:-aifiction}
       JWT_SECRET_KEY: ${JWT_SECRET_KEY:-change-me-in-production}
       JWT_ALGORITHM: ${JWT_ALGORITHM:-HS256}
       JWT_EXPIRE_MINUTES: ${JWT_EXPIRE_MINUTES:-1440}
@@ -19,8 +34,6 @@ services:
       DEEPSEEK_MODEL: ${DEEPSEEK_MODEL:-deepseek-chat}
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
       GEMINI_MODEL: ${GEMINI_MODEL:-gemini-2.5-flash}
-    volumes:
-      - aifiction_data:/data
     ports:
       - "8001:8001"
     restart: unless-stopped
@@ -36,4 +49,4 @@ services:
     restart: unless-stopped
 
 volumes:
-  aifiction_data:
+  pgdata:

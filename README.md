@@ -95,6 +95,7 @@ CLAUDE_MODEL=claude-sonnet-4-20250514
 - [快速上手](docs/getting-started.md)
 - [使用手册](docs/user-manual.md)
 - [技术架构](docs/architecture.md)
+- [一键启动与 Docker 部署](docs/deployment.md)
 - [AI 工作流](docs/ai-workflows.md)
 - [提示词管理](docs/prompt-management.md)
 - [记忆管理](docs/memory-management.md)
