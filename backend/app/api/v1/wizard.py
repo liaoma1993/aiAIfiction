@@ -1759,12 +1759,8 @@ def _render_export_payload(title: str, scope_label: str, chapters: list[dict], f
         chapter_head = f"第{ch['chapter_number']}章 {ch['title'] or ''}".strip()
         if fmt == "md":
             lines.extend([f"## {chapter_head}", ""])
-            if ch.get("summary"):
-                lines.extend([f"> {ch['summary']}", ""])
         else:
             lines.extend([chapter_head, ""])
-            if ch.get("summary"):
-                lines.extend([f"摘要：{ch['summary']}", ""])
         if ch.get("content"):
             lines.append(ch["content"])
         if fmt == "md":
@@ -1808,11 +1804,8 @@ async def export_manuscript(project_id: str, body: ExportManuscriptRequest, user
                 "id": str(ch.id),
                 "chapter_number": ch.chapter_number,
                 "title": ch.title or "",
-                "summary": ch.summary or "",
-                "arc_name": ch.arc_name or "",
                 "content": ch.content or "",
                 "word_count": ch.word_count or len(ch.content or ""),
-                "target_words": ch.target_words or 0,
             }
             for ch in chapters
             if body.include_empty or ch.content
