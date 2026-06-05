@@ -1,0 +1,27 @@
+from sqlalchemy import Column, String, Integer, ForeignKey, JSON
+from sqlalchemy.orm import relationship
+from app.models import BaseModel
+
+
+class Project(BaseModel):
+    __tablename__ = "projects"
+
+    user_id = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    title = Column(String(200), nullable=False, default="未命名项目")
+    genre = Column(String(50), nullable=False, default="")
+    target_length = Column(String(20), default="medium")
+    target_total_words = Column(Integer, default=500000)
+    word_count_breakdown = Column(JSON, default=dict)
+    story_brief = Column(String(2000), default="")
+    writing_style = Column(JSON, default=dict)
+    core_theme = Column(String(200), default="")
+    secondary_themes = Column(JSON, default=list)
+    motifs = Column(JSON, default=list)
+    narrative_lines = Column(JSON, default=list)
+    wizard_step = Column(Integer, default=0)
+    status = Column(String(20), default="planning")
+
+    volumes = relationship("Volume", back_populates="project", order_by="Volume.sort_order", lazy="noload")
+    characters = relationship("Character", back_populates="project", lazy="noload")
+    factions = relationship("Faction", back_populates="project", lazy="noload")
+    chapters = relationship("Chapter", back_populates="project", lazy="noload")

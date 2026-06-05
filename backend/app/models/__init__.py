@@ -1,39 +1,19 @@
-"""
-AI Fiction - ORM 模型包
+import uuid
+from datetime import datetime
+from sqlalchemy import Column, String, DateTime, func
+from app.database import Base
 
-统一导出所有 SQLAlchemy 模型，方便外部引用。
-"""
 
-from app.models.base import BaseModel
-from app.models.user import User
-from app.models.user_preference import UserPreference
-from app.models.project import Project
-from app.models.world_setting import WorldSetting
-from app.models.character import Character
-from app.models.outline import Outline, OutlineNode
-from app.models.generation_task import GenerationTask, TaskLog
-from app.models.chapter import Chapter
-from app.models.chapter_version import ChapterVersion
-from app.models.story_state_trail import StoryStateTrail
-from app.models.content_audit import ContentAuditLog
-from app.models.audit_log import AuditLog
-from app.models.template import Template
+def uuid_pk():
+    return str(uuid.uuid4())
 
-__all__ = [
-    "BaseModel",
-    "User",
-    "UserPreference",
-    "Project",
-    "WorldSetting",
-    "Character",
-    "Outline",
-    "OutlineNode",
-    "GenerationTask",
-    "TaskLog",
-    "Chapter",
-    "ChapterVersion",
-    "StoryStateTrail",
-    "ContentAuditLog",
-    "AuditLog",
-    "Template",
-]
+
+class BaseModel(Base):
+    __abstract__ = True
+
+    id = Column(String(36), primary_key=True, default=uuid_pk)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+    def __repr__(self):
+        return f"<{self.__class__.__name__} id={self.id}>"

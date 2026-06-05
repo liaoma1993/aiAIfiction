@@ -1,0 +1,300 @@
+.memory-page {
+  min-height: 100%;
+  padding: 24px;
+  background: #f5f7fb;
+}
+
+.memory-loading {
+  padding: 80px;
+  text-align: center;
+}
+
+.memory-topbar {
+  max-width: 1440px;
+  margin: 0 auto 16px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.memory-top-left {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-width: 0;
+}
+
+.memory-title {
+  margin: 0 !important;
+}
+
+.memory-subtitle {
+  margin-top: 2px;
+  color: #64748b;
+  font-size: 13px;
+}
+
+.memory-search {
+  width: 340px;
+}
+
+.memory-layout {
+  max-width: 1440px;
+  margin: 0 auto;
+  display: grid;
+  grid-template-columns: 340px minmax(0, 1fr);
+  gap: 16px;
+  align-items: start;
+}
+
+.memory-sidebar {
+  position: sticky;
+  top: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.memory-project-card {
+  border-radius: 8px;
+}
+
+.memory-project-icon {
+  width: 40px;
+  height: 40px;
+  display: grid;
+  place-items: center;
+  border-radius: 8px;
+  background: #eef6ff;
+  color: #1677ff;
+  font-size: 20px;
+  margin-bottom: 8px;
+}
+
+.memory-project-card .ant-typography {
+  margin-bottom: 8px;
+  line-height: 1.65;
+  overflow-wrap: anywhere;
+}
+
+.memory-stat-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.memory-stat-grid .ant-card,
+.memory-progress-card,
+.memory-risk-alert,
+.memory-rule-card,
+.memory-work-card,
+.memory-item-card {
+  border-radius: 8px;
+}
+
+.memory-stat-grid .ant-card-body {
+  padding: 12px;
+}
+
+.memory-progress-card .ant-card-body {
+  padding: 14px;
+}
+
+.memory-card-head,
+.memory-work-head,
+.memory-item-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+
+.memory-progress-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 8px;
+}
+
+.memory-progress-meta span {
+  color: #64748b;
+  font-size: 12px;
+}
+
+.memory-progress-meta strong {
+  color: #0f172a;
+}
+
+.memory-section-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.memory-rule-card .ant-card-head-title span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.memory-rule-list,
+.memory-card-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.memory-rule-item {
+  padding: 8px 10px;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  background: #f8fafc;
+  color: #334155;
+  font-size: 13px;
+  line-height: 1.65;
+  overflow-wrap: anywhere;
+}
+
+.memory-work-card .ant-card-body {
+  padding: 14px;
+}
+
+.memory-work-head {
+  align-items: center;
+  padding-bottom: 12px;
+  border-bottom: 1px solid #edf1f6;
+}
+
+.memory-item-card {
+  background: #fff;
+}
+
+.memory-item-card.risk {
+  border-left: 3px solid #f97316;
+}
+
+.memory-item-head > div {
+  min-width: 0;
+}
+
+.memory-item-head .ant-space {
+  margin-top: 4px;
+}
+
+.memory-item-card .ant-typography {
+  margin-bottom: 6px;
+  line-height: 1.68;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.memory-two-col {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.memory-two-col div {
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: #f8fafc;
+}
+
+.memory-two-col span {
+  display: block;
+  color: #64748b;
+  font-size: 12px;
+  margin-bottom: 2px;
+}
+
+.memory-two-col strong {
+  display: block;
+  color: #0f172a;
+  font-size: 13px;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+
+.memory-timeline {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.memory-timeline-item {
+  position: relative;
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  gap: 10px;
+  padding: 0 0 14px;
+}
+
+.memory-timeline-item::before {
+  content: "";
+  position: absolute;
+  left: 6px;
+  top: 16px;
+  bottom: 0;
+  width: 1px;
+  background: #dbe3ef;
+}
+
+.memory-timeline-item:last-child::before {
+  display: none;
+}
+
+.memory-timeline-dot {
+  width: 13px;
+  height: 13px;
+  margin-top: 4px;
+  border-radius: 50%;
+  background: #1677ff;
+  box-shadow: 0 0 0 4px #e8f2ff;
+}
+
+.memory-timeline .ant-typography {
+  margin: 6px 0 0;
+  line-height: 1.68;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 1180px) {
+  .memory-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .memory-sidebar {
+    position: static;
+  }
+
+  .memory-section-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 760px) {
+  .memory-page {
+    padding: 14px;
+  }
+
+  .memory-topbar,
+  .memory-top-left,
+  .memory-work-head,
+  .memory-item-head {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .memory-search {
+    width: 100%;
+  }
+
+  .memory-stat-grid,
+  .memory-two-col {
+    grid-template-columns: 1fr;
+  }
+}

@@ -1,186 +1,185 @@
-"""
-AI Fiction - 角色 CRUD API 路由
-
-路由前缀: /projects/{project_id}/characters
-所有接口需要认证。
-"""
-
-import uuid
-
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
-
-from app.api.deps import get_current_user
+from sqlalchemy import select
+from pydantic import BaseModel
+import re
 from app.database import get_db
 from app.models.user import User
-from app.schemas.character import (
-    CharacterCreate,
-    CharacterResponse,
-    CharacterUpdate,
-    ReorderRequest,
-)
-from app.schemas.common import ApiResponse
-from app.services import character_service
-from app.utils.exceptions import NotFoundException
+from app.models.character import Character
+from app.models.character_state_snapshot import CharacterStateSnapshot
+from app.api.deps import get_current_user
 
-router = APIRouter(
-    prefix="/projects/{project_id}/characters",
-    tags=["characters"],
-)
+router = APIRouter(prefix="/projects/{project_id}/characters", tags=["characters"])
 
 
-# ============================================================
-# POST /projects/{project_id}/characters - 创建角色
-# ============================================================
+def _normalize_character_name(name: str | None) -> str:
+    return re.sub(r"\s+", "", (name or "").strip()).lower()
 
 
-@router.post("", response_model=ApiResponse[CharacterResponse], status_code=201)
+ROLE_TYPE_ALIASES = {
+    "protagonist": "主角",
+    "hero": "主角",
+    "antagonist": "反派",
+    "villain": "反派",
+    "supporting": "配角",
+    "sidekick": "配角",
+    "mentor": "导师",
+    "master": "导师",
+    "love_interest": "恋人",
+    "love interest": "恋人",
+    "comic_relief": "搞笑担当",
+    "other": "其他",
+}
+
+
+def _normalize_role_type(role_type: str | None) -> str:
+    role = (role_type or "配角").strip()
+    return ROLE_TYPE_ALIASES.get(role.lower(), ROLE_TYPE_ALIASES.get(role, role))
+
+
+def _character_completeness_score(char: Character) -> int:
+    text_fields = [
+        char.personality,
+        char.background,
+        char.motivation,
+        char.behavior_pattern,
+        char.language_style,
+        char.emotional_expression,
+        char.appearance,
+        char.growth_arc,
+        char.inner_conflict,
+        char.language_fingerprint,
+    ]
+    list_fields = [char.relationship_dynamics, char.faction_history, char.growth_stages, char.relationships]
+    return sum(len(x or "") for x in text_fields) + sum(len(x or []) * 20 for x in list_fields)
+
+
+class CreateCharacterRequest(BaseModel):
+    name: str
+    role_type: str = "配角"
+    personality: str = ""
+    background: str = ""
+    motivation: str = ""
+    growth_stages: list[dict] = []
+    primary_faction_id: str | None = None
+    faction_rank: str | None = None
+
+
+class UpdateCharacterRequest(BaseModel):
+    name: str | None = None
+    role_type: str | None = None
+    personality: str | None = None
+    background: str | None = None
+    motivation: str | None = None
+    behavior_pattern: str | None = None
+    language_style: str | None = None
+    emotional_expression: str | None = None
+    appearance: str | None = None
+    primary_faction_id: str | None = None
+    faction_rank: str | None = None
+    growth_arc: str | None = None
+    growth_stages: list[dict] | None = None
+    relationships: list[dict] | None = None
+    current_state: dict | None = None
+
+
+@router.get("")
+async def list_characters(project_id: str, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(Character).where(Character.project_id == project_id))
+    characters = result.scalars().all()
+    by_name: dict[str, Character] = {}
+    unnamed: list[Character] = []
+    for char in characters:
+        key = _normalize_character_name(char.name)
+        if not key:
+            unnamed.append(char)
+            continue
+        current = by_name.get(key)
+        if not current:
+            by_name[key] = char
+            continue
+        current_score = _character_completeness_score(current)
+        next_score = _character_completeness_score(char)
+        current_updated = current.updated_at or current.created_at
+        next_updated = char.updated_at or char.created_at
+        if next_score > current_score or (next_score == current_score and next_updated and current_updated and next_updated > current_updated):
+            by_name[key] = char
+    deduped = [*by_name.values(), *unnamed]
+    for char in deduped:
+        normalized = _normalize_role_type(char.role_type)
+        if normalized != char.role_type:
+            char.role_type = normalized
+    deduped.sort(key=lambda c: (str(c.created_at or ""), c.name or ""))
+    return {"characters": deduped}
+
+
+@router.post("")
 async def create_character(
-    project_id: uuid.UUID,
-    data: CharacterCreate,
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    project_id: str, body: CreateCharacterRequest,
+    user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db),
 ):
-    """创建角色
-
-    在指定项目下创建一个新角色。
-    """
-    character = await character_service.create_character(db, project_id, data)
-
-    return ApiResponse(
-        code=201,
-        message="角色创建成功",
-        data=CharacterResponse.model_validate(character),
-    )
+    data = body.model_dump()
+    data["role_type"] = _normalize_role_type(data.get("role_type"))
+    char = Character(project_id=project_id, **data)
+    db.add(char)
+    await db.flush()
+    return {"character": char}
 
 
-# ============================================================
-# GET /projects/{project_id}/characters - 获取角色列表
-# ============================================================
+@router.get("/{character_id}")
+async def get_character(project_id: str, character_id: str, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(Character).where(Character.id == character_id, Character.project_id == project_id))
+    char = result.scalar_one_or_none()
+    if not char:
+        raise HTTPException(404, "角色不存在")
+    return {"character": char}
 
 
-@router.get("", response_model=ApiResponse[list[CharacterResponse]])
-async def list_characters(
-    project_id: uuid.UUID,
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-):
-    """获取项目下的所有角色
-
-    按 sort_order 排序返回。
-    """
-    characters = await character_service.get_characters_by_project(db, project_id)
-
-    return ApiResponse(
-        data=[CharacterResponse.model_validate(c) for c in characters],
-    )
-
-
-# ============================================================
-# PUT /projects/{project_id}/characters/reorder - 批量排序
-# ============================================================
-
-
-@router.put("/reorder", response_model=ApiResponse)
-async def reorder_characters(
-    project_id: uuid.UUID,
-    data: ReorderRequest,
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-):
-    """批量更新角色排序
-
-    传入按目标顺序排列的角色 ID 列表，系统将按索引位置更新 sort_order。
-    """
-    await character_service.reorder_characters(db, project_id, data.character_ids)
-
-    return ApiResponse(
-        message="角色排序更新成功",
-    )
-
-
-# ============================================================
-# GET /projects/{project_id}/characters/{character_id} - 获取角色详情
-# ============================================================
-
-
-@router.get("/{character_id}", response_model=ApiResponse[CharacterResponse])
-async def get_character(
-    project_id: uuid.UUID,
-    character_id: uuid.UUID,
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-):
-    """获取角色详情
-
-    需要角色归属校验，只能访问属于指定项目的角色。
-    """
-    character = await character_service.get_character(
-        db, character_id, project_id
-    )
-
-    if character is None:
-        raise NotFoundException("角色不存在或不属于该项目")
-
-    return ApiResponse(
-        data=CharacterResponse.model_validate(character),
-    )
-
-
-# ============================================================
-# PUT /projects/{project_id}/characters/{character_id} - 更新角色
-# ============================================================
-
-
-@router.put("/{character_id}", response_model=ApiResponse[CharacterResponse])
+@router.put("/{character_id}")
 async def update_character(
-    project_id: uuid.UUID,
-    character_id: uuid.UUID,
-    data: CharacterUpdate,
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    project_id: str, character_id: str, body: UpdateCharacterRequest,
+    user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db),
 ):
-    """更新角色信息
+    result = await db.execute(select(Character).where(Character.id == character_id, Character.project_id == project_id))
+    char = result.scalar_one_or_none()
+    if not char:
+        raise HTTPException(404, "角色不存在")
+    data = body.model_dump(exclude_none=True)
+    if "role_type" in data:
+        data["role_type"] = _normalize_role_type(data.get("role_type"))
+    for field, value in data.items():
+        setattr(char, field, value)
+    await db.flush()
+    return {"character": char}
 
-    可以部分更新，只传需要修改的字段。
-    需要角色归属校验，只能更新属于指定项目的角色。
-    """
-    character = await character_service.update_character(
-        db, character_id, project_id, data
+
+@router.get("/{character_id}/snapshots")
+async def get_snapshots(project_id: str, character_id: str, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    result = await db.execute(
+        select(CharacterStateSnapshot)
+        .where(CharacterStateSnapshot.character_id == character_id)
+        .order_by(CharacterStateSnapshot.chapter_number)
     )
-
-    if character is None:
-        raise NotFoundException("角色不存在或不属于该项目")
-
-    return ApiResponse(
-        message="角色更新成功",
-        data=CharacterResponse.model_validate(character),
-    )
+    return {"snapshots": result.scalars().all()}
 
 
-# ============================================================
-# DELETE /projects/{project_id}/characters/{character_id} - 删除角色
-# ============================================================
+class CreateSnapshotRequest(BaseModel):
+    chapter_id: str | None = None
+    chapter_number: int = 0
+    snapshot_label: str = ""
+    ability_level: str = ""
+    mental_state: str = ""
+    faction_id: str | None = None
+    faction_rank: str | None = None
+    important_items: list[str] = []
 
 
-@router.delete("/{character_id}", response_model=ApiResponse)
-async def delete_character(
-    project_id: uuid.UUID,
-    character_id: uuid.UUID,
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+@router.post("/{character_id}/snapshots")
+async def create_snapshot(
+    project_id: str, character_id: str, body: CreateSnapshotRequest,
+    user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db),
 ):
-    """删除角色
-
-    需要角色归属校验，只能删除属于指定项目的角色。
-    """
-    success = await character_service.delete_character(
-        db, character_id, project_id
-    )
-
-    if not success:
-        raise NotFoundException("角色不存在或不属于该项目")
-
-    return ApiResponse(
-        message="角色已删除",
-    )
+    snap = CharacterStateSnapshot(character_id=character_id, project_id=project_id, **body.model_dump())
+    db.add(snap)
+    await db.flush()
+    return {"snapshot": snap}

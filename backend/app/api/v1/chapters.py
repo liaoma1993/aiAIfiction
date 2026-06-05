@@ -1,265 +1,164 @@
-"""
-AI Fiction - 章节管理 API 路由
-
-路由前缀: /projects/{project_id}/chapters
-所有接口需要认证与项目所属权校验。
-"""
-
-import uuid
-
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
-
-from app.api.deps import get_current_user
+from sqlalchemy import select, func
+from pydantic import BaseModel
 from app.database import get_db
 from app.models.user import User
-from app.schemas.chapter import (
-    ChapterCreate,
-    ChapterReorderRequest,
-    ChapterResponse,
-    ChapterStatusSummary,
-    ChapterSummaryItem,
-    ChapterUpdate,
-)
-from app.schemas.common import ApiResponse
-from app.services import chapter_service, project_service
-from app.utils.exceptions import NotFoundException
+from app.models.chapter import Chapter, ChapterVersion
+from app.api.deps import get_current_user
 
-router = APIRouter(prefix="/projects", tags=["chapters"])
+router = APIRouter(prefix="/projects/{project_id}/chapters", tags=["chapters"])
 
 
-# ============================================================
-# 工具函数
-# ============================================================
+@router.get("")
+async def list_chapters(project_id: str, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    result = await db.execute(
+        select(Chapter).where(Chapter.project_id == project_id).order_by(Chapter.chapter_number)
+    )
+    return {"chapters": result.scalars().all()}
 
 
-async def _verify_project_ownership(
-    db: AsyncSession,
-    project_id: uuid.UUID,
-    user_id: uuid.UUID,
-) -> None:
-    """验证项目存在且属于当前用户，否则抛出 404"""
-    project = await project_service.get_project(db, project_id, user_id)
-    if project is None:
-        raise NotFoundException("项目不存在或无权访问")
+@router.get("/{chapter_id}")
+async def get_chapter(project_id: str, chapter_id: str, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(Chapter).where(Chapter.id == chapter_id, Chapter.project_id == project_id))
+    chapter = result.scalar_one_or_none()
+    if not chapter:
+        raise HTTPException(404, "章节不存在")
+    return {"chapter": chapter}
 
 
-# ============================================================
-# POST /projects/{project_id}/chapters - 创建章节
-# ============================================================
+class UpdateChapterRequest(BaseModel):
+    title: str | None = None
+    content: str | None = None
+    word_count: int | None = None
+    target_words: int | None = None
+    status: str | None = None
+    narrative_line: str | None = None
+    tension_actual: int | None = None
+    quality_score: int | None = None
+    summary: str | None = None
+    connects_from: str | None = None
+    connects_to: str | None = None
+    create_version: bool | None = False
+    version_note: str | None = None
 
 
-@router.post(
-    "/{project_id}/chapters",
-    response_model=ApiResponse[ChapterResponse],
-    status_code=201,
-)
+class CreateChapterRequest(BaseModel):
+    volume_id: str | None = None
+    chapter_number: int = 1
+    title: str = ""
+    summary: str = ""
+    target_words: int = 3500
+
+
+@router.post("")
 async def create_chapter(
-    project_id: uuid.UUID,
-    data: ChapterCreate,
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    project_id: str, body: CreateChapterRequest,
+    user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db),
 ):
-    """创建新章节
-
-    需要项目所属权校验。
-    同一项目下相同 chapter_number + branch_name 组合不可重复。
-    """
-    await _verify_project_ownership(db, project_id, current_user.id)
-
-    chapter = await chapter_service.create_chapter(db, project_id, data)
-
-    return ApiResponse(
-        code=201,
-        message="章节创建成功",
-        data=ChapterResponse.model_validate(chapter),
-    )
+    chapter = Chapter(project_id=project_id, **body.model_dump(), status="writing")
+    db.add(chapter)
+    await db.flush()
+    return {"chapter": chapter}
 
 
-# ============================================================
-# GET /projects/{project_id}/chapters - 获取章节列表
-# ============================================================
-
-
-@router.get(
-    "/{project_id}/chapters",
-    response_model=ApiResponse[list[ChapterResponse]],
-)
-async def list_chapters(
-    project_id: uuid.UUID,
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-):
-    """获取项目下所有章节（按 chapter_number 升序）
-
-    需要项目所属权校验。
-    """
-    await _verify_project_ownership(db, project_id, current_user.id)
-
-    chapters = await chapter_service.get_project_chapters(db, project_id)
-
-    return ApiResponse(
-        message="获取章节列表成功",
-        data=[ChapterResponse.model_validate(c) for c in chapters],
-    )
-
-
-# ============================================================
-# GET /projects/{project_id}/chapters/summary - 章节状态摘要
-# ============================================================
-
-
-@router.get(
-    "/{project_id}/chapters/summary",
-    response_model=ApiResponse[ChapterStatusSummary],
-)
-async def get_chapter_status_summary(
-    project_id: uuid.UUID,
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-):
-    """获取项目章节状态摘要
-
-    返回各状态章节数量统计及章节摘要列表。
-    需要项目所属权校验。
-    """
-    await _verify_project_ownership(db, project_id, current_user.id)
-
-    summary = await chapter_service.get_chapter_status_summary(db, project_id)
-
-    return ApiResponse(
-        message="获取章节状态摘要成功",
-        data=ChapterStatusSummary(
-            **summary,
-            chapters=[
-                ChapterSummaryItem.model_validate(c) for c in summary["chapters"]
-            ],
-        ),
-    )
-
-
-# ============================================================
-# GET /projects/{project_id}/chapters/{chapter_id} - 章节详情
-# ============================================================
-
-
-@router.get(
-    "/{project_id}/chapters/{chapter_id}",
-    response_model=ApiResponse[ChapterResponse],
-)
-async def get_chapter(
-    project_id: uuid.UUID,
-    chapter_id: uuid.UUID,
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-):
-    """获取单个章节详情
-
-    需要项目所属权校验。
-    """
-    await _verify_project_ownership(db, project_id, current_user.id)
-
-    chapter = await chapter_service.get_chapter(db, chapter_id, project_id)
-
-    if chapter is None:
-        raise NotFoundException("章节不存在")
-
-    return ApiResponse(
-        message="获取章节详情成功",
-        data=ChapterResponse.model_validate(chapter),
-    )
-
-
-# ============================================================
-# PUT /projects/{project_id}/chapters/{chapter_id} - 更新章节
-# ============================================================
-
-
-@router.put(
-    "/{project_id}/chapters/{chapter_id}",
-    response_model=ApiResponse[ChapterResponse],
-)
+@router.put("/{chapter_id}")
 async def update_chapter(
-    project_id: uuid.UUID,
-    chapter_id: uuid.UUID,
-    data: ChapterUpdate,
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    project_id: str, chapter_id: str, body: UpdateChapterRequest,
+    user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db),
 ):
-    """更新章节
+    result = await db.execute(select(Chapter).where(Chapter.id == chapter_id, Chapter.project_id == project_id))
+    chapter = result.scalar_one_or_none()
+    if not chapter:
+        raise HTTPException(404, "章节不存在")
+    data = body.model_dump(exclude_none=True)
+    create_version = bool(data.pop("create_version", False))
+    version_note = data.pop("version_note", None)
+    if create_version and chapter.content:
+        max_version = await db.scalar(
+            select(func.max(ChapterVersion.version_number)).where(ChapterVersion.chapter_id == chapter.id)
+        ) or 0
+        db.add(ChapterVersion(
+            project_id=project_id,
+            chapter_id=chapter.id,
+            version_number=max_version + 1,
+            title=chapter.title or "",
+            content=chapter.content or "",
+            word_count=chapter.word_count or len(chapter.content or ""),
+            source="manual",
+            note=version_note or "手动保存前版本",
+        ))
+    for field, value in data.items():
+        setattr(chapter, field, value)
+    await db.flush()
+    return {"chapter": chapter}
 
-    所有字段可选，只需传需要更新的字段。
-    需要项目所属权校验。
-    """
-    await _verify_project_ownership(db, project_id, current_user.id)
 
-    chapter = await chapter_service.update_chapter(db, chapter_id, data)
-
-    if chapter is None:
-        raise NotFoundException("章节不存在")
-
-    return ApiResponse(
-        message="章节更新成功",
-        data=ChapterResponse.model_validate(chapter),
+@router.get("/{chapter_id}/versions")
+async def list_versions(project_id: str, chapter_id: str, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    result = await db.execute(
+        select(ChapterVersion)
+        .where(ChapterVersion.project_id == project_id, ChapterVersion.chapter_id == chapter_id)
+        .order_by(ChapterVersion.version_number.desc())
     )
+    return {"versions": result.scalars().all()}
 
 
-# ============================================================
-# DELETE /projects/{project_id}/chapters/{chapter_id} - 删除章节
-# ============================================================
-
-
-@router.delete(
-    "/{project_id}/chapters/{chapter_id}",
-    response_model=ApiResponse,
-)
-async def delete_chapter(
-    project_id: uuid.UUID,
-    chapter_id: uuid.UUID,
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-):
-    """删除章节
-
-    需要项目所属权校验。
-    """
-    await _verify_project_ownership(db, project_id, current_user.id)
-
-    success = await chapter_service.delete_chapter(db, chapter_id)
-
-    if not success:
-        raise NotFoundException("章节不存在")
-
-    return ApiResponse(
-        message="章节已删除",
+@router.post("/{chapter_id}/versions")
+async def create_version(project_id: str, chapter_id: str, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    chapter = (await db.execute(select(Chapter).where(Chapter.id == chapter_id, Chapter.project_id == project_id))).scalar_one_or_none()
+    if not chapter:
+        raise HTTPException(404, "章节不存在")
+    max_version = await db.scalar(
+        select(func.max(ChapterVersion.version_number)).where(ChapterVersion.chapter_id == chapter.id)
+    ) or 0
+    version = ChapterVersion(
+        project_id=project_id,
+        chapter_id=chapter.id,
+        version_number=max_version + 1,
+        title=chapter.title or "",
+        content=chapter.content or "",
+        word_count=chapter.word_count or len(chapter.content or ""),
+        source="manual",
+        note="手动快照",
     )
+    db.add(version)
+    await db.flush()
+    return {"version": version}
 
 
-# ============================================================
-# PUT /projects/{project_id}/chapters/reorder - 章节重排
-# ============================================================
+@router.post("/{chapter_id}/versions/{version_id}/restore")
+async def restore_version(project_id: str, chapter_id: str, version_id: str, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    chapter = (await db.execute(select(Chapter).where(Chapter.id == chapter_id, Chapter.project_id == project_id))).scalar_one_or_none()
+    version = (await db.execute(select(ChapterVersion).where(ChapterVersion.id == version_id, ChapterVersion.chapter_id == chapter_id))).scalar_one_or_none()
+    if not chapter or not version:
+        raise HTTPException(404, "章节或版本不存在")
+    max_version = await db.scalar(
+        select(func.max(ChapterVersion.version_number)).where(ChapterVersion.chapter_id == chapter.id)
+    ) or 0
+    db.add(ChapterVersion(
+        project_id=project_id,
+        chapter_id=chapter.id,
+        version_number=max_version + 1,
+        title=chapter.title or "",
+        content=chapter.content or "",
+        word_count=chapter.word_count or len(chapter.content or ""),
+        source="restore_backup",
+        note="恢复前自动备份",
+    ))
+    chapter.title = version.title or chapter.title
+    chapter.content = version.content or ""
+    chapter.word_count = version.word_count or len(chapter.content or "")
+    chapter.version = (chapter.version or 1) + 1
+    await db.flush()
+    return {"chapter": chapter}
 
 
-@router.put(
-    "/{project_id}/chapters/reorder",
-    response_model=ApiResponse[list[ChapterResponse]],
-)
-async def reorder_chapters(
-    project_id: uuid.UUID,
-    data: ChapterReorderRequest,
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-):
-    """批量更新章节序号
-
-    按 chapter_order 的顺序依次更新章节的 chapter_number。
-    需要项目所属权校验。
-    """
-    await _verify_project_ownership(db, project_id, current_user.id)
-
-    chapters = await chapter_service.reorder_chapters(db, project_id, data)
-
-    return ApiResponse(
-        message="章节重排成功",
-        data=[ChapterResponse.model_validate(c) for c in chapters],
-    )
+@router.delete("/{chapter_id}")
+async def delete_chapter(project_id: str, chapter_id: str, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(Chapter).where(Chapter.id == chapter_id, Chapter.project_id == project_id))
+    chapter = result.scalar_one_or_none()
+    if not chapter:
+        raise HTTPException(404, "章节不存在")
+    await db.delete(chapter)
+    return {"success": True}

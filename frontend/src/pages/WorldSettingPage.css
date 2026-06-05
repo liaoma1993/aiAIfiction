@@ -1,0 +1,145 @@
+.world-setting-page {
+  width: min(1120px, calc(100vw - 32px));
+  margin: 0 auto;
+  padding: 24px 0 40px;
+}
+
+.world-setting-loading {
+  padding: 56px;
+  text-align: center;
+}
+
+.world-setting-header {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.world-setting-titleblock {
+  min-width: 0;
+  flex: 1;
+}
+
+.world-setting-titleblock h3.ant-typography {
+  margin: 0 0 2px;
+  line-height: 1.25;
+}
+
+.world-setting-alert {
+  margin-bottom: 16px;
+}
+
+.world-rule-grid {
+  margin-bottom: 16px;
+}
+
+.world-rule-card,
+.world-dim-card {
+  height: 100%;
+  border-radius: var(--radius-md);
+}
+
+.world-rule-card .ant-card-body,
+.world-dim-card .ant-card-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.world-card-desc {
+  min-height: 36px;
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.world-rule-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-height: 34px;
+  align-content: flex-start;
+}
+
+.world-rule-tag.ant-tag {
+  max-width: 100%;
+  margin: 0;
+  white-space: normal;
+  line-height: 1.55;
+  word-break: break-word;
+}
+
+.world-empty-text {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.world-inline-editor {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  gap: 8px;
+  align-items: center;
+}
+
+.world-dim-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.world-dim-content,
+.world-dim-editor {
+  display: flex;
+  min-height: 150px;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.world-dim-text {
+  flex: 1;
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 13px;
+  line-height: 1.65;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.world-editor-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+@media (max-width: 640px) {
+  .world-setting-page {
+    width: min(100vw, calc(100vw - 20px));
+    padding: 16px 0 28px;
+  }
+
+  .world-setting-header {
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .world-inline-editor {
+    grid-template-columns: 1fr;
+  }
+
+  .world-inline-editor .ant-btn,
+  .world-editor-actions .ant-btn {
+    width: 100%;
+  }
+
+  .world-editor-actions {
+    flex-direction: column;
+  }
+
+  .world-dim-content,
+  .world-dim-editor {
+    min-height: 120px;
+  }
+}

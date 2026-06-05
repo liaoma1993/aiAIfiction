@@ -1,0 +1,48 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+.venv/
+venv/
+*.db
+*.db-shm
+*.db-wal
+backend/aifiction.db
+backend/aifiction.db-shm
+backend/aifiction.db-wal
+
+# Node
+node_modules/
+dist/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Env
+.env
+.env.local
+
+# Docker
+docker-compose.override.yml
+
+# Logs
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Test
+.coverage
+htmlcov/
+test-results/
+playwright-report/
+
+# Debug
+debug_output/
+.arkpilot-output/
+aif-app/

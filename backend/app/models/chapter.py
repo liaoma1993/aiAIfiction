@@ -1,96 +1,66 @@
-"""
-AI Fiction - Chapter 模型
-"""
-
-import uuid
-
-from sqlalchemy import String, Integer, Text, ForeignKey, Index, UniqueConstraint
-from sqlalchemy.dialects.postgresql import UUID
-from sqlalchemy.orm import Mapped, mapped_column, relationship
-
-from app.models.base import BaseModel
+from sqlalchemy import Column, String, Integer, ForeignKey, JSON
+from sqlalchemy.orm import relationship
+from app.models import BaseModel
 
 
 class Chapter(BaseModel):
-    """小说章节模型"""
+    __tablename__ = "chapters"
 
-    __tablename__ = "chapter"
+    project_id = Column(String(36), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False, index=True)
+    outline_node_id = Column(String(36), ForeignKey("outline_nodes.id", ondelete="CASCADE"), nullable=True)
+    volume_id = Column(String(36), ForeignKey("volumes.id", ondelete="CASCADE"), nullable=True, index=True)
+    chapter_number = Column(Integer, nullable=False)
+    title = Column(String(300), default="")
+    summary = Column(String(2000), default="")
+    arc_name = Column(String(100), default="")
+    connects_from = Column(String(500), default="")
+    connects_to = Column(String(500), default="")
+    hook = Column(String(500), default="")
+    story_state_snapshot = Column(String(3000), default="")
+    characters_in_chapter = Column(JSON, default=list)
+    key_events = Column(JSON, default=list)
+    minor_events = Column(JSON, default=list)
+    blueprint = Column(JSON, default=dict)
+    continuity_checks = Column(JSON, default=dict)
+    causality_links = Column(JSON, default=list)
+    foreshadowing_tasks = Column(JSON, default=list)
+    rhythm_profile = Column(JSON, default=dict)
+    scene_count = Column(Integer, default=0)
+    content = Column(String, default="")
+    word_count = Column(Integer, default=0)
+    target_words = Column(Integer, default=3500)
+    status = Column(String(20), default="planned")
+    narrative_line = Column(String(50), default="main")
+    quality_score = Column(Integer, nullable=True)
+    tension_actual = Column(Integer, nullable=True)
+    version = Column(Integer, default=1)
 
-    project_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True),
-        ForeignKey("project.id", ondelete="CASCADE"),
-        nullable=False,
-    )
+    project = relationship("Project", back_populates="chapters", lazy="noload")
 
-    outline_node_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True),
-        ForeignKey("outline_node.id", ondelete="SET NULL"),
-        nullable=True,
-    )
 
-    chapter_number: Mapped[int] = mapped_column(
-        Integer,
-        nullable=False,
-    )
+class ChapterVersion(BaseModel):
+    __tablename__ = "chapter_versions"
 
-    title: Mapped[str | None] = mapped_column(
-        String(200),
-        nullable=True,
-    )
+    project_id = Column(String(36), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False, index=True)
+    chapter_id = Column(String(36), ForeignKey("chapters.id", ondelete="CASCADE"), nullable=False, index=True)
+    version_number = Column(Integer, nullable=False, default=1)
+    title = Column(String(300), default="")
+    content = Column(String, default="")
+    word_count = Column(Integer, default=0)
+    source = Column(String(50), default="manual")
+    note = Column(String(500), default="")
+    generation_config = Column(JSON, default=dict)
 
-    status: Mapped[str] = mapped_column(
-        String(20),
-        nullable=False,
-        default="planned",
-    )
 
-    quality_score: Mapped[int | None] = mapped_column(
-        Integer,
-        nullable=True,
-    )
+class GenerationTask(BaseModel):
+    __tablename__ = "generation_tasks"
 
-    quality_label: Mapped[str | None] = mapped_column(
-        String(20),
-        nullable=True,
-    )
-
-    current_version_number: Mapped[int] = mapped_column(
-        Integer,
-        nullable=False,
-        default=0,
-    )
-
-    branch_parent_chapter_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True),
-        ForeignKey("chapter.id", ondelete="SET NULL"),
-        nullable=True,
-    )
-
-    branch_name: Mapped[str | None] = mapped_column(
-        String(100),
-        nullable=True,
-    )
-
-    word_count: Mapped[int] = mapped_column(
-        Integer,
-        default=0,
-        nullable=False,
-    )
-
-    retry_count: Mapped[int] = mapped_column(
-        Integer,
-        default=0,
-        nullable=False,
-    )
-
-    versions: Mapped[list["ChapterVersion"]] = relationship(
-        "ChapterVersion",
-        back_populates="chapter",
-        cascade="all, delete-orphan",
-    )
-
-    __table_args__ = (
-        Index("idx_chapter_project_id", "project_id"),
-        Index("idx_chapter_status", "project_id", "status"),
-        UniqueConstraint("project_id", "chapter_number", "branch_name"),
-    )
+    project_id = Column(String(36), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False)
+    chapter_id = Column(String(36), ForeignKey("chapters.id", ondelete="CASCADE"), nullable=True)
+    task_type = Column(String(50), nullable=False)
+    status = Column(String(20), default="pending")
+    progress = Column(Integer, default=0)
+    precision_config = Column(JSON, default=dict)
+    result_summary = Column(JSON, default=dict)
+    error_message = Column(String, nullable=True)
+    celery_task_id = Column(String, nullable=True)
