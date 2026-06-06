@@ -58,6 +58,26 @@ CREATE TABLE projects (
 
 CREATE INDEX ix_projects_user_id ON projects (user_id);
 
+CREATE TABLE writing_style_skills (
+	user_id VARCHAR(36) NOT NULL,
+	name VARCHAR(120) NOT NULL,
+	description VARCHAR(1000),
+	source_type VARCHAR(30),
+	source_note VARCHAR(500),
+	sample_word_count INTEGER,
+	style_profile JSON,
+	prompt_fragment VARCHAR(4000),
+	is_public BOOLEAN,
+	is_active BOOLEAN,
+	id VARCHAR(36) NOT NULL,
+	created_at DATETIME DEFAULT (CURRENT_TIMESTAMP) NOT NULL,
+	updated_at DATETIME DEFAULT (CURRENT_TIMESTAMP) NOT NULL,
+	PRIMARY KEY (id),
+	FOREIGN KEY(user_id) REFERENCES users (id) ON DELETE CASCADE
+);
+
+CREATE INDEX ix_writing_style_skills_user_id ON writing_style_skills (user_id);
+
 CREATE TABLE volumes (
 	project_id VARCHAR(36) NOT NULL,
 	volume_number INTEGER NOT NULL,

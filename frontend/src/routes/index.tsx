@@ -18,6 +18,7 @@ import QualityDashboardPage from '@/pages/QualityDashboardPage';
 import LoginPage from '@/pages/LoginPage';
 import NotFoundPage from '@/pages/NotFoundPage';
 import ProvidersPage from '@/pages/ProvidersPage';
+import WritingStyleSkillsPage from '@/pages/WritingStyleSkillsPage';
 
 export const router = createBrowserRouter([
   {
@@ -26,6 +27,7 @@ export const router = createBrowserRouter([
     children: [
       { index: true, element: <Navigate to="/dashboard" replace /> },
       { path: 'dashboard', element: <DashboardPage /> },
+      { path: 'writing-style-skills', element: <WritingStyleSkillsPage /> },
       { path: 'projects/create', element: <CreateProjectPage /> },
       {
         path: 'projects/:projectId',

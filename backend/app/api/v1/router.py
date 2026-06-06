@@ -11,6 +11,7 @@ from app.api.v1.world_settings import router as world_settings_router
 from app.api.v1.wizard import router as wizard_router
 from app.api.v1.providers import router as providers_router
 from app.api.v1.story import router as story_router
+from app.api.v1.writing_style_skills import router as writing_style_skills_router
 
 api_router = APIRouter()
 
@@ -26,3 +27,4 @@ api_router.include_router(world_settings_router)
 api_router.include_router(wizard_router)
 api_router.include_router(providers_router)
 api_router.include_router(story_router)
+api_router.include_router(writing_style_skills_router)

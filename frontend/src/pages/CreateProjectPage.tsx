@@ -1,9 +1,10 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Card, Input, Button, Typography, Tag, Row, Col, Spin, message, Space, Alert, List, Divider } from 'antd';
+import { Card, Input, Button, Typography, Tag, Row, Col, Spin, message, Space, Alert, List, Divider, Select } from 'antd';
 import { ThunderboltOutlined, ReloadOutlined, LoadingOutlined, SendOutlined, CheckOutlined } from '@ant-design/icons';
 import { useProjectStore } from '@/stores/useProjectStore';
 import api from '@/services/api';
+import { writingStyleSkillApi } from '@/services/projectApi';
 
 const { Title, Paragraph, Text } = Typography;
 const { TextArea } = Input;
@@ -59,6 +60,8 @@ export default function CreateProjectPage() {
   const [selectedSuggestionIndex, setSelectedSuggestionIndex] = useState(0);
   const [nextQuestions, setNextQuestions] = useState<string[]>([]);
   const [detailOptions, setDetailOptions] = useState<string[]>([]);
+  const [styleSkills, setStyleSkills] = useState<any[]>([]);
+  const [selectedStyleSkillId, setSelectedStyleSkillId] = useState<string>('');
   const { createProject } = useProjectStore();
   const navigate = useNavigate();
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -86,6 +89,8 @@ export default function CreateProjectPage() {
     if (Array.isArray(saved.nextQuestions)) setNextQuestions(saved.nextQuestions);
     if (Array.isArray(saved.detail_options)) setDetailOptions(saved.detail_options);
     if (Array.isArray(saved.detailOptions)) setDetailOptions(saved.detailOptions);
+    if (typeof saved.selected_style_skill_id === 'string') setSelectedStyleSkillId(saved.selected_style_skill_id);
+    if (typeof saved.selectedStyleSkillId === 'string') setSelectedStyleSkillId(saved.selectedStyleSkillId);
   };
 
   const hasSavedSession = (saved: any) => Boolean(
@@ -98,6 +103,8 @@ export default function CreateProjectPage() {
       || saved.suggestions?.length
       || saved.selected_genres?.length
       || saved.selectedGenres?.length
+      || saved.selected_style_skill_id
+      || saved.selectedStyleSkillId
     )
   );
 
@@ -130,6 +137,10 @@ export default function CreateProjectPage() {
   }, [stopPolling]);
 
   useEffect(() => {
+    writingStyleSkillApi.list().then(setStyleSkills).catch(() => setStyleSkills([]));
+  }, []);
+
+  useEffect(() => {
     if (!restoredRef.current) return;
     const payload = {
       messages,
@@ -140,9 +151,10 @@ export default function CreateProjectPage() {
       selectedSuggestionIndex,
       nextQuestions,
       detailOptions,
+      selectedStyleSkillId,
       updatedAt: Date.now(),
     };
-    const hasDraft = chatInput.trim() || messages.length || draft || suggestions.length || selectedGenres.length;
+    const hasDraft = chatInput.trim() || messages.length || draft || suggestions.length || selectedGenres.length || selectedStyleSkillId;
     if (hasDraft) {
       localStorage.setItem(PLANNING_DRAFT_KEY, JSON.stringify(payload));
       if (saveTimerRef.current) window.clearTimeout(saveTimerRef.current);
@@ -164,7 +176,7 @@ export default function CreateProjectPage() {
     return () => {
       if (saveTimerRef.current) window.clearTimeout(saveTimerRef.current);
     };
-  }, [messages, selectedGenres, chatInput, draft, suggestions, selectedSuggestionIndex, nextQuestions, detailOptions]);
+  }, [messages, selectedGenres, chatInput, draft, suggestions, selectedSuggestionIndex, nextQuestions, detailOptions, selectedStyleSkillId]);
 
   const pollTask = async (taskId: string) => new Promise<any>((resolve, reject) => {
     const startedAt = Date.now();
@@ -202,6 +214,7 @@ export default function CreateProjectPage() {
         genres: selectedGenres.join(','),
         current_draft: draft || {},
         intent,
+        style_skill_id: selectedStyleSkillId || null,
       });
       message.loading({ content: intent === 'generate' ? 'AI 正在整理候选方案…' : 'AI 正在和你继续推敲…', key: 'plan', duration: 0 });
       const result = await pollTask(res.data.task_id);
@@ -250,6 +263,7 @@ export default function CreateProjectPage() {
         genre: s.genre || selectedGenres[0] || '',
         target_total_words: totalWords,
         story_suggestion: s.brief || '',
+        style_skill_id: selectedStyleSkillId || null,
       });
       await api.post(`/projects/${pid}/wizard/apply-story`, {
         title: s.title || '未命名作品',
@@ -275,6 +289,7 @@ export default function CreateProjectPage() {
     setDetailOptions([]);
     setSelectedSuggestionIndex(0);
     setChatInput('');
+    setSelectedStyleSkillId('');
     localStorage.removeItem(PLANNING_DRAFT_KEY);
     api.delete('/projects/plan-session').catch(() => {});
     stopPolling();
@@ -306,6 +321,24 @@ export default function CreateProjectPage() {
                   </Col>
                 ))}
               </Row>
+            </div>
+
+            <div style={{ marginBottom: 16 }}>
+              <Text type="secondary">共享写作风格 Skill（可选）：</Text>
+              <Select
+                allowClear
+                value={selectedStyleSkillId || undefined}
+                onChange={(value) => setSelectedStyleSkillId(value || '')}
+                placeholder="选择一个共享 Skill，策划对话和后续大纲/写作会使用"
+                style={{ width: '100%', marginTop: 8 }}
+                options={styleSkills.map((skill) => ({
+                  value: skill.id,
+                  label: `${skill.name}${skill.description ? `｜${skill.description}` : ''}`,
+                }))}
+              />
+              <Text type="secondary" style={{ display: 'block', marginTop: 6, fontSize: 12 }}>
+                Skill 是共享写作方法库，不属于当前项目；创建后项目只保存引用。
+              </Text>
             </div>
 
             <div style={{ minHeight: 260, maxHeight: 420, overflow: 'auto', padding: 12, background: 'var(--bg)', borderRadius: 8, marginBottom: 16 }}>

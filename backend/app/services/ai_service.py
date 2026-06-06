@@ -218,6 +218,15 @@ OUTLINE_PLAN_PROMPT = """
 - 角色：{characters_summary}
 - 势力：{forces_summary}
 
+【写作风格 Skill】
+{writing_style_guidance}
+
+Skill 使用规则：
+- Skill 是跨项目共享的抽象写法，只影响“怎么构思、怎么组织、怎么写”，不能改变本项目核心设定。
+- 在创建大纲时，用它指导人物塑造、情绪推进、世界观揭示、冲突来源、章节结构、读者反馈和语言气质。
+- 项目梗概、世界硬约束、角色设定优先级高于 Skill。
+- 禁止复刻 Skill 来源样本的原句、桥段、人物名、地名、组织名和专有设定。
+
 在分卷之前，先设计全书的"叙事引擎"层面：
 
 1. 核心驱动力——什么力量在不可逆地推动故事前进？不是"主角想变强"，而是具体的时间压力、空间限制、规则约束。例如："封印每月削弱10%，主角必须在第8卷前集齐7个碎片，否则世界将不可逆地坍缩"
@@ -291,6 +300,14 @@ EXPAND_VOLUME_ARCS_PROMPT = """
 角色：{characters_summary}
 势力：{factions_summary}
 本卷共 {chapter_count} 章。
+
+【写作风格 Skill】
+{writing_style_guidance}
+
+Skill 使用规则：
+- 用它指导本卷弧线的章节功能、人物关系推进、情绪铺垫、世界观揭示、冲突设计和读者反馈。
+- 不得为了套风格改变本卷主线事实。
+- 禁止复刻 Skill 来源样本的原句、桥段、人物名、地名、组织名和专有设定。
 
 用户指定的弧线展开策略：
 - 弧线策略：{arc_strategy}
@@ -419,6 +436,14 @@ EXPAND_ARC_CHAPTERS_PROMPT = """
 角色：{characters_summary}
 势力：{factions_summary}
 
+【写作风格 Skill】
+{writing_style_guidance}
+
+Skill 使用规则：
+- 用它指导章节开场、场景组织、人物刻画、情绪与关系推进、信息控制、章末钩子和细节选择。
+- Skill 只决定章节蓝图的写法组织方式，不改变弧线核心事件和已写事实。
+- 禁止复刻 Skill 来源样本的原句、桥段、人物名、地名、组织名和专有设定。
+
 节奏：{pacing}  事件密度：{event_density}
 展开长度：{expansion_scale}
 长度策略：{expansion_desc}
@@ -522,6 +547,15 @@ WRITE_CHAPTER_PROMPT = """
 
 【前20万字追读策略】
 {early_grip_guidance}
+
+【写作风格 Skill】
+{writing_style_guidance}
+
+Skill 使用规则：
+- Skill 只控制“怎么写”，不能改变“写什么”。
+- 当前项目设定、世界硬约束、已写正文事实、章节蓝图和角色状态优先级更高。
+- 写作时吸收 Skill 中的人物刻画、情绪处理、世界观揭示、场景描述、冲突设计、关系推进、细节选择、语言节奏和章节结构方法。
+- 禁止复制 Skill 来源样本文本原句、桥段、人物名、地名、组织名和专有设定。
 
 【标点规范】
 {punctuation_rules}
@@ -1154,6 +1188,171 @@ ADJUST_OUTLINE_CHAT_PROMPT = """
 }}
 """
 
+WRITING_STYLE_SKILL_PROMPT = """
+你是资深网文编辑、写作教练和文本近读分析师。用户会提供一组小说样本节选，可能来自长篇作品的开篇、中段、后段或多个章节。
+
+任务：
+从样本文本中提取“作者实际怎么把小说写出来”的抽象写作工艺，生成一个可跨项目复用的写作风格 Skill。这个 Skill 用于指导原创小说的创建、世界观设计、大纲规划、章节蓝图和正文写作，而不是复刻样本文本。
+
+重点不是写读后感，不是总结题材标签，不是说“快节奏、强爽点、人物鲜明”这种空话。
+你必须拆解：
+- 作者如何开场进入一个章节。
+- 作者如何用一句话、一段对白、一个小动作把人物立住。
+- 作者如何选择生活细节、身体反应、物品、环境声音。
+- 作者如何让设定通过争论、误会、行动、利益冲突自然出现。
+- 作者如何控制段落长短、句子节奏、标点和停顿。
+- 作者如何在日常、铺垫、冲突、战斗、情绪、结尾之间切换。
+- 作者如何让读者产生追读，而不是靠概念摘要。
+- 作者有哪些稳定的“写作手癖”和必须避开的弱点。
+
+严格限制：
+1. 不得摘抄样本文本原句。
+2. 不得复刻样本剧情桥段。
+3. 不得使用样本中的人物名、地名、组织名、专有设定。
+4. 不要评价作者，不要提作者名。
+5. 不要出现“像某某作品/某某作者”。
+6. 只输出可指导原创小说写作的抽象规则。
+7. 每个维度必须写“可执行写法”，不要只写审美判断。
+8. 不能只分析剧情和设定，必须深入语言、段落、细节、人物表达和场景落点。
+9. 输出必须是完整合法 JSON，不要 Markdown，不要代码块。
+
+Skill 名称要求：
+- 如果用户提供名称，优先使用用户名称：{skill_name}
+- 如果没有名称，根据写法特征生成一个中性名称，例如“细腻人物关系写法”“快节奏悬疑钩子写法”。
+- 不要使用原作者名、作品名、角色名。
+
+请抽取这些维度，尤其要关注“怎么写”：
+1. 核心风格定位
+2. 叙事视角与叙事距离
+3. 叙事节奏
+4. 章节结构习惯
+5. 场景组织方式
+6. 场景描写与感官偏好
+7. 人物刻画方式
+8. 角色语言指纹
+9. 对白手法
+10. 情绪与感情描写
+11. 人物关系推进方式
+12. 世界观架构和设定揭示方式
+13. 信息控制与悬念管理
+14. 冲突设计方式
+15. 爽点/虐点/读者反馈机制
+16. 细节选择与生活质感
+17. 语言风格与句式节奏
+18. 主题表达方式
+19. 文笔工艺：句子、段落、停顿、标点、口语化程度
+20. 章节生产法：一章从哪里切入、如何推进、如何收束
+21. 细节工艺：哪些细节会被写、哪些不会写、细节如何服务人物/冲突/情绪
+22. 人物出场工艺：人物第一次出现如何靠动作/称呼/反应立住
+23. 情绪落点工艺：情绪如何落在物件、动作、沉默、打断和未说出口的话上
+24. 场景真实感工艺：如何让场景有可见阻力、生活杂音和具体后果
+
+输出要求：
+- 每个对象字段都必须包含 summary。
+- rules / techniques 至少 4 条，必须是“写作动作”，例如“先让角色做一件带立场的小事，再给解释”，不能是“人物要鲜明”。
+- avoid 至少 2 条，写清该风格下最容易写坏的地方。
+- 必须给出 sample_diagnosis，说明这批样本覆盖了哪些阶段，哪些结论置信度高，哪些需要更多样本验证。
+- 必须给出 reusable_patterns，列出 8-12 个可直接复用的写作模式。
+- 必须给出 writing_recipe，拆成“开场、铺垫、冲突、解释、情绪、结尾”六步。
+- 必须给出 prompt_fragment，能直接注入正文写作 Prompt。
+
+样本文本：
+{sample_text}
+
+返回 JSON：
+{{
+  "name": "写作风格 Skill 名称",
+  "description": "适合哪些小说、哪些阶段、哪些写法目标，120字以内",
+  "core_style": "一句话概括核心写法",
+  "sample_diagnosis": {{
+    "covered_sections": ["样本覆盖的阶段，如开篇/中段/后段/战斗/日常/情绪戏"],
+    "high_confidence_findings": ["置信度高的写法判断"],
+    "needs_more_samples": ["还需要更多样本才能判断的部分"]
+  }},
+  "best_for": ["适合的题材/章节类型"],
+  "not_suitable_for": ["不适合的方向"],
+  "pov_style": {{"summary": "", "rules": []}},
+  "pacing_style": {{"summary": "", "rules": []}},
+  "chapter_structure_style": {{"opening": "", "middle": "", "ending": "", "rules": []}},
+  "scene_construction_style": {{"summary": "", "rules": []}},
+  "scene_description_style": {{"summary": "", "sensory_preference": [], "rules": [], "avoid": []}},
+  "characterization_style": {{"summary": "", "techniques": [], "avoid": []}},
+  "character_voice_style": {{"summary": "", "rules": []}},
+  "dialogue_style": {{"density": "", "summary": "", "techniques": [], "avoid": []}},
+  "emotion_style": {{"summary": "", "techniques": [], "avoid": []}},
+  "relationship_style": {{"summary": "", "techniques": []}},
+  "worldbuilding_style": {{"summary": "", "techniques": [], "information_reveal": "", "avoid": []}},
+  "information_control_style": {{"summary": "", "techniques": []}},
+  "conflict_style": {{"summary": "", "conflict_sources": [], "techniques": []}},
+  "reader_payoff_style": {{"summary": "", "payoff_types": [], "rules": []}},
+  "detail_style": {{"summary": "", "preferred_details": [], "rules": []}},
+  "language_style": {{"summary": "", "sentence_length": "", "paragraph_length": "", "rhythm": "", "avoid": []}},
+  "theme_style": {{"summary": "", "techniques": []}},
+  "prose_craft_style": {{
+    "summary": "文笔工艺：句式、段落、停顿、标点、口语化、叙述粗粝度",
+    "sentence_patterns": [],
+    "paragraph_patterns": [],
+    "punctuation_habits": [],
+    "rhythm_rules": [],
+    "avoid": []
+  }},
+  "paragraph_flow_style": {{
+    "summary": "段落如何从动作、反应、解释、对白之间切换",
+    "transition_methods": [],
+    "compression_methods": [],
+    "slowdown_methods": [],
+    "avoid": []
+  }},
+  "detail_craft_style": {{
+    "summary": "细节刻画工艺，不是泛泛说细腻",
+    "detail_sources": [],
+    "how_details_carry_character": [],
+    "how_details_carry_emotion": [],
+    "how_details_return_later": [],
+    "avoid": []
+  }},
+  "character_entrance_style": {{
+    "summary": "人物出场和立住人物的工艺",
+    "entrance_methods": [],
+    "first_impression_tools": [],
+    "contrast_methods": [],
+    "avoid": []
+  }},
+  "emotion_landing_style": {{
+    "summary": "情绪如何落地，不直接喊情绪",
+    "physical_reactions": [],
+    "object_anchors": [],
+    "silence_or_interruption": [],
+    "aftertaste_methods": [],
+    "avoid": []
+  }},
+  "scene_reality_style": {{
+    "summary": "场景真实感和生活质感的制造方式",
+    "practical_obstacles": [],
+    "ambient_noise": [],
+    "body_sensations": [],
+    "consequence_details": [],
+    "avoid": []
+  }},
+  "chapter_production_recipe": {{
+    "opening": ["章节如何切入"],
+    "setup": ["如何铺垫目标和阻力"],
+    "conflict": ["如何推进冲突"],
+    "explanation": ["如何自然解释设定"],
+    "emotion": ["如何给情绪落点"],
+    "ending": ["如何制造章末钩子"]
+  }},
+  "reusable_patterns": [
+    {{"name": "模式名", "when_to_use": "什么时候用", "steps": ["步骤1", "步骤2", "步骤3"], "avoid": "不要怎么写"}}
+  ],
+  "creation_guidance": "用于创建小说/项目策划阶段的指导，强调适合什么故事核心和读者承诺",
+  "outline_guidance": "用于大纲/卷轴/章节蓝图阶段的指导，强调结构、人物关系、世界观揭示和章节功能",
+  "writing_guidance": "用于正文写作阶段的指导，强调语言、场景、对白、情绪、细节",
+  "avoid_rules": ["不得复制样本文本原句", "不得复刻样本剧情桥段", "不得使用样本专有设定"],
+  "prompt_fragment": "可直接注入 prompt 的 600-1000 字风格指令，必须覆盖文笔、段落、细节、人物、情绪、场景、章节结构，不得包含原文专有内容"
+}}
+"""
+
 
 class AIService:
     def _strip_json_fence(self, text: str) -> str:
@@ -1352,11 +1551,12 @@ class AIService:
     async def generate_factions(self, title: str, genre: str, brief: str, core_theme: str, faction_count: int = 3) -> dict:
         return await self._ask(FACTIONS_PROMPT, system=SYSTEM_DESIGNER, title=title, genre=genre, brief=brief, core_theme=core_theme or "待定", faction_count=faction_count)
 
-    async def generate_outline_plan(self, title: str, genre: str, brief: str, core_theme: str, total_words: int, characters_summary: str, factions_summary: str) -> dict:
+    async def generate_outline_plan(self, title: str, genre: str, brief: str, core_theme: str, total_words: int, characters_summary: str, factions_summary: str, writing_style_guidance: str = "未启用写作风格 Skill，按项目类型和通用网文写法规划。") -> dict:
         return await self._ask(OUTLINE_PLAN_PROMPT, system=SYSTEM_ARCHITECT,
             title=title, genre=genre, brief=brief, core_theme=core_theme or "待定",
             total_words=total_words,
-            characters_summary=characters_summary, forces_summary=factions_summary)
+            characters_summary=characters_summary, forces_summary=factions_summary,
+            writing_style_guidance=writing_style_guidance or "未启用写作风格 Skill，按项目类型和通用网文写法规划。")
 
     async def expand_volume_outline(self, title: str, genre: str, brief: str, core_theme: str, characters_summary: str, factions_summary: str, narrative_engine: dict, volume_data: dict, neighbor_volumes: list[dict]) -> dict:
         return await self._ask(
@@ -1387,6 +1587,7 @@ class AIService:
         arc_density: str = "标准弧线",
         style_focus: str = "主线清晰，角色自然成长",
         length_control: str = "按全书体量和本卷复杂度自主判断",
+        writing_style_guidance: str = "未启用写作风格 Skill，按本卷大纲和通用网文写法拆分。",
     ) -> list[dict]:
         return await self._ask_list(EXPAND_VOLUME_ARCS_PROMPT, system=SYSTEM_ARCHITECT, max_tokens=16384,
             title=title, genre=genre,
@@ -1396,7 +1597,8 @@ class AIService:
             arc_strategy=arc_strategy,
             arc_density=arc_density,
             style_focus=style_focus,
-            length_control=length_control)
+            length_control=length_control,
+            writing_style_guidance=writing_style_guidance or "未启用写作风格 Skill，按本卷大纲和通用网文写法拆分。")
 
     async def revise_volume_arc(
         self,
@@ -1427,7 +1629,7 @@ class AIService:
             return result[0]
         raise RuntimeError("AI 返回弧线格式异常")
 
-    async def expand_arc_chapters(self, title: str, genre: str, volume_title: str, volume_outline: str, arc_name: str, arc_description: str, tension_curve: str, key_milestones: list, previous_arc_ending: str, characters_summary: str, factions_summary: str, pacing: str = "medium", event_density: str = "medium", expansion_scale: str = "standard", chapter_range_guidance: str = "按弧线复杂度自主判断", narrative_function: str = "", emotional_color: str = "", dependence_on_previous: str = "", payoff_for_next: str = "") -> list[dict]:
+    async def expand_arc_chapters(self, title: str, genre: str, volume_title: str, volume_outline: str, arc_name: str, arc_description: str, tension_curve: str, key_milestones: list, previous_arc_ending: str, characters_summary: str, factions_summary: str, pacing: str = "medium", event_density: str = "medium", expansion_scale: str = "standard", chapter_range_guidance: str = "按弧线复杂度自主判断", narrative_function: str = "", emotional_color: str = "", dependence_on_previous: str = "", payoff_for_next: str = "", writing_style_guidance: str = "未启用写作风格 Skill，按弧线功能和通用网文写法展开。") -> list[dict]:
         pacing_map = {
             "slow": ("缓慢", "生活流节奏，重心理描写与环境氛围，场景停留时间更长"),
             "medium": ("适中", "主线稳步推进，日常与冲突交替，保持阅读节奏感"),
@@ -1460,7 +1662,8 @@ class AIService:
             expansion_scale=scale_label, expansion_desc=scale_desc,
             chapter_range_guidance=chapter_range_guidance,
             narrative_function=narrative_function, emotional_color=emotional_color,
-            dependence_on_previous=dependence_on_previous, payoff_for_next=payoff_for_next)
+            dependence_on_previous=dependence_on_previous, payoff_for_next=payoff_for_next,
+            writing_style_guidance=writing_style_guidance or "未启用写作风格 Skill，按弧线功能和通用网文写法展开。")
 
     async def expand_volume(self, title: str, genre: str, brief: str, volume_title: str, volume_summary: str, volume_outline: str, volume_theme: str, characters_summary: str, factions_summary: str, chapter_count: int, chapter_words: int, pacing: str = "medium", event_density: str = "medium", subplot_count: int = 2) -> list[dict]:
         pacing_map = {
@@ -1487,7 +1690,7 @@ class AIService:
             event_density=event_label, event_desc=event_desc,
             subplot_count=subplot_count, main_ratio=main_ratio)
 
-    async def write_chapter(self, title: str, genre: str, brief: str, chapter_number: int, chapter_title: str, chapter_summary: str, volume_outline: str, characters_summary: str, factions_summary: str, min_words: int = 3000, written_so_far: int = 0, previous_ending: str = "无（这是第一章）", story_state_snapshot: str = "无（这是第一章）", pov_character: str = "主角", readability_guidance: str = "按成熟类型小说的清晰度写作。", early_grip_guidance: str = "非前20万字章节，按当前章节功能正常推进。") -> tuple[str, str, list[dict]]:
+    async def write_chapter(self, title: str, genre: str, brief: str, chapter_number: int, chapter_title: str, chapter_summary: str, volume_outline: str, characters_summary: str, factions_summary: str, min_words: int = 3000, written_so_far: int = 0, previous_ending: str = "无（这是第一章）", story_state_snapshot: str = "无（这是第一章）", pov_character: str = "主角", readability_guidance: str = "按成熟类型小说的清晰度写作。", early_grip_guidance: str = "非前20万字章节，按当前章节功能正常推进。", writing_style_guidance: str = "未启用写作风格 Skill，按项目设定和通用网文写法写作。") -> tuple[str, str, list[dict]]:
         llm = await get_llm()
         prompt = WRITE_CHAPTER_PROMPT.format(
             title=title, genre=genre, brief=brief or "",
@@ -1500,6 +1703,7 @@ class AIService:
             pov_character=pov_character,
             readability_guidance=readability_guidance,
             early_grip_guidance=early_grip_guidance,
+            writing_style_guidance=writing_style_guidance or "未启用写作风格 Skill，按项目设定和通用网文写法写作。",
             punctuation_rules=PUNCTUATION_RULES.strip(),
             de_ai_rules=DE_AI_FICTION_RULES.strip(),
         )
@@ -1638,6 +1842,18 @@ class AIService:
             messages=json.dumps(messages or [], ensure_ascii=False, indent=2),
             adjust_scope=adjust_scope or "outline",
             outline_payload=json.dumps(outline_payload or {}, ensure_ascii=False, indent=2),
+        )
+
+    async def analyze_writing_style_skill(self, sample_text: str, skill_name: str = "") -> dict:
+        sample = (sample_text or "").strip()
+        if len(sample) > 50000:
+            sample = sample[:50000]
+        return await self._ask(
+            WRITING_STYLE_SKILL_PROMPT,
+            system=SYSTEM_EDITOR,
+            max_tokens=16384,
+            sample_text=sample,
+            skill_name=skill_name or "未命名写作风格",
         )
 
     async def summarize_state(self, story_context: dict, chapter_context: dict, content: str) -> dict:

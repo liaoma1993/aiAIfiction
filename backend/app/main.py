@@ -22,6 +22,7 @@ async def lifespan(app: FastAPI):
     import app.models.chapter
     import app.models.world_setting
     import app.models.llm_provider
+    import app.models.writing_style_skill
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
         if str(engine.url).startswith("sqlite"):

@@ -6,6 +6,7 @@ from app.database import get_db, async_session
 from app.models.user import User
 from app.models.project import Project
 from app.models.project_plan_session import ProjectPlanSession
+from app.models.writing_style_skill import WritingStyleSkill
 from app.api.deps import get_current_user
 from app.services.ai_service import AIService
 from app.services.task_manager import start_task, get_task
@@ -18,6 +19,7 @@ class CreateProjectRequest(BaseModel):
     target_total_words: int | None = None
     story_suggestion: str = ""
     interests: str = ""
+    style_skill_id: str | None = None
 
 
 class ProjectPlanChatRequest(BaseModel):
@@ -25,6 +27,7 @@ class ProjectPlanChatRequest(BaseModel):
     genres: str = ""
     current_draft: dict = {}
     intent: str = "chat"
+    style_skill_id: str | None = None
 
 
 class ProjectPlanSessionRequest(BaseModel):
@@ -95,7 +98,82 @@ async def _save_plan_session(user_id: str, body: ProjectPlanSessionRequest) -> d
         return payload
 
 
-async def _do_plan_chat(user_id: str, messages: list[dict], genres: str, current_draft: dict, intent: str = "chat") -> dict:
+def _clip_style_text(value, limit: int = 700) -> str:
+    text = value if isinstance(value, str) else str(value or "")
+    text = text.strip()
+    return text if len(text) <= limit else text[:limit] + "..."
+
+
+def _format_creation_style_skill(skill: WritingStyleSkill | None) -> str:
+    if not skill:
+        return ""
+    profile = skill.style_profile or {}
+    parts = [
+        f"当前选中的共享写作风格 Skill：{skill.name}",
+        f"核心写法：{_clip_style_text(profile.get('core_style') or skill.description, 500)}",
+    ]
+    if profile.get("creation_guidance"):
+        parts.append(f"创建阶段指导：{_clip_style_text(profile.get('creation_guidance'), 900)}")
+    if profile.get("outline_guidance"):
+        parts.append(f"长线规划倾向：{_clip_style_text(profile.get('outline_guidance'), 700)}")
+    for key, label in [
+        ("characterization_style", "人物刻画"),
+        ("emotion_style", "情绪感情"),
+        ("relationship_style", "人物关系"),
+        ("worldbuilding_style", "世界观揭示"),
+        ("conflict_style", "冲突设计"),
+        ("reader_payoff_style", "读者反馈"),
+        ("language_style", "语言手感"),
+        ("prose_craft_style", "文笔工艺"),
+        ("detail_craft_style", "细节工艺"),
+        ("character_entrance_style", "人物出场"),
+        ("emotion_landing_style", "情绪落点"),
+        ("scene_reality_style", "场景真实感"),
+    ]:
+        section = profile.get(key)
+        if isinstance(section, dict):
+            summary = section.get("summary") or ""
+            rules = (
+                section.get("rules")
+                or section.get("techniques")
+                or section.get("rhythm_rules")
+                or section.get("detail_sources")
+                or section.get("entrance_methods")
+                or section.get("physical_reactions")
+                or section.get("practical_obstacles")
+                or []
+            )
+            detail = "；".join([summary, *[str(x) for x in rules[:3]]]).strip("；")
+            if detail:
+                parts.append(f"{label}：{_clip_style_text(detail, 420)}")
+    recipe = profile.get("chapter_production_recipe")
+    if isinstance(recipe, dict):
+        recipe_text = []
+        for key, label in [("opening", "开场"), ("conflict", "冲突"), ("emotion", "情绪"), ("ending", "结尾")]:
+            value = recipe.get(key)
+            if isinstance(value, list) and value:
+                recipe_text.append(f"{label}：" + "；".join(str(x) for x in value[:2]))
+        if recipe_text:
+            parts.append(f"章节生产法：{_clip_style_text('；'.join(recipe_text), 700)}")
+    parts.append("使用边界：Skill 只指导写作方法和策划侧重点，不得复制来源样本的原句、桥段、人物名、地名、组织名和专有设定。用户当前故事核心优先级最高。")
+    return "\n".join(parts)
+
+
+async def _load_user_style_skill(db: AsyncSession, user_id: str, skill_id: str | None) -> WritingStyleSkill | None:
+    if not skill_id:
+        return None
+    return (await db.execute(
+        select(WritingStyleSkill).where(WritingStyleSkill.id == skill_id, WritingStyleSkill.user_id == user_id, WritingStyleSkill.is_active == True)
+    )).scalar_one_or_none()
+
+
+async def _do_plan_chat(user_id: str, messages: list[dict], genres: str, current_draft: dict, intent: str = "chat", style_skill_id: str | None = None) -> dict:
+    style_guidance = ""
+    if style_skill_id:
+        async with async_session() as db:
+            style_guidance = _format_creation_style_skill(await _load_user_style_skill(db, user_id, style_skill_id))
+    if style_guidance:
+        current_draft = {**(current_draft or {}), "writing_style_skill_guidance": style_guidance}
     ai = AIService()
     data = await ai.chat_project_plan(messages, genres, current_draft or {}, intent)
     suggestions = data.get("suggestions") or []
@@ -139,7 +217,7 @@ async def _do_plan_chat(user_id: str, messages: list[dict], genres: str, current
 
 @router.post("/plan-chat")
 async def plan_chat(body: ProjectPlanChatRequest, user: User = Depends(get_current_user)):
-    task_id = start_task(_do_plan_chat(user.id, body.messages, body.genres, body.current_draft, body.intent), "project_plan_chat")
+    task_id = start_task(_do_plan_chat(user.id, body.messages, body.genres, body.current_draft, body.intent, body.style_skill_id), "project_plan_chat")
     return {"task_id": task_id}
 
 
@@ -185,11 +263,16 @@ async def create_project(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    if body.style_skill_id:
+        skill = await _load_user_style_skill(db, user.id, body.style_skill_id)
+        if not skill:
+            raise HTTPException(404, "写作风格 Skill 不存在")
     project = Project(
         user_id=user.id,
         genre=body.genre,
         target_total_words=body.target_total_words or 300000,
         story_brief=body.story_suggestion,
+        writing_style={"active_style_skill_id": body.style_skill_id} if body.style_skill_id else {},
     )
     db.add(project)
     await db.flush()

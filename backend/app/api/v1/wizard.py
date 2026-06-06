@@ -20,6 +20,7 @@ from app.models.outline import Outline, OutlineNode, ForeshadowingPlan
 from app.models.chapter import Chapter, ChapterVersion, GenerationTask
 from app.models.timeline import TimelineEvent, StoryStateTrail
 from app.models.world_setting import WorldSetting
+from app.models.writing_style_skill import WritingStyleSkill
 from app.api.deps import get_current_user
 from app.services.ai_service import AIService, SYSTEM_EDITOR
 from app.services.task_manager import start_task, get_task_persisted, list_tasks_persisted, update_progress, cancel_task, is_cancelled
@@ -483,6 +484,124 @@ def _writing_controls_guidance(controls: dict | None) -> str:
     return "\n".join([pace, dialogue, description, humor, info, template])
 
 
+def _clip_style_line(value, limit: int = 360) -> str:
+    text = value if isinstance(value, str) else json.dumps(value or "", ensure_ascii=False)
+    text = (text or "").strip()
+    return text if len(text) <= limit else text[:limit] + "..."
+
+
+def _format_writing_style_skill(skill: WritingStyleSkill | None, phase: str = "writing") -> str:
+    if not skill:
+        return "未启用写作风格 Skill。"
+    profile = skill.style_profile or {}
+    lines = [
+        f"Skill 名称：{skill.name}",
+        f"核心风格：{_clip_style_line(profile.get('core_style') or skill.description, 500)}",
+    ]
+    phase_key = {
+        "creation": "creation_guidance",
+        "outline": "outline_guidance",
+        "writing": "writing_guidance",
+    }.get(phase, "writing_guidance")
+    if profile.get(phase_key):
+        lines.append(f"阶段指导：{_clip_style_line(profile.get(phase_key), 700)}")
+    for label, key in [
+        ("视角", "pov_style"),
+        ("节奏", "pacing_style"),
+        ("章节结构", "chapter_structure_style"),
+        ("场景", "scene_construction_style"),
+        ("场景描写", "scene_description_style"),
+        ("人物刻画", "characterization_style"),
+        ("角色语言", "character_voice_style"),
+        ("对白", "dialogue_style"),
+        ("情绪感情", "emotion_style"),
+        ("人物关系", "relationship_style"),
+        ("世界观揭示", "worldbuilding_style"),
+        ("信息控制", "information_control_style"),
+        ("冲突", "conflict_style"),
+        ("读者反馈", "reader_payoff_style"),
+        ("细节", "detail_style"),
+        ("语言", "language_style"),
+        ("主题", "theme_style"),
+        ("文笔工艺", "prose_craft_style"),
+        ("段落推进", "paragraph_flow_style"),
+        ("细节工艺", "detail_craft_style"),
+        ("人物出场", "character_entrance_style"),
+        ("情绪落点", "emotion_landing_style"),
+        ("场景真实感", "scene_reality_style"),
+    ]:
+        section = profile.get(key)
+        if isinstance(section, dict):
+            summary = section.get("summary") or section.get("opening") or ""
+            rules = (
+                section.get("rules")
+                or section.get("techniques")
+                or section.get("rhythm_rules")
+                or section.get("transition_methods")
+                or section.get("detail_sources")
+                or section.get("entrance_methods")
+                or section.get("physical_reactions")
+                or section.get("practical_obstacles")
+                or []
+            )
+            parts = []
+            if summary:
+                parts.append(str(summary))
+            if isinstance(rules, list) and rules:
+                parts.append("；".join(str(x) for x in rules[:4]))
+            if parts:
+                lines.append(f"{label}：{_clip_style_line('；'.join(parts), 520)}")
+    recipe = profile.get("chapter_production_recipe")
+    if isinstance(recipe, dict):
+        recipe_parts = []
+        for key, label in [
+            ("opening", "开场"),
+            ("setup", "铺垫"),
+            ("conflict", "冲突"),
+            ("explanation", "解释"),
+            ("emotion", "情绪"),
+            ("ending", "结尾"),
+        ]:
+            value = recipe.get(key)
+            if isinstance(value, list) and value:
+                recipe_parts.append(f"{label}：" + "；".join(str(x) for x in value[:2]))
+            elif isinstance(value, str) and value:
+                recipe_parts.append(f"{label}：{value}")
+        if recipe_parts:
+            lines.append(f"章节生产法：{_clip_style_line('；'.join(recipe_parts), 900)}")
+    patterns = profile.get("reusable_patterns")
+    if isinstance(patterns, list) and patterns:
+        pattern_lines = []
+        for item in patterns[:5]:
+            if isinstance(item, dict):
+                steps = item.get("steps") or []
+                step_text = " -> ".join(str(x) for x in steps[:3]) if isinstance(steps, list) else str(steps)
+                pattern_lines.append(f"{item.get('name', '写法模式')}：{item.get('when_to_use', '')}；{step_text}")
+            else:
+                pattern_lines.append(str(item))
+        lines.append(f"可复用写法模式：{_clip_style_line('；'.join(pattern_lines), 900)}")
+    avoid = profile.get("avoid_rules") or []
+    if isinstance(avoid, list) and avoid:
+        lines.append("禁用：" + "；".join(str(x) for x in avoid[:8]))
+    if skill.prompt_fragment:
+        lines.append(f"可执行风格指令：{_clip_style_line(skill.prompt_fragment, 900)}")
+    return "\n".join(lines)
+
+
+async def _active_writing_style_skill(db: AsyncSession, project: Project | None) -> WritingStyleSkill | None:
+    if not project:
+        return None
+    style = project.writing_style or {}
+    if not isinstance(style, dict):
+        return None
+    skill_id = style.get("active_style_skill_id")
+    if not skill_id:
+        return None
+    return (await db.execute(
+        select(WritingStyleSkill).where(WritingStyleSkill.id == skill_id, WritingStyleSkill.user_id == project.user_id, WritingStyleSkill.is_active == True)
+    )).scalar_one_or_none()
+
+
 def _normalize_narrative_line(value: str | None) -> str:
     text = str(value or "").strip()
     mapping = {
@@ -615,7 +734,9 @@ async def apply_story(project_id: str, body: ApplyStoryRequest, user: User = Dep
     project.genre = body.genre
     project.story_brief = body.brief
     project.target_total_words = body.total_words
+    existing_style = project.writing_style if isinstance(project.writing_style, dict) else {}
     project.writing_style = {
+        **existing_style,
         "tags": body.tags,
         "wizard_planning_memory": _build_wizard_planning_memory(
             body.planning_messages,
@@ -1276,6 +1397,7 @@ async def _do_write_chapter(project_id: str, chapter_id: str, mode: str = "appen
             chapter_summary = chapter.summary or instruction or ""
         if bridge_context and arc_idx > 0:
             chapter_summary = f"{chapter_summary}\n\n【跨弧线桥接要求】\n{bridge_context}"
+        writing_style_guidance = _format_writing_style_skill(await _active_writing_style_skill(db, project), "writing")
 
         text, hook, new_characters = await ai.write_chapter(
             project.title, project.genre, _wizard_story_brief(project),
@@ -1287,6 +1409,7 @@ async def _do_write_chapter(project_id: str, chapter_id: str, mode: str = "appen
             pov_character=pov_char,
             readability_guidance=_readability_guidance(controls),
             early_grip_guidance=_early_grip_guidance(project, chapter, vol, controls),
+            writing_style_guidance=writing_style_guidance,
         )
         text, quality_review = await _review_and_light_fix_chapter(
             ai,
@@ -1850,6 +1973,7 @@ async def _do_batch_write_arc(project_id: str, volume_id: str, arc_index: int, t
 
         write_controls = _merge_writing_controls(project, controls or {"readability_mode": readability_mode})
         write_controls["readability_mode"] = readability_mode or write_controls.get("readability_mode", "easy")
+        writing_style_guidance = _format_writing_style_skill(await _active_writing_style_skill(db, project), "writing")
         ai = AIService()
         total_words = 0
         done = 0
@@ -1927,6 +2051,7 @@ async def _do_batch_write_arc(project_id: str, volume_id: str, arc_index: int, t
                 pov_character=pov_char,
                 readability_guidance=_readability_guidance(write_controls),
                 early_grip_guidance=_early_grip_guidance(project, ch, volume, write_controls),
+                writing_style_guidance=writing_style_guidance,
             )
             text, quality_review = await _review_and_light_fix_chapter(
                 ai,
@@ -2031,6 +2156,7 @@ async def _do_expand_volume_arcs(
             "arc_density": arc_density,
             "style_focus": style_focus,
             "length_control": length_control,
+            "writing_style_guidance": _format_writing_style_skill(await _active_writing_style_skill(db, project), "outline"),
         }
 
     ai = AIService()
@@ -2046,6 +2172,7 @@ async def _do_expand_volume_arcs(
         arc_density=snapshot["arc_density"],
         style_focus=snapshot["style_focus"],
         length_control=snapshot["length_control"],
+        writing_style_guidance=snapshot["writing_style_guidance"],
     )
 
     async with async_session() as db:
@@ -2246,6 +2373,7 @@ async def _do_expand_arc_chapters(project_id: str, volume_id: str, arc_index: in
             "start_chapter_number": start_chapter_number,
             "chars_summary": chars_summary,
             "facs_summary": facs_summary,
+            "writing_style_guidance": _format_writing_style_skill(await _active_writing_style_skill(db, project), "outline"),
         }
 
     ai = AIService()
@@ -2261,6 +2389,7 @@ async def _do_expand_arc_chapters(project_id: str, volume_id: str, arc_index: in
         emotional_color=snapshot["arc"].get("emotional_color", ""),
         dependence_on_previous=snapshot["arc"].get("dependence_on_previous", ""),
         payoff_for_next=snapshot["arc"].get("payoff_for_next", ""),
+        writing_style_guidance=snapshot["writing_style_guidance"],
     )
 
     async with async_session() as db:
@@ -2340,10 +2469,20 @@ async def _do_generate_volumes(project_id: str) -> dict:
             "story_brief": _wizard_story_brief(project),
             "core_theme": project.core_theme,
             "target_total_words": project.target_total_words,
+            "writing_style_guidance": _format_writing_style_skill(await _active_writing_style_skill(db, project), "outline"),
         }
 
     ai = AIService()
-    data = await ai.generate_outline_plan(snapshot["title"], snapshot["genre"], snapshot["story_brief"], snapshot["core_theme"], snapshot["target_total_words"], chars_summary, facs_summary)
+    data = await ai.generate_outline_plan(
+        snapshot["title"],
+        snapshot["genre"],
+        snapshot["story_brief"],
+        snapshot["core_theme"],
+        snapshot["target_total_words"],
+        chars_summary,
+        facs_summary,
+        writing_style_guidance=snapshot["writing_style_guidance"],
+    )
     volume_data = data.get("volumes", []) if isinstance(data.get("volumes"), list) else []
     for idx, vdata in enumerate(volume_data):
         if not isinstance(vdata, dict) or not _volume_outline_needs_completion(vdata.get("outline", "")):
@@ -2715,9 +2854,19 @@ async def _do_generate_outline_draft(project_id: str) -> dict:
             "story_brief": _wizard_story_brief(project),
             "core_theme": project.core_theme,
             "target_total_words": project.target_total_words,
+            "writing_style_guidance": _format_writing_style_skill(await _active_writing_style_skill(db, project), "outline"),
         }
     ai = AIService()
-    return await ai.generate_outline_plan(snapshot["title"], snapshot["genre"], snapshot["story_brief"], snapshot["core_theme"], snapshot["target_total_words"], chars_summary, facs_summary)
+    return await ai.generate_outline_plan(
+        snapshot["title"],
+        snapshot["genre"],
+        snapshot["story_brief"],
+        snapshot["core_theme"],
+        snapshot["target_total_words"],
+        chars_summary,
+        facs_summary,
+        writing_style_guidance=snapshot["writing_style_guidance"],
+    )
 
 
 async def _do_generate_story_bible(project_id: str) -> dict:

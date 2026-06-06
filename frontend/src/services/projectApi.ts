@@ -70,6 +70,22 @@ export const worldSettingApi = {
     api.put(`/projects/${projectId}/world-setting`, data).then((r) => r.data.world_setting),
 };
 
+export const writingStyleSkillApi = {
+  list: () => api.get('/writing-style-skills').then((r) => r.data.skills),
+  analyze: (data: any) => api.post('/writing-style-skills/analyze', data).then((r) => r.data.skill),
+  analyzeUpload: (data: FormData) =>
+    api.post('/writing-style-skills/analyze-upload', data, {
+      headers: { 'Content-Type': undefined as any },
+      timeout: 120000,
+    }).then((r) => r.data),
+  task: (taskId: string) => api.get(`/writing-style-skills/task/${taskId}`).then((r) => r.data.task),
+  tasks: () => api.get('/writing-style-skills/tasks').then((r) => r.data.tasks),
+  update: (id: string, data: any) => api.put(`/writing-style-skills/${id}`, data).then((r) => r.data.skill),
+  remove: (id: string) => api.delete(`/writing-style-skills/${id}`),
+  setActive: (projectId: string, skillId: string | null) =>
+    api.put(`/projects/${projectId}/active-writing-style-skill`, { skill_id: skillId }).then((r) => r.data.project),
+};
+
 export const wizardApi = {
   generateStoryBible: (projectId: string) => api.post(`/projects/${projectId}/wizard/generate-story-bible`).then((r) => r.data),
   reviewProjectStructure: (projectId: string) => api.post(`/projects/${projectId}/wizard/review-project-structure`).then((r) => r.data),
