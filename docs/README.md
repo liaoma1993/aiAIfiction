@@ -14,7 +14,8 @@
 8. [技术架构](architecture.md)
 9. [数据库说明](database.md)
 10. [一键启动与 Docker 部署](deployment.md)
-11. [开发与二次开发](development.md)
+11. [下轮优化问题清单](next-optimization-backlog.md)
+12. [开发与二次开发](development.md)
 
 ## 面向用户
 
@@ -24,6 +25,7 @@
 | [使用手册](user-manual.md) | 从策划到写作、审计、修复、记忆中枢的完整操作流程 |
 | [整体设计架构](product-design-architecture.md) | 业务层面的总设计：提示词、记忆、Skill、任务链路、质量闭环和整体架构图 |
 | [写作风格 Skill](writing-style-skills.md) | 独立共享的写作方法抽取、项目引用和全流程使用 |
+| [下轮优化问题清单](next-optimization-backlog.md) | 从当前反馈整理出的下轮功能问题、优先级、目标和验收标准 |
 
 ## 面向开发者
 
@@ -38,6 +40,7 @@
 | [记忆管理](memory-management.md) | Story Bible、Generation Context、角色状态、伏笔、章节记忆 |
 | [写作风格 Skill](writing-style-skills.md) | Skill 数据结构、API、合规边界和样本抽取建议 |
 | [开发与二次开发](development.md) | 新增 AI 任务、页面、数据迁移、PR 检查和安全建议 |
+| [下轮优化问题清单](next-optimization-backlog.md) | 可拆 Issue 的优化 Backlog，覆盖稳定性、写作质量、修复闭环、页面交互和工程增强 |
 
 ## 历史设计文档
 

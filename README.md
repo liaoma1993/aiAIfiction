@@ -104,6 +104,7 @@ CLAUDE_MODEL=claude-sonnet-4-20250514
 - [一键启动与 Docker 部署](docs/deployment.md)
 - [AI 工作流](docs/ai-workflows.md)
 - [写作风格 Skill](docs/writing-style-skills.md)
+- [下轮优化问题清单](docs/next-optimization-backlog.md)
 - [提示词管理](docs/prompt-management.md)
 - [记忆管理](docs/memory-management.md)
 - [开发与二次开发](docs/development.md)
