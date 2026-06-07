@@ -505,6 +505,112 @@ def _format_writing_style_skill(skill: WritingStyleSkill | None, phase: str = "w
     }.get(phase, "writing_guidance")
     if profile.get(phase_key):
         lines.append(f"阶段指导：{_clip_style_line(profile.get(phase_key), 700)}")
+    workflow_usage = profile.get("workflow_usage")
+    workflow_key = {
+        "creation": "creation",
+        "outline": "outline",
+        "writing": "writing",
+    }.get(phase, "writing")
+    if isinstance(workflow_usage, dict):
+        workflow_rules = workflow_usage.get(workflow_key) or []
+        if isinstance(workflow_rules, list) and workflow_rules:
+            lines.append(f"当前流程用法：{_clip_style_line('；'.join(str(x) for x in workflow_rules[:6]), 800)}")
+    taxonomy = profile.get("technique_taxonomy")
+    if isinstance(taxonomy, dict):
+        taxonomy_parts = []
+        for key, label in [
+            ("character", "人物"),
+            ("emotion", "情绪"),
+            ("world", "世界"),
+            ("scene", "场景"),
+            ("conflict", "冲突"),
+            ("relationship", "关系"),
+            ("detail", "细节"),
+            ("information_gap", "信息差"),
+            ("payoff", "反馈"),
+            ("language", "语言"),
+        ]:
+            values = taxonomy.get(key)
+            if isinstance(values, list) and values:
+                taxonomy_parts.append(f"{label}：" + "；".join(str(x) for x in values[:2]))
+        if taxonomy_parts:
+            lines.append(f"技法谱系：{_clip_style_line('；'.join(taxonomy_parts), 1100)}")
+        must_do = taxonomy.get("must_do") or []
+        if isinstance(must_do, list) and must_do:
+            lines.append("必须执行：" + "；".join(str(x) for x in must_do[:6]))
+        must_not_do = taxonomy.get("must_not_do") or []
+        if isinstance(must_not_do, list) and must_not_do:
+            lines.append("必须避免：" + "；".join(str(x) for x in must_not_do[:6]))
+    if phase in {"creation", "outline"}:
+        early = profile.get("early_retention_model")
+        if isinstance(early, dict):
+            early_parts = []
+            for key, label in [
+                ("chapter_1", "第1章"),
+                ("first_3_chapters", "前3章"),
+                ("first_10_chapters", "前10章"),
+                ("first_30_chapters", "前30章"),
+                ("first_50_chapters", "前50章"),
+                ("payoff_cadence", "兑现节奏"),
+            ]:
+                values = early.get(key)
+                if isinstance(values, list) and values:
+                    early_parts.append(f"{label}：" + "；".join(str(x) for x in values[:2]))
+            if early_parts:
+                lines.append(f"前20万字留存模型：{_clip_style_line('；'.join(early_parts), 1100)}")
+        length_adaptation = profile.get("length_adaptation")
+        if isinstance(length_adaptation, dict):
+            length_parts = []
+            for key, label in [("short", "短篇"), ("medium", "中篇"), ("long", "长篇"), ("mega", "超长篇")]:
+                value = length_adaptation.get(key)
+                if value:
+                    length_parts.append(f"{label}：{value}")
+            fatigue = length_adaptation.get("fatigue_control") or []
+            if isinstance(fatigue, list) and fatigue:
+                length_parts.append("疲劳控制：" + "；".join(str(x) for x in fatigue[:3]))
+            if length_parts:
+                lines.append(f"篇幅适配：{_clip_style_line('；'.join(length_parts), 900)}")
+    if phase == "writing":
+        voice = profile.get("character_voice_matrix")
+        if isinstance(voice, dict):
+            voice_parts = []
+            for key, label in [
+                ("protagonist_inner_voice", "主角内心"),
+                ("protagonist_spoken_voice", "主角对外"),
+                ("close_relationship_voice", "亲近关系"),
+                ("authority_voice", "上位者"),
+                ("antagonist_voice", "阻力角色"),
+                ("voice_separation_rules", "声音区分"),
+            ]:
+                values = voice.get(key)
+                if isinstance(values, list) and values:
+                    voice_parts.append(f"{label}：" + "；".join(str(x) for x in values[:2]))
+            if voice_parts:
+                lines.append(f"角色声音矩阵：{_clip_style_line('；'.join(voice_parts), 1000)}")
+        scene_templates = profile.get("scene_templates")
+        if isinstance(scene_templates, list) and scene_templates:
+            template_lines = []
+            for item in scene_templates[:3]:
+                if isinstance(item, dict):
+                    template_lines.append("；".join(str(x) for x in [
+                        item.get("name", "场景模板"),
+                        item.get("opening_anchor", ""),
+                        item.get("friction", ""),
+                        item.get("turn", ""),
+                        item.get("exit_hook", ""),
+                    ] if x))
+                else:
+                    template_lines.append(str(item))
+            lines.append(f"场景施工模板：{_clip_style_line('；'.join(template_lines), 1000)}")
+        repair = profile.get("repair_strategies")
+        if isinstance(repair, dict):
+            repair_parts = []
+            for key, label in [("sentence", "原句"), ("paragraph", "段落"), ("chapter_light", "轻修"), ("continuity", "连续性")]:
+                values = repair.get(key)
+                if isinstance(values, list) and values:
+                    repair_parts.append(f"{label}：" + "；".join(str(x) for x in values[:2]))
+            if repair_parts:
+                lines.append(f"修复策略：{_clip_style_line('；'.join(repair_parts), 900)}")
     for label, key in [
         ("视角", "pov_style"),
         ("节奏", "pacing_style"),
@@ -3387,7 +3493,9 @@ def _normalize_review_issues(review_result: dict) -> list[dict]:
 
 async def _build_review_chapter_index(db: AsyncSession, project_id: str, volume_id: str) -> list[dict]:
     chapters = (await db.execute(
-        select(Chapter).where(Chapter.project_id == project_id, Chapter.volume_id == volume_id).order_by(Chapter.chapter_number)
+        select(Chapter)
+        .where(Chapter.project_id == project_id, Chapter.volume_id == volume_id)
+        .order_by(Chapter.chapter_number, Chapter.updated_at.desc(), Chapter.created_at.desc())
     )).scalars().all()
     return [
         {
@@ -3468,16 +3576,36 @@ async def _do_repair_from_review(project_id: str, volume_id: str, body: RepairFr
 
     tasks.sort(key=lambda t: (0 if (t.get("priority") == "critical") else 1 if (t.get("priority") == "high") else 2, _task_chapter_number(t)))
 
-    chapter_map = {item["chapter_number"]: item for item in chapter_index}
+    chapter_items_by_number: dict[int, list[dict]] = {}
+    for item in chapter_index:
+        chapter_number = item.get("chapter_number")
+        if isinstance(chapter_number, int):
+            chapter_items_by_number.setdefault(chapter_number, []).append(item)
+    duplicate_chapters = [
+        {
+            "chapter_number": chapter_number,
+            "count": len(items),
+            "chapter_ids": [item.get("chapter_id") for item in items if item.get("chapter_id")],
+            "titles": [item.get("title", "") for item in items],
+        }
+        for chapter_number, items in chapter_items_by_number.items()
+        if len(items) > 1
+    ]
+    chapter_map = {
+        chapter_number: next((item for item in items if item.get("has_content")), items[0])
+        for chapter_number, items in chapter_items_by_number.items()
+    }
     if task_id:
         update_progress(task_id, 0, f"已生成修复计划：{len(tasks)} 项", {
             "stage": "planned",
             "task_count": len(tasks),
             "diagnosis": repair_plan.get("diagnosis", ""),
             "global_constraints": repair_plan.get("global_constraints", []),
+            "duplicate_chapters": duplicate_chapters,
         })
 
     repaired_chapters: list[int] = []
+    repaired_chapter_ids: list[str] = []
     async with async_session() as db:
         for idx, task in enumerate(tasks, start=1):
             chapter_number = task.get("chapter")
@@ -3489,8 +3617,15 @@ async def _do_repair_from_review(project_id: str, volume_id: str, body: RepairFr
             chapter_meta = chapter_map.get(chapter_number)
             if not chapter_meta:
                 continue
+            chapter_id = chapter_meta.get("chapter_id")
+            if not chapter_id:
+                continue
             chapter = (await db.execute(
-                select(Chapter).where(Chapter.project_id == project_id, Chapter.volume_id == volume_id, Chapter.chapter_number == chapter_number)
+                select(Chapter).where(
+                    Chapter.id == chapter_id,
+                    Chapter.project_id == project_id,
+                    Chapter.volume_id == volume_id,
+                )
             )).scalar_one_or_none()
             if not chapter:
                 continue
@@ -3551,17 +3686,23 @@ async def _do_repair_from_review(project_id: str, volume_id: str, body: RepairFr
                 with db.no_autoflush:
                     await _extract_and_apply_state(db, project_id, chapter, chapter.content)
                 repaired_chapters.append(chapter.chapter_number)
+                repaired_chapter_ids.append(str(chapter.id))
                 await db.commit()
 
-        if body.reaudit and repaired_chapters:
+        if body.reaudit and repaired_chapter_ids:
             audited = []
-            for chapter_number in repaired_chapters:
+            for chapter_id in repaired_chapter_ids:
                 chapter = (await db.execute(
-                    select(Chapter).where(Chapter.project_id == project_id, Chapter.volume_id == volume_id, Chapter.chapter_number == chapter_number)
+                    select(Chapter).where(
+                        Chapter.id == chapter_id,
+                        Chapter.project_id == project_id,
+                        Chapter.volume_id == volume_id,
+                    )
                 )).scalar_one_or_none()
                 if chapter:
                     audited.append({
                         "chapter_number": chapter.chapter_number,
+                        "chapter_id": str(chapter.id),
                         "audit": await ai.audit_chapter(
                             chapter.connects_from or "",
                             chapter.hook or "",
@@ -3572,12 +3713,16 @@ async def _do_repair_from_review(project_id: str, volume_id: str, body: RepairFr
             return {
                 "repair_plan": repair_plan,
                 "repaired_chapters": repaired_chapters,
+                "repaired_chapter_ids": repaired_chapter_ids,
+                "duplicate_chapters": duplicate_chapters,
                 "reaudit": audited,
             }
 
     return {
         "repair_plan": repair_plan,
         "repaired_chapters": repaired_chapters,
+        "repaired_chapter_ids": repaired_chapter_ids,
+        "duplicate_chapters": duplicate_chapters,
     }
 
 

@@ -249,12 +249,12 @@
 
 .style-skill-groups {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 12px;
 }
 
 .style-skill-group {
-  min-height: 180px;
+  min-height: 190px;
   padding: 12px;
   border: 1px solid #eef2f7;
   border-radius: var(--radius-md);
@@ -277,7 +277,9 @@
   margin: 0;
   color: var(--text-secondary);
   font-size: 13px;
-  line-height: 1.55;
+  line-height: 1.65;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
 }
 
 @media (max-width: 980px) {

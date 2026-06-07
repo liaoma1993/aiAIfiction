@@ -18,32 +18,43 @@ const { TextArea } = Input;
 const { Dragger } = Upload;
 
 const GROUPS = [
-  { title: '核心风格', keys: ['core_style', 'pov_style', 'pacing_style', 'theme_style'] },
+  { title: '核心风格', keys: ['core_style', 'sample_diagnosis', 'technique_taxonomy'] },
+  { title: '前20万字留存', keys: ['early_retention_model', 'length_adaptation'] },
   { title: '人物与关系', keys: ['characterization_style', 'character_voice_style', 'relationship_style'] },
+  { title: '角色声音矩阵', keys: ['character_voice_matrix'] },
   { title: '情绪与感情', keys: ['emotion_style', 'dialogue_style'] },
   { title: '场景与细节', keys: ['scene_construction_style', 'scene_description_style', 'detail_style'] },
+  { title: '场景施工模板', keys: ['scene_templates'] },
   { title: '世界观与信息', keys: ['worldbuilding_style', 'information_control_style'] },
   { title: '冲突与反馈', keys: ['conflict_style', 'reader_payoff_style'] },
-  { title: '语言与节奏', keys: ['language_style', 'chapter_structure_style'] },
+  { title: '语言与节奏', keys: ['language_style', 'chapter_structure_style', 'pov_style', 'pacing_style', 'theme_style'] },
   { title: '文笔工艺', keys: ['prose_craft_style', 'paragraph_flow_style'] },
   { title: '细节与真实感', keys: ['detail_craft_style', 'scene_reality_style'] },
   { title: '人物与情绪工艺', keys: ['character_entrance_style', 'emotion_landing_style'] },
   { title: '章节生产法', keys: ['chapter_production_recipe', 'reusable_patterns'] },
-  { title: '流程使用', keys: ['creation_guidance', 'outline_guidance', 'writing_guidance'] },
+  { title: '证据与迁移', keys: ['evidence_bank'] },
+  { title: '流程使用', keys: ['workflow_usage', 'creation_guidance', 'outline_guidance', 'writing_guidance'] },
+  { title: '偏离检测与修复', keys: ['deviation_checks', 'repair_strategies', 'avoid_rules'] },
 ];
 
 const FIELD_LABELS: Record<string, string> = {
   core_style: '核心质感',
+  sample_diagnosis: '样本覆盖诊断',
+  technique_taxonomy: '技法谱系',
+  early_retention_model: '前20万字模型',
+  length_adaptation: '篇幅适配',
   pov_style: '视角控制',
   pacing_style: '节奏推进',
   theme_style: '主题表达',
   characterization_style: '人物刻画',
   character_voice_style: '角色声音',
+  character_voice_matrix: '角色声音矩阵',
   relationship_style: '关系推进',
   emotion_style: '情绪感情',
   dialogue_style: '对白',
   scene_construction_style: '场景组织',
   scene_description_style: '场景描写',
+  scene_templates: '场景施工模板',
   detail_style: '细节选择',
   worldbuilding_style: '世界观揭示',
   information_control_style: '信息控制',
@@ -59,6 +70,11 @@ const FIELD_LABELS: Record<string, string> = {
   emotion_landing_style: '情绪落点',
   chapter_production_recipe: '章节生产法',
   reusable_patterns: '可复用模式',
+  evidence_bank: '技法证据库',
+  workflow_usage: '全流程使用',
+  deviation_checks: '风格偏离检测',
+  repair_strategies: '反向修复策略',
+  avoid_rules: '禁用规则',
   creation_guidance: '创建小说',
   outline_guidance: '大纲规划',
   writing_guidance: '章节写作',
@@ -68,11 +84,24 @@ function summarizeField(value: any) {
   if (!value) return '';
   if (typeof value === 'string') return value;
   if (Array.isArray(value)) {
-    return value.slice(0, 4).map((item) => {
+    return value.slice(0, 8).map((item) => {
       if (typeof item === 'string') return item;
       if (item && typeof item === 'object') {
         const steps = Array.isArray(item.steps) ? item.steps.slice(0, 3).join(' -> ') : '';
-        return [item.name, item.when_to_use, steps].filter(Boolean).join('：');
+        return [
+          item.name,
+          item.when_to_use,
+          item.best_for,
+          item.technique,
+          item.evidence_summary,
+          item.transfer_rule,
+          item.opening_anchor,
+          item.friction,
+          item.turn,
+          item.exit_hook,
+          steps,
+          item.avoid,
+        ].filter(Boolean).join('：');
       }
       return String(item);
     }).join('；');
@@ -83,8 +112,35 @@ function summarizeField(value: any) {
       value.opening,
       value.middle,
       value.ending,
+      Array.isArray(value.covered_sections) ? `覆盖：${value.covered_sections.slice(0, 5).join('、')}` : '',
+      Array.isArray(value.high_confidence_findings) ? value.high_confidence_findings.slice(0, 4).join('；') : '',
+      Array.isArray(value.needs_more_samples) ? `待补样本：${value.needs_more_samples.slice(0, 3).join('；')}` : '',
       Array.isArray(value.techniques) ? value.techniques.slice(0, 3).join('；') : '',
       Array.isArray(value.rules) ? value.rules.slice(0, 3).join('；') : '',
+      Array.isArray(value.character) ? `人物：${value.character.slice(0, 2).join('；')}` : '',
+      Array.isArray(value.emotion) ? `情绪：${value.emotion.slice(0, 2).join('；')}` : '',
+      Array.isArray(value.world) ? `世界：${value.world.slice(0, 2).join('；')}` : '',
+      Array.isArray(value.scene) ? `场景：${value.scene.slice(0, 2).join('；')}` : '',
+      Array.isArray(value.conflict) ? `冲突：${value.conflict.slice(0, 2).join('；')}` : '',
+      Array.isArray(value.relationship) ? `关系：${value.relationship.slice(0, 2).join('；')}` : '',
+      Array.isArray(value.detail) ? `细节：${value.detail.slice(0, 2).join('；')}` : '',
+      Array.isArray(value.information_gap) ? `信息差：${value.information_gap.slice(0, 2).join('；')}` : '',
+      Array.isArray(value.payoff) ? `反馈：${value.payoff.slice(0, 2).join('；')}` : '',
+      Array.isArray(value.must_do) ? `必须执行：${value.must_do.slice(0, 4).join('；')}` : '',
+      Array.isArray(value.must_not_do) ? `必须避免：${value.must_not_do.slice(0, 4).join('；')}` : '',
+      Array.isArray(value.chapter_1) ? `第1章：${value.chapter_1.slice(0, 3).join('；')}` : '',
+      Array.isArray(value.first_3_chapters) ? `前3章：${value.first_3_chapters.slice(0, 3).join('；')}` : '',
+      Array.isArray(value.first_10_chapters) ? `前10章：${value.first_10_chapters.slice(0, 3).join('；')}` : '',
+      Array.isArray(value.first_30_chapters) ? `前30章：${value.first_30_chapters.slice(0, 3).join('；')}` : '',
+      Array.isArray(value.first_50_chapters) ? `前50章：${value.first_50_chapters.slice(0, 3).join('；')}` : '',
+      value.short ? `短篇：${value.short}` : '',
+      value.medium ? `中篇：${value.medium}` : '',
+      value.long ? `长篇：${value.long}` : '',
+      value.mega ? `超长篇：${value.mega}` : '',
+      Array.isArray(value.fatigue_control) ? `疲劳控制：${value.fatigue_control.slice(0, 3).join('；')}` : '',
+      Array.isArray(value.protagonist_inner_voice) ? `主角内心：${value.protagonist_inner_voice.slice(0, 3).join('；')}` : '',
+      Array.isArray(value.protagonist_spoken_voice) ? `主角对外：${value.protagonist_spoken_voice.slice(0, 3).join('；')}` : '',
+      Array.isArray(value.voice_separation_rules) ? `声音区分：${value.voice_separation_rules.slice(0, 3).join('；')}` : '',
       Array.isArray(value.sentence_patterns) ? value.sentence_patterns.slice(0, 3).join('；') : '',
       Array.isArray(value.paragraph_patterns) ? value.paragraph_patterns.slice(0, 3).join('；') : '',
       Array.isArray(value.transition_methods) ? value.transition_methods.slice(0, 3).join('；') : '',
@@ -95,6 +151,20 @@ function summarizeField(value: any) {
       Array.isArray(value.setup) ? value.setup.slice(0, 2).join('；') : '',
       Array.isArray(value.conflict) ? value.conflict.slice(0, 2).join('；') : '',
       Array.isArray(value.emotion) ? value.emotion.slice(0, 2).join('；') : '',
+      Array.isArray(value.creation) ? `创建：${value.creation.slice(0, 3).join('；')}` : '',
+      Array.isArray(value.worldbuilding) ? `世界观：${value.worldbuilding.slice(0, 3).join('；')}` : '',
+      Array.isArray(value.characters) ? `角色：${value.characters.slice(0, 3).join('；')}` : '',
+      Array.isArray(value.outline) ? `大纲：${value.outline.slice(0, 3).join('；')}` : '',
+      Array.isArray(value.writing) ? `正文：${value.writing.slice(0, 3).join('；')}` : '',
+      Array.isArray(value.audit) ? `审计：${value.audit.slice(0, 3).join('；')}` : '',
+      Array.isArray(value.repair) ? `修复：${value.repair.slice(0, 3).join('；')}` : '',
+      Array.isArray(value.style_fit) ? `风格：${value.style_fit.slice(0, 3).join('；')}` : '',
+      Array.isArray(value.voice_fit) ? `声音：${value.voice_fit.slice(0, 3).join('；')}` : '',
+      Array.isArray(value.ai_flavor_risks) ? `AI味风险：${value.ai_flavor_risks.slice(0, 3).join('；')}` : '',
+      Array.isArray(value.sentence) ? `原句：${value.sentence.slice(0, 3).join('；')}` : '',
+      Array.isArray(value.paragraph) ? `段落：${value.paragraph.slice(0, 3).join('；')}` : '',
+      Array.isArray(value.chapter_light) ? `轻修：${value.chapter_light.slice(0, 3).join('；')}` : '',
+      Array.isArray(value.chapter_rewrite) ? `重写：${value.chapter_rewrite.slice(0, 3).join('；')}` : '',
     ].filter(Boolean);
     return parts.join('；') || JSON.stringify(value);
   }
@@ -457,7 +527,7 @@ export default function WritingStyleSkillsPage() {
                   return text ? (
                     <div className="style-skill-field" key={key}>
                       <Text type="secondary">{FIELD_LABELS[key] || key}</Text>
-                      <p>{clip(text, 260)}</p>
+                      <p>{clip(text, 620)}</p>
                     </div>
                   ) : null;
                 })}

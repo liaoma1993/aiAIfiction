@@ -74,6 +74,107 @@ def _decode_upload_content(raw: bytes) -> str:
     raise HTTPException(400, "文件编码无法识别，请上传 UTF-8 或 GBK/GB18030 文本文件")
 
 
+def _ensure_skill_section(profile: dict, key: str, default: dict | list | str) -> None:
+    value = profile.get(key)
+    if value:
+        return
+    profile[key] = default
+
+
+def _normalize_writing_style_profile(profile: dict, name: str, sample_word_count: int) -> dict:
+    profile = dict(profile or {})
+    now_name = (name or profile.get("name") or "未命名写作风格").strip()[:120]
+    profile["name"] = now_name
+    profile.setdefault("description", "")
+    profile.setdefault("core_style", profile.get("description") or "")
+    profile.setdefault("avoid_rules", [])
+    profile.setdefault("prompt_fragment", "")
+    profile.setdefault("source_policy", {
+        "abstract_only": True,
+        "no_verbatim_copy": True,
+        "no_plot_replication": True,
+        "no_proper_nouns_from_sample": True,
+    })
+    profile.setdefault("sample_diagnosis", {})
+    if isinstance(profile["sample_diagnosis"], dict):
+        profile["sample_diagnosis"].setdefault("sample_word_count", sample_word_count)
+        profile["sample_diagnosis"].setdefault("sample_strategy", "多点代表性采样：开篇 + 中段 + 后段 + 若干窗口")
+
+    _ensure_skill_section(profile, "technique_taxonomy", {
+        "summary": "待补充：人物、情绪、世界、场景、冲突、关系、细节、信息差、爽点和语言手感的技法谱系。",
+        "character": [],
+        "emotion": [],
+        "world": [],
+        "scene": [],
+        "conflict": [],
+        "relationship": [],
+        "detail": [],
+        "information_gap": [],
+        "payoff": [],
+        "language": [],
+        "must_do": [],
+        "must_not_do": [],
+    })
+    _ensure_skill_section(profile, "evidence_bank", [])
+    _ensure_skill_section(profile, "early_retention_model", {
+        "summary": "待补充：前20万字的主角立住、卖点兑现、阶段反馈和追读节奏。",
+        "chapter_1": [],
+        "first_3_chapters": [],
+        "first_10_chapters": [],
+        "first_30_chapters": [],
+        "first_50_chapters": [],
+        "retention_risks": [],
+        "payoff_cadence": [],
+    })
+    _ensure_skill_section(profile, "character_voice_matrix", {
+        "summary": "待补充：不同角色身份的声音边界。",
+        "protagonist_inner_voice": [],
+        "protagonist_spoken_voice": [],
+        "close_relationship_voice": [],
+        "authority_voice": [],
+        "antagonist_voice": [],
+        "side_character_voice": [],
+        "voice_separation_rules": [],
+    })
+    _ensure_skill_section(profile, "scene_templates", [])
+    _ensure_skill_section(profile, "length_adaptation", {
+        "summary": "待补充：短篇、中篇、长篇、超长篇的适配方式。",
+        "short": "",
+        "medium": "",
+        "long": "",
+        "mega": "",
+        "fatigue_control": [],
+    })
+    _ensure_skill_section(profile, "workflow_usage", {
+        "creation": [],
+        "worldbuilding": [],
+        "characters": [],
+        "outline": [],
+        "arc": [],
+        "blueprint": [],
+        "writing": [],
+        "audit": [],
+        "repair": [],
+    })
+    _ensure_skill_section(profile, "deviation_checks", {
+        "summary": "待补充：风格贴合、角色声音、情绪、场景、爽点和 AI 味偏离检测。",
+        "style_fit": [],
+        "voice_fit": [],
+        "emotion_fit": [],
+        "scene_fit": [],
+        "payoff_fit": [],
+        "ai_flavor_risks": [],
+    })
+    _ensure_skill_section(profile, "repair_strategies", {
+        "sentence": [],
+        "paragraph": [],
+        "chapter_light": [],
+        "chapter_rewrite": [],
+        "continuity": [],
+    })
+    return profile
+
+
 async def _build_skill_from_sample(
     *,
     user_id: str,
@@ -90,16 +191,8 @@ async def _build_skill_from_sample(
     profile = await ai.analyze_writing_style_skill(clipped, name)
     if not isinstance(profile, dict):
         raise HTTPException(500, "AI 返回写作风格 Skill 格式异常")
-    now_name = (name or profile.get("name") or "未命名写作风格").strip()[:120]
-    profile["name"] = now_name
-    profile.setdefault("avoid_rules", [])
-    profile.setdefault("prompt_fragment", "")
-    profile["source_policy"] = {
-        "abstract_only": True,
-        "no_verbatim_copy": True,
-        "no_plot_replication": True,
-        "no_proper_nouns_from_sample": True,
-    }
+    profile = _normalize_writing_style_profile(profile, name, len(sample))
+    now_name = profile["name"]
     skill_payload = {
         "name": now_name,
         "description": profile.get("description") or "",

@@ -1204,6 +1204,9 @@ WRITING_STYLE_SKILL_PROMPT = """
 - 作者如何在日常、铺垫、冲突、战斗、情绪、结尾之间切换。
 - 作者如何让读者产生追读，而不是靠概念摘要。
 - 作者有哪些稳定的“写作手癖”和必须避开的弱点。
+- 作者如何在前 20 万字持续留住读者：主角立住、核心卖点、阶段反馈、地图扩展、关系推进和爽点兑现。
+- 作者如何经营长篇：阶段目标、循环结构、伏笔复用、敌人梯度、设定扩容和疲劳感控制。
+- 作者如何把人物、情绪、世界、场景、冲突、关系、细节、信息差、爽点、语言手感组合成可复用技法。
 
 严格限制：
 1. 不得摘抄样本文本原句。
@@ -1246,12 +1249,19 @@ Skill 名称要求：
 22. 人物出场工艺：人物第一次出现如何靠动作/称呼/反应立住
 23. 情绪落点工艺：情绪如何落在物件、动作、沉默、打断和未说出口的话上
 24. 场景真实感工艺：如何让场景有可见阻力、生活杂音和具体后果
+25. 技法谱系：把人物、情绪、世界、场景、冲突、关系、细节、信息差、爽点、语言手感拆成可迁移技法
+26. 前 20 万字留存模型：开篇、前 3 章、前 10 章、前 30 章、前 50 章分别如何抓人
+27. 角色声音矩阵：不同身份角色的说话节奏、称呼、停顿、口头禅、内心与外显差异
+28. 场景施工模板：不同场景类型如何开场、启动阻力、释放信息、转折、收束
+29. 长篇适配：短篇、中篇、长篇、超长篇分别如何使用此风格
+30. 风格偏离检测：写出来不像时如何判断，如何按句子/段落/整章拉回
 
 输出要求：
 - 每个对象字段都必须包含 summary。
 - rules / techniques 至少 4 条，必须是“写作动作”，例如“先让角色做一件带立场的小事，再给解释”，不能是“人物要鲜明”。
 - avoid 至少 2 条，写清该风格下最容易写坏的地方。
 - 必须给出 sample_diagnosis，说明这批样本覆盖了哪些阶段，哪些结论置信度高，哪些需要更多样本验证。
+- 必须给出 evidence_bank。注意：不能摘抄原句，只能用“样本位置 + 技法证据摘要 + 迁移规则”描述证据。
 - 必须给出 reusable_patterns，列出 8-12 个可直接复用的写作模式。
 - 必须给出 writing_recipe，拆成“开场、铺垫、冲突、解释、情绪、结尾”六步。
 - 必须给出 prompt_fragment，能直接注入正文写作 Prompt。
@@ -1269,8 +1279,102 @@ Skill 名称要求：
     "high_confidence_findings": ["置信度高的写法判断"],
     "needs_more_samples": ["还需要更多样本才能判断的部分"]
   }},
+  "technique_taxonomy": {{
+    "summary": "这套风格的写作技法谱系总览",
+    "character": ["人物技法，必须是动作方法"],
+    "emotion": ["情绪技法，必须说明如何落地"],
+    "world": ["世界观/设定技法，必须说明如何自然释放"],
+    "scene": ["场景技法，必须说明如何启动和转折"],
+    "conflict": ["冲突技法，必须说明阻力来自哪里"],
+    "relationship": ["关系推进技法"],
+    "detail": ["细节选择和复用技法"],
+    "information_gap": ["信息差和悬念技法"],
+    "payoff": ["爽点/虐点/反馈技法"],
+    "language": ["语言、句式、段落、标点技法"],
+    "must_do": ["最重要的正向规则"],
+    "must_not_do": ["最重要的禁用规则"]
+  }},
+  "evidence_bank": [
+    {{
+      "sample_location": "样本窗口或章节位置，不要写原文专名",
+      "technique": "观察到的技法名称",
+      "evidence_summary": "不摘抄原句，只概括样本如何体现该技法",
+      "transfer_rule": "迁移到原创项目时怎么用",
+      "use_cases": ["适用场景"],
+      "avoid": "不适用或容易写坏的地方"
+    }}
+  ],
   "best_for": ["适合的题材/章节类型"],
   "not_suitable_for": ["不适合的方向"],
+  "early_retention_model": {{
+    "summary": "前20万字抓人的核心机制",
+    "chapter_1": ["第1章必须完成的吸引动作"],
+    "first_3_chapters": ["前3章卖点、主角、危机、期待的安排"],
+    "first_10_chapters": ["前10章如何建立主线期待和初次反馈"],
+    "first_30_chapters": ["前30章如何升级冲突、关系和读者投入"],
+    "first_50_chapters": ["前50章如何扩地图、扩敌人、扩目标并避免疲劳"],
+    "retention_risks": ["最容易劝退读者的写法"],
+    "payoff_cadence": ["阶段性兑现频率和方式"]
+  }},
+  "character_voice_matrix": {{
+    "summary": "角色声音学习结果",
+    "protagonist_inner_voice": ["主角内心独白节奏和表达方式"],
+    "protagonist_spoken_voice": ["主角对外说话方式"],
+    "close_relationship_voice": ["亲近角色的称呼、玩笑、沉默和越界方式"],
+    "authority_voice": ["强者/上位者/组织角色的语言方式"],
+    "antagonist_voice": ["反派或阻力角色的语言方式"],
+    "side_character_voice": ["配角如何用一句话立住"],
+    "voice_separation_rules": ["防止所有角色说话一样的规则"]
+  }},
+  "scene_templates": [
+    {{
+      "name": "场景模板名",
+      "best_for": "适合的场景类型",
+      "opening_anchor": "如何开场锚定人、地、上章后果",
+      "friction": "如何制造可见阻力",
+      "action": "主角必须做什么而不是想什么",
+      "information_release": "设定或线索如何释放",
+      "turn": "场景中段如何转折",
+      "emotion_landing": "情绪如何落地",
+      "exit_hook": "如何收束到下一章钩子",
+      "avoid": "不要怎么写"
+    }}
+  ],
+  "length_adaptation": {{
+    "summary": "不同篇幅下如何使用这套风格",
+    "short": "短篇/单元篇使用方式",
+    "medium": "中篇使用方式",
+    "long": "100万字左右长篇使用方式",
+    "mega": "200万字以上超长篇使用方式",
+    "fatigue_control": ["长篇避免套路疲劳的方法"]
+  }},
+  "workflow_usage": {{
+    "creation": ["创建小说/策划对话阶段如何使用"],
+    "worldbuilding": ["世界观生成阶段如何使用"],
+    "characters": ["角色生成阶段如何使用"],
+    "outline": ["全书大纲/卷纲阶段如何使用"],
+    "arc": ["弧线展开阶段如何使用"],
+    "blueprint": ["章节蓝图阶段如何使用"],
+    "writing": ["正文写作阶段如何使用"],
+    "audit": ["质量审计阶段如何检查"],
+    "repair": ["句子/段落/整章修复阶段如何使用"]
+  }},
+  "deviation_checks": {{
+    "summary": "风格偏离检测规则",
+    "style_fit": ["检查是否符合整体风格"],
+    "voice_fit": ["检查角色声音是否混同"],
+    "emotion_fit": ["检查情绪是否空喊或过度解释"],
+    "scene_fit": ["检查场景是否只有概述没有动作"],
+    "payoff_fit": ["检查爽点/反馈是否没有铺垫或没有兑现"],
+    "ai_flavor_risks": ["AI味、模板句、空修辞风险"]
+  }},
+  "repair_strategies": {{
+    "sentence": ["只修原句时如何保持风格"],
+    "paragraph": ["只修段落时如何补动作、感官、逻辑"],
+    "chapter_light": ["整章轻修时优先处理什么"],
+    "chapter_rewrite": ["整章重写时如何保留事实并重建场景"],
+    "continuity": ["修复时如何保护前后章连续性"]
+  }},
   "pov_style": {{"summary": "", "rules": []}},
   "pacing_style": {{"summary": "", "rules": []}},
   "chapter_structure_style": {{"opening": "", "middle": "", "ending": "", "rules": []}},
