@@ -94,7 +94,7 @@ DATABASE_URL=postgresql+asyncpg://aifiction:aifiction@postgres:5432/aifiction
 - 数据规模较大。
 - 后续接入外部任务队列。
 
-注意：当前项目仍使用 `create_all()` 自动建表。生产环境建议后续接入 Alembic migration。
+注意：当前项目启动时会先 `create_all()` 初始化新库，再执行版本化 schema migration。公开部署升级前请备份数据库；迁移策略要求只追加结构或补索引，不自动重写用户已有小说内容。
 
 ## 本地一键开发启动
 

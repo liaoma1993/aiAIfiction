@@ -111,13 +111,13 @@ async def my_task(project_id: str, body: MyTaskRequest, user: User = Depends(get
 
 ## 数据迁移
 
-当前项目启动时会自动 `create_all()`，并对 SQLite 做少量补列。
+当前项目启动时会先执行 `Base.metadata.create_all()` 保证新库可启动，再执行版本化 schema migration。
 
 开发期可以这样处理：
 
-- 小字段：在 model 中添加，并在 lifespan 里补 SQLite 列。
-- 大变更：建议引入 Alembic migration。
-- 生产：不要依赖自动补列，使用迁移脚本。
+- 小字段：在 model 中添加，并新增一个 migration 版本，保持只追加、不覆盖旧数据。
+- 大变更：使用 Alembic revision，并同步确认启动迁移兼容旧库。
+- 生产：升级前备份数据库；迁移不能自动重写用户正文、章节摘要、弧线或角色关系。
 
 ## 错误处理约定
 

@@ -112,13 +112,11 @@ backend/app/models/
 
 1. 导入所有模型。
 2. 执行 `Base.metadata.create_all()`。
-3. SQLite 下补充部分历史新增列。
+3. 执行版本化 schema migration，记录到 `schema_migrations`。
 4. Seed 默认管理员。
 5. Seed 默认模型供应商。
 
-这适合开发期和本地部署。
-
-生产环境更推荐使用 Alembic migration 管理 schema 变更。
+这适合开发期和本地部署。开源用户已有数据库升级时，migration 必须只做非破坏性变更：追加字段、补结构索引、保留旧小说正文和已生成大纲。
 
 ## SQLite 说明
 
@@ -361,10 +359,11 @@ docs/database-schema.sql
    - 写入 PostgreSQL。
 4. 校验项目数量、章节数量、正文数量和任务数量。
 
-后续建议引入 Alembic：
+项目已包含 Alembic 基础配置。新增数据库结构变更时：
 
 ```text
-alembic revision --autogenerate -m "initial schema"
+cd backend
+alembic revision --autogenerate -m "change description"
 alembic upgrade head
 ```
 
@@ -373,13 +372,12 @@ alembic upgrade head
 当前数据库层仍处于开发友好模式：
 
 - 启动时自动 `create_all()`。
-- SQLite 下有补列逻辑。
-- 生产迁移脚本尚未完善。
+- 启动时执行版本化 schema migration。
+- Alembic 已接入基础配置，后续结构变更应补 revision 文件。
 - PostgreSQL 支持已接入依赖和连接方式，但仍建议在正式部署前做完整测试。
 
 如果你要公开部署，建议优先补：
 
-- Alembic migrations。
 - 数据库初始化脚本。
 - 管理员密码首次启动设置。
 - API Key 加密存储。

@@ -25,49 +25,8 @@ async def lifespan(app: FastAPI):
     import app.models.writing_style_skill
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-        if str(engine.url).startswith("sqlite"):
-            def _ensure_sqlite_schema(sync_conn):
-                tables = {
-                    "chapters": {
-                        "blueprint": "JSON",
-                        "continuity_checks": "JSON",
-                        "arc_step_refs": "JSON",
-                        "continuity_from_previous": "JSON",
-                        "state_delta": "JSON",
-                        "continuity_to_next": "JSON",
-                        "relationship_changes": "JSON",
-                        "object_states": "JSON",
-                        "external_pressures": "JSON",
-                        "opening_requirements_for_next": "JSON",
-                        "causality_links": "JSON",
-                        "foreshadowing_tasks": "JSON",
-                        "rhythm_profile": "JSON",
-                    },
-                    "volumes": {
-                        "arc_continuity_index": "JSON",
-                        "arc_bridge_checks": "JSON",
-                    },
-                    "characters": {
-                        "current_state": "JSON",
-                        "first_appeared_chapter": "INTEGER",
-                        "first_appeared_title": "VARCHAR(200)",
-                        "character_class": "VARCHAR(20)",
-                    },
-                    "world_settings": {
-                        "hard_rules": "JSON",
-                        "tone_rules": "JSON",
-                        "constraints": "JSON",
-                    },
-                }
-                for table, cols in tables.items():
-                    existing = {
-                        row[1] for row in sync_conn.exec_driver_sql(f"PRAGMA table_info({table})").fetchall()
-                    }
-                    for col, col_type in cols.items():
-                        if col not in existing:
-                            sync_conn.exec_driver_sql(f"ALTER TABLE {table} ADD COLUMN {col} {col_type}")
-
-            await conn.run_sync(_ensure_sqlite_schema)
+        from app.services.schema_migrations import run_schema_migrations
+        await conn.run_sync(run_schema_migrations)
     from app.seed import seed_defaults
     await seed_defaults()
     from app.llm import refresh_provider_cache

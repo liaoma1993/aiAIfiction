@@ -1,0 +1,197 @@
+from __future__ import annotations
+
+import json
+from collections.abc import Callable
+from datetime import datetime
+
+from sqlalchemy import inspect, text
+from sqlalchemy.engine import Connection
+
+
+MigrationFn = Callable[[Connection], None]
+
+
+def _schema_migrations_columns(dialect: str) -> dict[str, str]:
+    timestamp_type = "TIMESTAMP" if dialect != "sqlite" else "DATETIME"
+    return {
+        "version": "VARCHAR(32) PRIMARY KEY",
+        "name": "VARCHAR(200) NOT NULL",
+        "applied_at": f"{timestamp_type} NOT NULL DEFAULT CURRENT_TIMESTAMP",
+    }
+
+
+def _ensure_migration_table(conn: Connection) -> None:
+    dialect = conn.dialect.name
+    columns_sql = ", ".join(
+        f"{name} {col_type}" for name, col_type in _schema_migrations_columns(dialect).items()
+    )
+    conn.exec_driver_sql(f"CREATE TABLE IF NOT EXISTS schema_migrations ({columns_sql})")
+
+
+def _table_exists(conn: Connection, table_name: str) -> bool:
+    return inspect(conn).has_table(table_name)
+
+
+def _column_exists(conn: Connection, table_name: str, column_name: str) -> bool:
+    if not _table_exists(conn, table_name):
+        return False
+    return column_name in {col["name"] for col in inspect(conn).get_columns(table_name)}
+
+
+def _add_column_if_missing(conn: Connection, table_name: str, column_name: str, column_type: str) -> None:
+    if _column_exists(conn, table_name, column_name):
+        return
+    conn.exec_driver_sql(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_type}")
+
+
+def _normalize_arcs_payload(raw: object) -> list[dict]:
+    if raw in (None, "", b""):
+        return []
+    if isinstance(raw, bytes):
+        raw = raw.decode("utf-8")
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except json.JSONDecodeError:
+            return []
+    if not isinstance(raw, list):
+        return []
+    return [item for item in raw if isinstance(item, dict)]
+
+
+def _build_arc_continuity_index(arcs: list[dict]) -> list[dict]:
+    index: list[dict] = []
+    for idx, arc in enumerate(arcs):
+        index.append(
+            {
+                "arc_index": idx,
+                "name": arc.get("name", ""),
+                "handoff_from_previous": arc.get("handoff_from_previous")
+                or arc.get("dependence_on_previous")
+                or "",
+                "handoff_to_next": arc.get("handoff_to_next") or arc.get("payoff_for_next") or "",
+                "opening_state": arc.get("opening_state", ""),
+                "ending_state": arc.get("ending_state", ""),
+                "arc_step_count": len(arc.get("arc_steps") or [])
+                if isinstance(arc.get("arc_steps"), list)
+                else 0,
+                "character_introduction_plan": arc.get("character_introduction_plan") or [],
+                "faction_introduction_plan": arc.get("faction_introduction_plan") or [],
+            }
+        )
+    return index
+
+
+def _build_arc_bridge_checks(arcs: list[dict]) -> list[dict]:
+    checks: list[dict] = []
+    for idx, arc in enumerate(arcs):
+        has_handoff_from_previous = bool(
+            arc.get("handoff_from_previous") or arc.get("dependence_on_previous")
+        )
+        has_handoff_to_next = bool(arc.get("handoff_to_next") or arc.get("payoff_for_next"))
+        has_arc_steps = bool(arc.get("arc_steps"))
+        checks.append(
+            {
+                "arc_index": idx,
+                "name": arc.get("name", ""),
+                "requires_previous_handoff": idx > 0,
+                "has_handoff_from_previous": has_handoff_from_previous,
+                "has_handoff_to_next": has_handoff_to_next,
+                "has_arc_steps": has_arc_steps,
+                "needs_repair": (idx > 0 and not has_handoff_from_previous) or not has_arc_steps,
+            }
+        )
+    return checks
+
+
+def _json_param(conn: Connection, payload: object) -> object:
+    if conn.dialect.name == "sqlite":
+        return json.dumps(payload, ensure_ascii=False)
+    return payload
+
+
+def _backfill_arc_continuity_metadata(conn: Connection) -> None:
+    if not _table_exists(conn, "volumes"):
+        return
+    required = {"id", "narrative_arcs", "arc_continuity_index", "arc_bridge_checks"}
+    existing = {col["name"] for col in inspect(conn).get_columns("volumes")}
+    if not required.issubset(existing):
+        return
+
+    rows = conn.execute(
+        text("SELECT id, narrative_arcs, arc_continuity_index, arc_bridge_checks FROM volumes")
+    ).mappings()
+    for row in rows:
+        arcs = _normalize_arcs_payload(row["narrative_arcs"])
+        if not arcs:
+            continue
+        updates: dict[str, object] = {"id": row["id"]}
+        if row["arc_continuity_index"] in (None, "", []):
+            updates["arc_continuity_index"] = _json_param(conn, _build_arc_continuity_index(arcs))
+        if row["arc_bridge_checks"] in (None, "", []):
+            updates["arc_bridge_checks"] = _json_param(conn, _build_arc_bridge_checks(arcs))
+        if len(updates) > 1:
+            set_sql = ", ".join(f"{key} = :{key}" for key in updates if key != "id")
+            conn.execute(text(f"UPDATE volumes SET {set_sql} WHERE id = :id"), updates)
+
+
+def _migration_20260609_0001(conn: Connection) -> None:
+    json_type = "JSON"
+    for column in (
+        "blueprint",
+        "continuity_checks",
+        "arc_step_refs",
+        "continuity_from_previous",
+        "state_delta",
+        "continuity_to_next",
+        "relationship_changes",
+        "object_states",
+        "external_pressures",
+        "opening_requirements_for_next",
+        "causality_links",
+        "foreshadowing_tasks",
+        "rhythm_profile",
+    ):
+        _add_column_if_missing(conn, "chapters", column, json_type)
+
+    for column in ("arc_continuity_index", "arc_bridge_checks"):
+        _add_column_if_missing(conn, "volumes", column, json_type)
+
+    _add_column_if_missing(conn, "characters", "current_state", json_type)
+    _add_column_if_missing(conn, "characters", "first_appeared_chapter", "INTEGER")
+    _add_column_if_missing(conn, "characters", "first_appeared_title", "VARCHAR(200)")
+    _add_column_if_missing(conn, "characters", "character_class", "VARCHAR(20)")
+
+    for column in ("hard_rules", "tone_rules", "constraints"):
+        _add_column_if_missing(conn, "world_settings", column, json_type)
+
+    _backfill_arc_continuity_metadata(conn)
+
+
+MIGRATIONS: list[tuple[str, str, MigrationFn]] = [
+    (
+        "20260609_0001",
+        "add narrative continuity columns and safe arc bridge metadata",
+        _migration_20260609_0001,
+    ),
+]
+
+
+def run_schema_migrations(conn: Connection) -> None:
+    """Apply non-destructive schema upgrades without rewriting user-created novels."""
+    _ensure_migration_table(conn)
+    applied = {
+        row[0]
+        for row in conn.exec_driver_sql("SELECT version FROM schema_migrations").fetchall()
+    }
+    for version, name, migration in MIGRATIONS:
+        if version in applied:
+            continue
+        migration(conn)
+        conn.execute(
+            text(
+                "INSERT INTO schema_migrations (version, name, applied_at) "
+                "VALUES (:version, :name, :applied_at)"
+            ),
+            {"version": version, "name": name, "applied_at": datetime.utcnow()},
+        )

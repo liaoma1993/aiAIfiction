@@ -1226,6 +1226,7 @@ def _format_chapter_continuity_payload(chapter: Chapter) -> str:
             "continuity_from_previous": chapter.continuity_from_previous or (chapter.blueprint or {}).get("continuity_from_previous") or (chapter.continuity_checks or {}).get("continuity_from_previous", []),
             "state_delta": chapter.state_delta or (chapter.blueprint or {}).get("state_delta") or (chapter.continuity_checks or {}).get("state_delta", {}),
             "continuity_to_next": chapter.continuity_to_next or (chapter.blueprint or {}).get("continuity_to_next") or (chapter.continuity_checks or {}).get("continuity_to_next", []),
+            "entry_gate_checks": (chapter.blueprint or {}).get("entry_gate_checks") or (chapter.continuity_checks or {}).get("entry_gate_checks", {}),
         },
         "state_memory": {
             "relationship_changes": chapter.relationship_changes or [],
@@ -2548,6 +2549,8 @@ def _normalize_narrative_arc_payload(arcs: list[dict]) -> list[dict]:
             "has_handoff_to_next": bool(arc.get("handoff_to_next") or arc.get("payoff_for_next")),
             "has_arc_steps": bool(arc.get("arc_steps")),
         }
+        arc.setdefault("character_introduction_plan", [])
+        arc.setdefault("faction_introduction_plan", [])
         normalized.append(arc)
     for idx, arc in enumerate(normalized):
         if idx > 0:
@@ -2570,6 +2573,8 @@ def _build_arc_continuity_index(arcs: list[dict]) -> list[dict]:
             "ending_state": arc.get("ending_state", ""),
             "arc_step_count": len(arc.get("arc_steps") or []) if isinstance(arc.get("arc_steps"), list) else 0,
             "previous_handoff_hint": arc.get("previous_handoff_hint", ""),
+            "character_introduction_plan": arc.get("character_introduction_plan") or [],
+            "faction_introduction_plan": arc.get("faction_introduction_plan") or [],
         })
     return index
 
@@ -2683,6 +2688,7 @@ async def _do_expand_arc_chapters(project_id: str, volume_id: str, arc_index: in
             continuity_to_next = node_data.get("continuity_to_next", [])
             state_delta = node_data.get("state_delta", {})
             arc_step_refs = node_data.get("arc_step_refs", [])
+            entry_gate_checks = node_data.get("entry_gate_checks", {})
             causality_links = node_data.get("causality_links") or [
                 {
                     "cause": _safe_str(connects_from),
@@ -2713,6 +2719,7 @@ async def _do_expand_arc_chapters(project_id: str, volume_id: str, arc_index: in
                     "continuity_from_previous": continuity_from_previous,
                     "state_delta": state_delta,
                     "continuity_to_next": continuity_to_next,
+                    "entry_gate_checks": entry_gate_checks,
                     "must_include": node_data.get("key_events", []),
                     "foreshadowing_tasks": node_data.get("minor_events", []),
                     "rhythm_profile": {
@@ -2729,6 +2736,7 @@ async def _do_expand_arc_chapters(project_id: str, volume_id: str, arc_index: in
                     "continuity_from_previous": continuity_from_previous,
                     "state_delta": state_delta,
                     "continuity_to_next": continuity_to_next,
+                    "entry_gate_checks": entry_gate_checks,
                 },
                 arc_step_refs=arc_step_refs,
                 continuity_from_previous=continuity_from_previous,
