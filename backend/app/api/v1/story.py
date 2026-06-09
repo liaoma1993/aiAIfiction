@@ -433,11 +433,39 @@ async def get_quality_dashboard(project_id: str, user: User = Depends(get_curren
     issue_rows = []
     dimension_totals = {}
     dimension_counts = {}
+    longform_flags = {
+        "missing_opening": 0,
+        "missing_state_validation": 0,
+        "weak_hook": 0,
+        "state_delta_gap": 0,
+        "entry_gate_gap": 0,
+        "voice_or_info_gap": 0,
+    }
     for ch in chapter_rows:
         for key, value in _safe_dict(ch["quality_review"].get("scores")).items():
             if isinstance(value, (int, float)):
                 dimension_totals[key] = dimension_totals.get(key, 0) + value
                 dimension_counts[key] = dimension_counts.get(key, 0) + 1
+        raw_ch = next((item for item in chapters if str(item.id) == ch["id"]), None)
+        checks = _safe_dict(raw_ch.continuity_checks if raw_ch else {})
+        blueprint = _safe_dict(raw_ch.blueprint if raw_ch else {})
+        state_validation = _safe_dict(checks.get("state_extract_validation"))
+        if raw_ch and (raw_ch.word_count or 0) > 0:
+            if not _safe_list(blueprint.get("opening_requirements")) and not _safe_list(checks.get("opening_requirements")):
+                longform_flags["missing_opening"] += 1
+            if state_validation and not state_validation.get("passed", True):
+                longform_flags["missing_state_validation"] += 1
+            hook_design = _safe_dict(blueprint.get("hook_design") or checks.get("hook_design"))
+            if hook_design and int(hook_design.get("hook_strength") or 0) < 3:
+                longform_flags["weak_hook"] += 1
+            indispensability = _safe_dict(blueprint.get("indispensability_check") or checks.get("indispensability_check"))
+            if indispensability and not _safe_list(indispensability.get("if_deleted_what_breaks")):
+                longform_flags["state_delta_gap"] += 1
+            entry_gate = _safe_dict(blueprint.get("entry_gate_checks") or checks.get("entry_gate_checks"))
+            if entry_gate and (entry_gate.get("blocked_sudden_functions") or entry_gate.get("failure")):
+                longform_flags["entry_gate_gap"] += 1
+            if not _safe_dict(blueprint.get("character_voice_constraints")) or not _safe_dict(blueprint.get("information_reveal_plan")):
+                longform_flags["voice_or_info_gap"] += 1
         for issue_index, issue in enumerate(_safe_list(ch["quality_review"].get("issues"))):
             issue_rows.append({
                 "chapter_id": ch["id"],
@@ -451,6 +479,22 @@ async def get_quality_dashboard(project_id: str, user: User = Depends(get_curren
                 "fix_suggestion": issue.get("fix_suggestion", "") if isinstance(issue, dict) else "",
                 "raw_issue": issue,
             })
+
+    written_count = max(1, len(written))
+    def _score_from_flags(flag_count: int) -> int:
+        return max(0, min(100, round(100 - (flag_count / written_count) * 100)))
+
+    longform_health = {
+        "arc_continuity": round(dimension_totals.get("continuity", 0) / dimension_counts.get("continuity", 1) * 10) if dimension_counts.get("continuity") else _score_from_flags(longform_flags["missing_opening"]),
+        "character_consistency": round(dimension_totals.get("character_consistency", 0) / dimension_counts.get("character_consistency", 1) * 10) if dimension_counts.get("character_consistency") else _score_from_flags(longform_flags["voice_or_info_gap"]),
+        "faction_entry_slope": _score_from_flags(longform_flags["entry_gate_gap"]),
+        "protagonist_state_memory": _score_from_flags(longform_flags["missing_state_validation"]),
+        "hook_strength": round(dimension_totals.get("hook", 0) / dimension_counts.get("hook", 1) * 10) if dimension_counts.get("hook") else _score_from_flags(longform_flags["weak_hook"]),
+        "state_delta_density": round(dimension_totals.get("indispensability", 0) / dimension_counts.get("indispensability", 1) * 10) if dimension_counts.get("indispensability") else _score_from_flags(longform_flags["state_delta_gap"]),
+        "info_reveal_control": round(dimension_totals.get("information_reveal", 0) / dimension_counts.get("information_reveal", 1) * 10) if dimension_counts.get("information_reveal") else _score_from_flags(longform_flags["voice_or_info_gap"]),
+        "ai_flavor_risk": round(100 - (dimension_totals.get("ai_flavor", 0) / dimension_counts.get("ai_flavor", 1) * 10)) if dimension_counts.get("ai_flavor") else 0,
+        "flags": longform_flags,
+    }
 
     return {
         "summary": {
@@ -468,6 +512,7 @@ async def get_quality_dashboard(project_id: str, user: User = Depends(get_curren
             {"name": key, "score": round(dimension_totals[key] / dimension_counts[key], 1)}
             for key in sorted(dimension_totals)
         ],
+        "longform_health": longform_health,
         "trends": [
             {
                 "chapter_number": ch["chapter_number"],

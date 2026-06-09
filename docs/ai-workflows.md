@@ -307,7 +307,71 @@ POST /api/v1/projects/{project_id}/wizard/review-chapter-blueprints/{volume_id}
 
 这两个审查只写回审查结果和修复建议，不自动改旧正文、不自动重拆旧小说。
 
-## 11. 质量审计
+## 11. 写作前置诊断
+
+写正文前可以单独诊断章节是否可写：
+
+```text
+POST /api/v1/projects/{project_id}/wizard/diagnose-chapter/{chapter_id}
+```
+
+诊断会检查：
+
+- 上一章/上一弧线后果是否接住。
+- 正文前300字必须继承的状态是否明确。
+- 新角色/组织是否有预热。
+- 本章 `chapter_function` 是否清楚。
+- 本章删掉后后文是否会断。
+- 章末钩子是否具体。
+- 角色声音和信息揭露边界是否清楚。
+
+默认写章时也会执行前置诊断。诊断出现阻塞问题时，写作任务会中止并返回需要先修复的蓝图问题。
+
+## 12. 章节蓝图新增字段
+
+章节蓝图现在不仅是 summary，还会包含：
+
+- `chapter_function`：章节职责。
+- `opening_requirements`：开场必须接住的状态。
+- `indispensability_check`：章节不可替代性。
+- `hook_design`：钩子类型和强度。
+- `character_voice_constraints`：角色声音约束。
+- `information_reveal_plan`：信息揭露节奏。
+- `repair_priority_hint`：修复优先级。
+
+这些字段会进入正文写作 prompt、连续性检查和质量仪表盘。
+
+## 13. 状态提取二次校验
+
+章节写完后，系统会提取长期状态，并生成 `state_extract_validation`。
+
+校验范围：
+
+- 身体状态。
+- 关系变化。
+- 新增信息。
+- 物件/资源状态。
+- 外部压力。
+- 下一章开场要求。
+- 不可替代状态变化。
+- 章末钩子。
+
+如果缺失，会记录 `missing_state`，用于后续补提取或修复。
+
+## 14. 长篇质量指标
+
+质量仪表盘新增 `longform_health`，用于观察整部长篇是否持续推进：
+
+- `arc_continuity`
+- `character_consistency`
+- `faction_entry_slope`
+- `protagonist_state_memory`
+- `hook_strength`
+- `state_delta_density`
+- `info_reveal_control`
+- `ai_flavor_risk`
+
+## 15. 质量审计
 
 接口：
 

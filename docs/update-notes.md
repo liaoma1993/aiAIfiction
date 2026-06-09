@@ -4,6 +4,84 @@
 
 ## 2026-06-09
 
+### 写作链路 10 项增强
+
+本次更新继续把质量控制点前移，从“写完后审计”扩展为“写前诊断、写中硬闸、写后状态校验、长篇健康聚合”。
+
+新增写作前置诊断接口：
+
+```text
+POST /api/v1/projects/{project_id}/wizard/diagnose-chapter/{chapter_id}
+```
+
+该接口用于在生成正文前检查章节是否可以写，重点诊断：
+
+- 上承状态是否具体。
+- 正文开场前300字是否能接住至少2个具体后果。
+- 新角色/新组织是否通过入场硬闸。
+- `chapter_function` 是否明确。
+- 本章是否不可替代。
+- 章末钩子是否具体并能改变下一章压力。
+- 角色声音和信息边界是否清楚。
+
+章节蓝图新增字段：
+
+- `chapter_function`：承接余波、短目标推进、关系试探、信息揭露、组织预热、正式冲突、反转打脸、桥接过渡、高潮爆发、章末钩子强化等。
+- `opening_requirements`：正文前300字必须接住的具体状态。
+- `prewrite_diagnosis_seed`：写前诊断的风险点。
+- `indispensability_check`：如果删除本章，后文会断在哪里。
+- `hook_design`：钩子类型、强度、是否改变下一章开场压力。
+- `character_voice_constraints`：出场角色的语言指纹、禁忌说法和知识边界。
+- `information_reveal_plan`：读者、主角、配角分别知道什么，本章最多允许揭露到哪里。
+- `repair_priority_hint`：L1 句子、L2 段落、L3 场景补丁、L4 蓝图、L5 弧线修复的优先级建议。
+
+正文写作新增硬闸：
+
+- 本章必须服从 `chapter_function`。
+- 开场前300字必须接住 `opening_requirements`。
+- 本章结束后必须产生不可替代的状态变化。
+- 章末钩子必须落到物件、声音、消息、动作、选择、身份暴露、规则反噬、关系破裂、敌人逼近或反常发现。
+- 角色对白必须遵守 `character_voice_constraints`，不能突然变成作者说明书。
+- 信息揭露必须遵守 `information_reveal_plan`，不能提前泄露主角/读者不该知道的信息。
+
+写后状态提取新增二次校验：
+
+- `state_extract_validation` 会检查身体、关系、信息、物件、外部压力、下一章开场要求、不可替代性和钩子是否提取完整。
+- 如果缺状态，会记录 `missing_state` 和 `repair_instruction`。
+
+章节审计新增维度：
+
+- `opening_continuity`
+- `chapter_function`
+- `indispensability`
+- `character_voice`
+- `information_reveal`
+- `state_memory`
+
+质量仪表盘新增 `longform_health`：
+
+- `arc_continuity`
+- `character_consistency`
+- `faction_entry_slope`
+- `protagonist_state_memory`
+- `hook_strength`
+- `state_delta_density`
+- `info_reveal_control`
+- `ai_flavor_risk`
+
+这些更新对应 10 个写作优化目标：
+
+1. 写作前置诊断。
+2. 章节功能类型。
+3. 章节不可替代性检查。
+4. 正文开场硬规则。
+5. 章末钩子分级。
+6. 角色声音连续性。
+7. 信息揭露节奏表。
+8. 写后状态提取二次校验。
+9. 局部修复优先级。
+10. 长篇质量仪表盘。
+
 ### 长篇连续性增强
 
 本次更新把“弧线”从固定章节数的小故事块，调整为长篇小说里的连续变化阶段。

@@ -41,6 +41,7 @@ DEFAULT_WRITING_CONTROLS = {
     "punctuation_style": "standard",
     "chapter_template": "standard",
     "early_grip_mode": "auto",
+    "auto_prewrite_check": True,
     "auto_quality_check": True,
     "auto_light_fix": True,
 }
@@ -1227,6 +1228,13 @@ def _format_chapter_continuity_payload(chapter: Chapter) -> str:
             "state_delta": chapter.state_delta or (chapter.blueprint or {}).get("state_delta") or (chapter.continuity_checks or {}).get("state_delta", {}),
             "continuity_to_next": chapter.continuity_to_next or (chapter.blueprint or {}).get("continuity_to_next") or (chapter.continuity_checks or {}).get("continuity_to_next", []),
             "entry_gate_checks": (chapter.blueprint or {}).get("entry_gate_checks") or (chapter.continuity_checks or {}).get("entry_gate_checks", {}),
+            "chapter_function": (chapter.blueprint or {}).get("chapter_function") or (chapter.continuity_checks or {}).get("chapter_function", ""),
+            "opening_requirements": (chapter.blueprint or {}).get("opening_requirements") or (chapter.continuity_checks or {}).get("opening_requirements", []),
+            "indispensability_check": (chapter.blueprint or {}).get("indispensability_check") or (chapter.continuity_checks or {}).get("indispensability_check", {}),
+            "hook_design": (chapter.blueprint or {}).get("hook_design") or (chapter.continuity_checks or {}).get("hook_design", {}),
+            "character_voice_constraints": (chapter.blueprint or {}).get("character_voice_constraints") or (chapter.continuity_checks or {}).get("character_voice_constraints", {}),
+            "information_reveal_plan": (chapter.blueprint or {}).get("information_reveal_plan") or (chapter.continuity_checks or {}).get("information_reveal_plan", {}),
+            "repair_priority_hint": (chapter.blueprint or {}).get("repair_priority_hint") or (chapter.continuity_checks or {}).get("repair_priority_hint", ""),
         },
         "state_memory": {
             "relationship_changes": chapter.relationship_changes or [],
@@ -1237,6 +1245,33 @@ def _format_chapter_continuity_payload(chapter: Chapter) -> str:
         "causality_links": chapter.causality_links or [],
     }
     return json.dumps(payload, ensure_ascii=False, indent=2)
+
+
+def _validate_state_extract_payload(result: dict) -> dict:
+    result = result if isinstance(result, dict) else {}
+    missing = []
+    quality = {}
+    checks = {
+        "body": result.get("character_changes"),
+        "relationship": result.get("relationship_changes"),
+        "information": result.get("facts"),
+        "object": result.get("object_states"),
+        "external_pressure": result.get("external_pressures"),
+        "next_opening_requirements": result.get("opening_requirements_for_next") or result.get("next_must_follow"),
+        "indispensability": (result.get("indispensability_check") or {}).get("if_deleted_what_breaks"),
+        "hook": result.get("hook_assessment"),
+    }
+    for key, value in checks.items():
+        ok = bool(value)
+        quality[key] = "有" if ok else "缺失"
+        if not ok:
+            missing.append(key)
+    return {
+        "passed": not missing,
+        "state_quality": quality,
+        "missing_state": missing,
+        "repair_instruction": "请只补充缺失的长期状态，不要重写正文。" if missing else "",
+    }
 
 
 def _safe_json(value, fallback):
@@ -1398,10 +1433,18 @@ async def _generate_chapter_blueprint(db: AsyncSession, project_id: str, chapter
     chapter.minor_events = blueprint.get("foreshadowing_tasks", chapter.minor_events or [])
     continuity_checks = blueprint.get("continuity_checks", {}) or {}
     continuity_checks.update({
+        "chapter_function": blueprint.get("chapter_function", ""),
         "arc_step_refs": blueprint.get("arc_step_refs", []),
         "continuity_from_previous": blueprint.get("continuity_from_previous", []),
         "state_delta": blueprint.get("state_delta", {}),
         "continuity_to_next": blueprint.get("continuity_to_next", []),
+        "opening_requirements": blueprint.get("opening_requirements", []),
+        "prewrite_diagnosis_seed": blueprint.get("prewrite_diagnosis_seed", {}),
+        "indispensability_check": blueprint.get("indispensability_check", {}),
+        "hook_design": blueprint.get("hook_design", {}),
+        "character_voice_constraints": blueprint.get("character_voice_constraints", {}),
+        "information_reveal_plan": blueprint.get("information_reveal_plan", {}),
+        "repair_priority_hint": blueprint.get("repair_priority_hint", ""),
     })
     chapter.continuity_checks = continuity_checks
     chapter.arc_step_refs = blueprint.get("arc_step_refs", chapter.arc_step_refs or [])
@@ -1414,6 +1457,34 @@ async def _generate_chapter_blueprint(db: AsyncSession, project_id: str, chapter
     chapter.scene_count = len(blueprint.get("scene_beats", []))
     chapter.narrative_line = chapter.narrative_line or "main"
     return blueprint
+
+
+async def _run_prewrite_diagnosis(
+    ai: AIService,
+    project: Project,
+    chapter: Chapter,
+    vol: Volume | None,
+    previous_ending: str,
+    story_state_snapshot: str,
+    chars_summary: str,
+    facs_summary: str,
+) -> dict:
+    return await ai.diagnose_chapter_before_write(
+        project.title,
+        project.genre,
+        chapter.chapter_number,
+        chapter.title or "",
+        vol.outline if vol else "",
+        {
+            "summary": chapter.summary or "",
+            "blueprint": chapter.blueprint or {},
+            "continuity": json.loads(_format_chapter_continuity_payload(chapter)),
+        },
+        previous_ending,
+        story_state_snapshot,
+        chars_summary,
+        facs_summary,
+    )
 
 
 async def _extract_and_apply_state(db: AsyncSession, project_id: str, chapter: Chapter, content: str) -> dict:
@@ -1575,6 +1646,23 @@ async def _do_write_chapter(project_id: str, chapter_id: str, mode: str = "appen
             await _generate_chapter_blueprint(db, project_id, chapter, prev_chapter, vol)
         context = await build_generation_context(db, project_id, chapter.id)
         ai = AIService()
+        if controls.get("auto_prewrite_check", True):
+            diagnosis = await _run_prewrite_diagnosis(
+                ai,
+                project,
+                chapter,
+                vol,
+                previous_ending,
+                story_state_snapshot,
+                chars_summary,
+                facs_summary,
+            )
+            checks = chapter.continuity_checks or {}
+            checks["prewrite_diagnosis"] = diagnosis
+            chapter.continuity_checks = checks
+            if diagnosis.get("can_write") is False and diagnosis.get("blocking_issues"):
+                await db.commit()
+                raise RuntimeError(f"写作前置诊断未通过：{json.dumps(diagnosis.get('blocking_issues'), ensure_ascii=False)[:500]}")
         if controls:
             extra = "；".join([f"{k}:{v}" for k, v in controls.items() if v not in [None, ""]])
             chapter_summary = f"{chapter.summary or ''}\n\n【本次写作控制】{extra}\n{_writing_controls_guidance(controls)}\n【用户要求】{instruction or '无'}"
@@ -1627,6 +1715,7 @@ async def _do_write_chapter(project_id: str, chapter_id: str, mode: str = "appen
             state_result = await _extract_and_apply_state(db, project_id, chapter, chapter.content)
         checks = chapter.continuity_checks or {}
         checks["state_extract"] = state_result
+        checks["state_extract_validation"] = _validate_state_extract_payload(state_result)
         chapter.continuity_checks = checks
         if vol:
             await _refresh_volume_arc_bridges(db, vol)
@@ -2225,6 +2314,22 @@ async def _do_batch_write_arc(project_id: str, volume_id: str, arc_index: int, t
                 await _generate_chapter_blueprint(db, project_id, ch, None, volume)
             if arc_bridge_context and isinstance(ch.blueprint, dict):
                 ch.blueprint["arc_bridge_context"] = arc_bridge_context
+            if write_controls.get("auto_prewrite_check", True):
+                diagnosis = await _run_prewrite_diagnosis(
+                    ai,
+                    project,
+                    ch,
+                    volume,
+                    final_ending,
+                    story_state_snapshot,
+                    chars_summary,
+                    facs_summary,
+                )
+                checks = ch.continuity_checks or {}
+                checks["prewrite_diagnosis"] = diagnosis
+                ch.continuity_checks = checks
+                if diagnosis.get("can_write") is False and diagnosis.get("blocking_issues"):
+                    raise RuntimeError(f"第{ch.chapter_number}章写作前置诊断未通过：{json.dumps(diagnosis.get('blocking_issues'), ensure_ascii=False)[:500]}")
 
             pov_char = "主角"
             if ch.characters_in_chapter:
@@ -2265,6 +2370,7 @@ async def _do_batch_write_arc(project_id: str, volume_id: str, arc_index: int, t
                 state_result = await _extract_and_apply_state(db, project_id, ch, ch.content)
             checks = ch.continuity_checks or {}
             checks["state_extract"] = state_result
+            checks["state_extract_validation"] = _validate_state_extract_payload(state_result)
             ch.continuity_checks = checks
             await _refresh_volume_arc_bridges(db, volume)
 
@@ -2727,6 +2833,13 @@ async def _do_expand_arc_chapters(project_id: str, volume_id: str, arc_index: in
             state_delta = node_data.get("state_delta", {})
             arc_step_refs = node_data.get("arc_step_refs", [])
             entry_gate_checks = node_data.get("entry_gate_checks", {})
+            chapter_function = node_data.get("chapter_function", "")
+            opening_requirements = node_data.get("opening_requirements", [])
+            indispensability_check = node_data.get("indispensability_check", {})
+            hook_design = node_data.get("hook_design", {})
+            character_voice_constraints = node_data.get("character_voice_constraints", {})
+            information_reveal_plan = node_data.get("information_reveal_plan", {})
+            repair_priority_hint = node_data.get("repair_priority_hint", "")
             causality_links = node_data.get("causality_links") or [
                 {
                     "cause": _safe_str(connects_from),
@@ -2749,6 +2862,7 @@ async def _do_expand_arc_chapters(project_id: str, volume_id: str, arc_index: in
                 minor_events=node_data.get("minor_events", []),
                 scene_count=node_data.get("scene_count", 3),
                 blueprint={
+                    "chapter_function": chapter_function,
                     "opening_state": node_data.get("connects_from", ""),
                     "summary": node_data.get("summary", ""),
                     "scene_beats": node_data.get("scene_beats", []),
@@ -2758,6 +2872,12 @@ async def _do_expand_arc_chapters(project_id: str, volume_id: str, arc_index: in
                     "state_delta": state_delta,
                     "continuity_to_next": continuity_to_next,
                     "entry_gate_checks": entry_gate_checks,
+                    "opening_requirements": opening_requirements,
+                    "indispensability_check": indispensability_check,
+                    "hook_design": hook_design,
+                    "character_voice_constraints": character_voice_constraints,
+                    "information_reveal_plan": information_reveal_plan,
+                    "repair_priority_hint": repair_priority_hint,
                     "must_include": node_data.get("key_events", []),
                     "foreshadowing_tasks": node_data.get("minor_events", []),
                     "rhythm_profile": {
@@ -2770,11 +2890,18 @@ async def _do_expand_arc_chapters(project_id: str, volume_id: str, arc_index: in
                     "arc_bridge_context": snapshot["previous_arc_ending"] if idx == 0 and arc_index > 0 else "",
                 },
                 continuity_checks={
+                    "chapter_function": chapter_function,
                     "arc_step_refs": arc_step_refs,
                     "continuity_from_previous": continuity_from_previous,
                     "state_delta": state_delta,
                     "continuity_to_next": continuity_to_next,
                     "entry_gate_checks": entry_gate_checks,
+                    "opening_requirements": opening_requirements,
+                    "indispensability_check": indispensability_check,
+                    "hook_design": hook_design,
+                    "character_voice_constraints": character_voice_constraints,
+                    "information_reveal_plan": information_reveal_plan,
+                    "repair_priority_hint": repair_priority_hint,
                 },
                 arc_step_refs=arc_step_refs,
                 continuity_from_previous=continuity_from_previous,
@@ -3390,6 +3517,12 @@ async def audit_chapter(project_id: str, chapter_id: str, user: User = Depends(g
     return {"task_id": task_id}
 
 
+@router.post("/diagnose-chapter/{chapter_id}")
+async def diagnose_chapter(project_id: str, chapter_id: str, user: User = Depends(get_current_user)):
+    task_id = start_task(_do_diagnose_chapter(project_id, chapter_id), "diagnose_chapter", project_id, {"chapter_id": chapter_id})
+    return {"task_id": task_id}
+
+
 @router.get("/narrative-graph/{volume_id}")
 async def narrative_graph(project_id: str, volume_id: str, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     volume = (await db.execute(select(Volume).where(Volume.id == volume_id, Volume.project_id == project_id))).scalar_one_or_none()
@@ -3674,6 +3807,48 @@ async def _do_review_arc(project_id: str, volume_id: str, arc_index: int) -> dic
             chars_summary, facs_summary,
             review_scope, chapters_content,
         )
+        return result
+
+
+async def _do_diagnose_chapter(project_id: str, chapter_id: str) -> dict:
+    async with async_session() as db:
+        chapter = (await db.execute(select(Chapter).where(Chapter.id == chapter_id, Chapter.project_id == project_id))).scalar_one_or_none()
+        project = (await db.execute(select(Project).where(Project.id == project_id))).scalar_one_or_none()
+        if not project or not chapter:
+            raise RuntimeError("章节不存在")
+        vol = None
+        if chapter.volume_id:
+            vol = (await db.execute(select(Volume).where(Volume.id == chapter.volume_id, Volume.project_id == project_id))).scalar_one_or_none()
+        prev_chapter = await _get_previous_chapter(db, project_id, str(chapter.volume_id) if chapter.volume_id else None, chapter.chapter_number)
+        if not chapter.blueprint:
+            await _generate_chapter_blueprint(db, project_id, chapter, prev_chapter, vol)
+
+        previous_ending = chapter.connects_from or "无"
+        if prev_chapter and prev_chapter.content:
+            previous_ending = prev_chapter.content[-500:] if len(prev_chapter.content) > 500 else prev_chapter.content
+            if prev_chapter.hook:
+                previous_ending += f"\n\n【上章钩子】{prev_chapter.hook}"
+        story_state_snapshot = _build_story_state_snapshot(prev_chapter, prev_chapter.story_state_snapshot or "") if prev_chapter else "无"
+        chars_result = await db.execute(select(Character).where(Character.project_id == project_id))
+        chars_summary = "\n".join([_build_character_profile(c) for c in chars_result.scalars().all()])
+        facs_result = await db.execute(select(Faction).where(Faction.project_id == project_id))
+        facs_summary = "\n".join([_build_faction_profile(f) for f in facs_result.scalars().all()])
+
+        ai = AIService()
+        result = await _run_prewrite_diagnosis(
+            ai,
+            project,
+            chapter,
+            vol,
+            previous_ending,
+            story_state_snapshot,
+            chars_summary,
+            facs_summary,
+        )
+        checks = chapter.continuity_checks or {}
+        checks["prewrite_diagnosis"] = result
+        chapter.continuity_checks = checks
+        await db.commit()
         return result
 
 
@@ -4483,6 +4658,19 @@ async def retry_task(project_id: str, task_id: str, user: User = Depends(get_cur
             raise HTTPException(400, "该任务缺少可重试参数")
         start_task(
             _do_audit_chapter(project_id, str(chapter_id)),
+            task_type,
+            project_id,
+            {**meta, "retry_of": task_id},
+            task_id=new_task_id,
+        )
+        return {"task_id": new_task_id}
+
+    if task_type == "diagnose_chapter":
+        chapter_id = meta.get("chapter_id")
+        if not chapter_id:
+            raise HTTPException(400, "该任务缺少可重试参数")
+        start_task(
+            _do_diagnose_chapter(project_id, str(chapter_id)),
             task_type,
             project_id,
             {**meta, "retry_of": task_id},

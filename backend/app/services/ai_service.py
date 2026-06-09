@@ -629,6 +629,7 @@ Skill 使用规则：
   ④ 场景序列（2-4个场景，每个写清：地点→在场角色→冲突动作→结果）
   ⑤ 即时反馈（爽点/笑点/打脸/小胜/小亏/线索落地/关系推进）
   ⑥ 章末钩子（具体到一句话、一个物件、一条消息、一次敲门、一个新麻烦）
+- chapter_function: 本章功能类型，取“承接余波/短目标推进/关系试探/信息揭露/组织预热/正式冲突/反转打脸/桥接过渡/高潮爆发/章末钩子强化”等之一
 - arc_step_refs: 本章承载的弧线台阶名列表
 - connects_from: 上一章结尾的状态（本弧线第1章则承接上一条弧线的结尾），精确到角色状态和未解问题
 - connects_to: 本章结尾状态，为下一章埋钩子，精确到角色状态和新悬疑
@@ -636,6 +637,12 @@ Skill 使用规则：
 - state_delta: 本章造成的状态变化，分身体、关系、信息、资源、外部压力、未解钩子
 - continuity_to_next: 下一章必须继承的后果，至少2条，必须具体可写
 - entry_gate_checks: 本章新角色/新组织登场检查。包含 new_characters、new_factions、prior_signals、contact_cost、blocked_sudden_functions。若无新登场，返回空数组/空字符串，但不能省略字段
+- indispensability_check: 章节不可替代性检查，包含 if_deleted_what_breaks、state_delta_required、state_delta_actual
+- opening_requirements: 正文开场前300字必须接住的具体状态，至少2条
+- hook_design: 章末钩子设计，包含 hook_type、hook_strength、must_change_next_opening_pressure
+- character_voice_constraints: 本章出场角色声音约束，包含 must_sound_like、must_not_sound_like、knowledge_boundary
+- information_reveal_plan: 信息揭露节奏表，包含 reader_knows、protagonist_knows、other_characters_know、next_reveal_allowed、must_not_reveal
+- repair_priority_hint: 如果本章生成后出问题，优先使用 L1句子/L2段落/L3场景补丁/L4蓝图修复/L5弧线修复 哪一级
 - key_events: 核心事件列表（2-4个）
 - minor_events: 小事件/日常/伏笔铺垫（2-3个）
 - characters_in_chapter: 出场角色名列表
@@ -653,8 +660,65 @@ Skill 使用规则：
 6. 场景切换要有锚定——每次换场景，用一句感官描述（声音/气味/光线）让读者立刻知道到了哪里
 7. 如果删除任意一章后前后仍能顺接，说明该章缺少不可替代的状态变化，必须补 state_delta 或重拆章节功能
 8. 关键角色/组织登场必须通过 entry_gate_checks 自检；检查不通过时，先改章节蓝图，不能让正文阶段硬塞
+9. 每章必须通过 indispensability_check：如果删掉本章前后仍能顺接，则必须补状态增量或改章节功能
+10. 每章必须有 hook_design，章末钩子不能是抽象危机
 
 返回 JSON 数组，不要其他文字。
+"""
+
+CHAPTER_PREWRITE_DIAGNOSIS_PROMPT = """
+你是写作前置诊断器。请判断这一章是否可以直接进入正文写作。
+
+作品信息：
+书名《{title}》，类型{genre}
+章节：第{chapter_number}章 {chapter_title}
+本卷大纲：
+{volume_outline}
+
+章节蓝图和连续性约束：
+{chapter_payload}
+
+上一章/上承状态：
+{previous_ending}
+
+故事当前状态：
+{story_state_snapshot}
+
+角色档案：
+{characters_summary}
+
+组织/势力：
+{factions_summary}
+
+诊断重点：
+1. 本章是否从上一章或上一弧线具体后果开始。
+2. 本章开场前300字是否能接住至少2个具体状态：伤势、物件、秘密、债务、误会、追兵、期限、关系裂痕、情绪余波。
+3. 新关键角色/组织是否已经有传闻、痕迹、外围接触或规则压力。
+4. 本章 chapter_function 是否清楚。
+5. 如果删掉本章，后续会缺什么。
+6. 章末钩子是否具体，有没有改变下一章开场压力。
+7. 角色声音和信息边界是否清楚。
+8. 信息揭露有没有过量，是否泄露主角/读者不该知道的秘密。
+
+返回 JSON：
+{{
+  "can_write": true,
+  "blocking_issues": [
+    {{"type":"missing_handoff","problem":"问题","fix":"修复建议"}}
+  ],
+  "soft_warnings": [
+    {{"type":"weak_hook","problem":"问题","fix":"修复建议"}}
+  ],
+  "chapter_function_ok": true,
+  "opening_requirements_ok": true,
+  "entry_gate_ok": true,
+  "indispensability_ok": true,
+  "hook_ok": true,
+  "voice_constraints_ok": true,
+  "info_reveal_ok": true,
+  "must_fix_before_write": ["写正文前必须补的蓝图点"],
+  "safe_starting_point": "建议正文第一段从哪个具体状态开始"
+}}
 """
 
 WRITE_CHAPTER_PROMPT = """
@@ -710,6 +774,12 @@ Skill 使用规则：
 - 已写正文是事实，章节蓝图只是计划。若上一章正文/状态快照与蓝图冲突，必须优先承接上一章正文和状态快照。
 - 本章开头必须继承上一章至少2个具体后果：伤势/疲惫/物件/承诺/误会/秘密/债务/追兵/期限/情绪余波/关系裂痕。
 - 如果本章是跨弧线第一章，必须先接住跨弧线桥接记忆中的交接物或压力，再进入新弧线事件。
+- 本章必须服从 chapter_function，不要把组织预热章写成正式解谜章，不要把承接余波章写成新副本开端。
+- 本章必须满足 indispensability_check：正文结束后必须产生不可替代状态变化，不能写成删掉也不影响后文的空转章。
+- 本章开场前300字必须落实 opening_requirements，至少接住2个具体后果。
+- 本章章末必须落实 hook_design，钩子类型要具体，不能写“更大的危机正在靠近”。
+- 角色对话必须服从 character_voice_constraints，不能让角色突然变成作者说明书。
+- 信息揭露必须服从 information_reveal_plan，不能让角色或叙述者提前说出不该知道的秘密。
 
 作家技法要求——这不是填表，这是创作：
 
@@ -752,6 +822,7 @@ Skill 使用规则：
 【POV约束】本章POV角色：{pov_character}。只能写这个角色感知到的、想到的、回忆起的。不能写其他角色内心独白。如果POV角色没看到/没听到/不知道的事，不能写。
 
 【章末钩子】正文结束后，另起一行写 [HOOK] 加1-3句话悬念钩子。钩子要具体——不是"他不知道前方有什么"，而是"楼梯口传来他昨晚才听过的那阵咳嗽声，可是那个人应该已经死了"。钩子驱动读者翻下一章。
+钩子必须属于一种具体类型：物件、声音、消息、人物动作、选择逼迫、身份暴露、规则反噬、关系破裂、敌人逼近、反常发现。强钩子必须改变下一章开场压力。
 
 【新角色登记】正文中如果引入了不在角色档案中的新角色（哪怕是只出场一次的配角——铁匠、店小二、路人侠客、反派手下、传信人等），必须在 [HOOK] 之后另起一行写 [NEW_CHARACTERS]，列出本章新登场的角色。每行一个角色，格式：角色名: 50字以内的简要描述（身份/性格特征/与主线关系）。例如：
 [NEW_CHARACTERS]
@@ -802,6 +873,12 @@ CHAPTER_AUDIT_PROMPT = """
 12. 读者视角——第一次读本章的读者会卡在哪里？有哪些句子需要回看？哪些信息作者知道但读者不知道？
 13. 弧线承接——本章是否接住了上一弧线/上一章留下的交接物、伤势、物件、秘密、误会、债务或压力？有没有突然换目标、换地点、换关系？
 14. 状态增量——本章结束后是否产生了清楚的新后果？如果删掉本章，后续是否会缺少必要变化？有没有“看似发生很多事，但状态没有改变”的空转？
+15. 开场硬闸——前300字是否回答地点、在场人物、上一章后果，并继承至少2个具体状态？有没有天气/感慨/世界观介绍式重开局？
+16. 章节功能——正文是否服从 chapter_function？有没有把组织预热章写成正式解谜，把承接余波章写成新副本？
+17. 不可替代性——如果删除本章，关系、信息、物件、风险、目标或外部压力是否会断？如果不会断，标为高风险空转。
+18. 章末钩子分级——钩子是否属于具体类型，强度是否足够，是否改变下一章开场压力？禁止抽象“更大风暴”。
+19. 角色声音连续性——角色对话是否符合语言指纹、当前关系和知识边界？有没有突然变成说明书。
+20. 信息揭露节奏——本章是否过量揭露秘密？主角、读者、配角分别知道什么是否一致？
 
 连贯性判定重点：
 - 上章结尾或钩子是否在本章前800字内得到回应，或被明确延后。
@@ -833,7 +910,7 @@ CHAPTER_AUDIT_PROMPT = """
   "overall_score": 1-10,
   "continuity_score": 1-10,
   "readability_score": 1-10,
-  "scores": {{"continuity":1-10,"readability":1-10,"punctuation":1-10,"dialogue":1-10,"scene_clarity":1-10,"character_consistency":1-10,"hook":1-10,"ai_flavor":1-10}},
+  "scores": {{"continuity":1-10,"readability":1-10,"punctuation":1-10,"dialogue":1-10,"scene_clarity":1-10,"character_consistency":1-10,"hook":1-10,"ai_flavor":1-10,"opening_continuity":1-10,"chapter_function":1-10,"indispensability":1-10,"character_voice":1-10,"information_reveal":1-10,"state_memory":1-10}},
   "reader_confusions": ["读者可能看不懂的点"],
   "issues": [
     {{"severity":"critical/high/low","dimension":"1.场景连续性","target_text":"正文中可精确定位的原文短句","fix_mode":"sentence/paragraph/context","description":"具体问题描述，引用原文证据","fix_suggestion":"具体修改建议，包括可替换的写法","repair_task":"可执行修复任务，例如：重写本章前800字，从上章血指印开始，继承左肩伤和追兵临近"}}
@@ -841,6 +918,7 @@ CHAPTER_AUDIT_PROMPT = """
   "highlights": ["写得好的地方"],
   "suggested_rewrite": "如有需要，提供3-5句关键段落的修改示例",
   "must_carry_forward": ["审计后确认下一章必须继承的状态"]
+  ,"repair_priority": "L1句子/L2段落/L3场景补丁/L4蓝图修复/L5弧线修复"
 }}
 """
 
@@ -1183,6 +1261,7 @@ CHAPTER_REVISION_PROMPT = """
   - target_paragraph_fix：只重写“选中片段”这个段落。输出只能是替换后的段落，不要输出整章。
   - target_context_fix：深修“选中片段”这个局部文本块，适合物品突然出现、动机缺铺垫、人物关系跳跃、线索承接断裂。可以在选中块内部补1-3句前置动作/携带交代/现场反应/因果桥，但输出只能是替换后的局部文本块，不要输出整章。
 - 如果存在评审修复约束，必须逐条落实；生死、身份、阵营、时间线矛盾必须优先修，不允许用梦境、幻觉、替身、失忆等廉价解释糊弄过去。
+- 修复优先级：能 L1 句子替换不做 L2；能 L2 段落重写不做 L3；需要 L4 蓝图修复或 L5 弧线修复时，不要假装局部润色能解决，必须在 change_notes 里说明结构层风险。
 - 修复跨章节问题时，本章开头要能接住上章结尾，本章结尾要给下章留下稳定状态。
 - 不要提前揭露伏笔，不要随意新增核心设定。
 - 如果是续写，只输出新增正文。
@@ -1212,6 +1291,9 @@ STATE_EXTRACT_PROMPT = """
 提取原则：
 - 只提取会影响后续写作的状态，不复述正文。
 - 必须覆盖身体、关系、信息、物件/资源、外部压力、未解决钩子。
+- 必须提取本章不可替代状态变化；如果删掉本章后前后仍能顺接，要指出 state_delta_insufficient。
+- 必须记录章末钩子类型和强度，钩子要落到具体物件、声音、消息、动作、选择或新麻烦。
+- 必须检查角色声音是否保持连续、信息揭露是否越界。
 - 对下一章必须继承的点要具体到可写进开头的状态，例如“左臂箭伤未处理”“女主扣着主角的刀”“追兵明早前能查到北驿”。
 - 标记哪些问题已经回应，哪些被明确延后，避免下一章遗忘上章钩子。
 
@@ -1230,6 +1312,10 @@ STATE_EXTRACT_PROMPT = """
   "next_must_follow":["下一章必须承接的点"],
   "opening_requirements_for_next":["下一章开头必须先接住的具体状态，至少2条"],
   "causality_links":[{{"cause":"本章原因/选择","effect":"造成的后果","chapter_from":{chapter_number},"chapter_to":"下一章"}}]
+  ,"indispensability_check":{{"if_deleted_what_breaks":["..."],"state_delta_required":true,"state_delta_actual":{{}},"state_delta_insufficient":false}}
+  ,"hook_assessment":{{"hook_type":"物件/声音/消息/人物动作/选择逼迫/身份暴露/规则反噬/关系破裂/敌人逼近/反常发现","hook_strength":1,"changes_next_opening_pressure":true}}
+  ,"voice_continuity_notes":[{{"name":"角色名","passed":true,"issue":""}}]
+  ,"information_reveal_notes":{{"over_revealed":[],"next_reveal_allowed":["..."],"must_not_reveal":["..."]}}
 }}
 """
 
@@ -1252,10 +1338,19 @@ CHAPTER_BLUEPRINT_PROMPT = """
 - 可读性优先：本章短目标、阻力、场景结果必须一眼能懂，不要写成主题阐释。
 - 蓝图必须服务于去 AI 味写作：每个场景都要有可观察动作、具体阻力、感官锚点、潜台词或不完整胜利，避免抽象心理解释和总结式悬念。
 - 输出要短但可执行，避免空泛理论。
+- 必须输出 chapter_function，明确本章承担什么职责。
+- 必须输出 prewrite_diagnosis_seed，供写正文前诊断使用。
+- 必须输出 indispensability_check，说明删掉本章后后文会断在哪里。
+- 必须输出 opening_requirements，约束正文前300字必须接住的状态。
+- 必须输出 hook_design，包含 hook_type、hook_strength、must_change_next_opening_pressure。
+- 必须输出 character_voice_constraints，约束出场角色语言和知识边界。
+- 必须输出 information_reveal_plan，限制本章最多揭露到哪里。
+- 必须输出 repair_priority_hint，指导后续优先局部修还是结构修。
 
 返回 JSON：
 {{
   "opening_state":"...",
+  "chapter_function":"承接余波/短目标推进/关系试探/信息揭露/组织预热/正式冲突/反转打脸/桥接过渡/高潮爆发/章末钩子强化",
   "connects_from":"上一章/上一弧线留下的具体状态",
   "arc_step_refs":["本章承载的弧线台阶或变化任务"],
   "continuity_from_previous":["本章必须继承的上章后果"],
@@ -1265,6 +1360,13 @@ CHAPTER_BLUEPRINT_PROMPT = """
   "state_delta":{{"body":["..."],"relationship":["..."],"information":["..."],"resources":["..."],"external_pressure":["..."],"unresolved_hooks":["..."]}},
   "connects_to":"本章结尾交给下一章的具体状态",
   "continuity_to_next":["下一章必须继承的后果"],
+  "opening_requirements":["正文前300字必须接住的具体状态"],
+  "prewrite_diagnosis_seed":{{"can_write_assumption":true,"risk_points":["..."]}},
+  "indispensability_check":{{"if_deleted_what_breaks":["..."],"state_delta_required":true,"state_delta_actual":{{}}}},
+  "hook_design":{{"hook_type":"物件/声音/消息/人物动作/选择逼迫/身份暴露/规则反噬/关系破裂/敌人逼近/反常发现","hook_strength":3,"must_change_next_opening_pressure":true}},
+  "character_voice_constraints":{{"角色名":{{"must_sound_like":"...","must_not_sound_like":"...","knowledge_boundary":"..."}}}},
+  "information_reveal_plan":{{"reader_knows":"...","protagonist_knows":"...","other_characters_know":{{}},"next_reveal_allowed":["..."],"must_not_reveal":["..."]}},
+  "repair_priority_hint":"L1句子/L2段落/L3场景补丁/L4蓝图修复/L5弧线修复",
   "ending_hook":"...",
   "must_include":["..."],
   "must_not_include":["AI腔模板句","抽象总结式悬念","无阻力顺滑推进"],
@@ -2207,6 +2309,35 @@ class AIService:
                 "audit_error": "质检返回格式不完整",
                 "raw_error": str(exc)[:200],
             }
+
+    async def diagnose_chapter_before_write(
+        self,
+        title: str,
+        genre: str,
+        chapter_number: int,
+        chapter_title: str,
+        volume_outline: str,
+        chapter_payload: dict,
+        previous_ending: str,
+        story_state_snapshot: str,
+        characters_summary: str,
+        factions_summary: str,
+    ) -> dict:
+        return await self._ask(
+            CHAPTER_PREWRITE_DIAGNOSIS_PROMPT,
+            system=SYSTEM_EDITOR,
+            max_tokens=8192,
+            title=title,
+            genre=genre,
+            chapter_number=chapter_number,
+            chapter_title=chapter_title or "",
+            volume_outline=volume_outline or "",
+            chapter_payload=json.dumps(chapter_payload or {}, ensure_ascii=False, indent=2),
+            previous_ending=previous_ending or "无",
+            story_state_snapshot=story_state_snapshot or "无",
+            characters_summary=characters_summary or "无",
+            factions_summary=factions_summary or "无",
+        )
 
     async def review_arc_structure(
         self,
