@@ -102,6 +102,7 @@ CLAUDE_MODEL=claude-sonnet-4-20250514
 - [技术架构](docs/architecture.md)
 - [数据库说明](docs/database.md)
 - [一键启动与 Docker 部署](docs/deployment.md)
+- [更新说明](docs/update-notes.md)
 - [AI 工作流](docs/ai-workflows.md)
 - [写作风格 Skill](docs/writing-style-skills.md)
 - [下轮优化问题清单](docs/next-optimization-backlog.md)
