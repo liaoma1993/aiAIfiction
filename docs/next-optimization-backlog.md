@@ -297,12 +297,12 @@
 
 - 已有应用启动 migration，版本记录在 `schema_migrations`。
 - 已有 Alembic 基础配置和首个 revision。
+- 已有 `python -m app.scripts.check_schema` 和 `python -m app.scripts.backup_db` 基础工具。
 - 升级策略要求非破坏性：只追加结构或补索引，不自动重写用户小说内容。
 
 后续目标：
 
 - 增加 migration 单元测试和旧库升级回归测试。
-- 增加升级前备份命令和 schema 检查命令。
 - 补齐 PostgreSQL 下的完整升级验证。
 
 ### 20. Issue 模板与 Roadmap

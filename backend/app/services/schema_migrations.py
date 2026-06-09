@@ -66,6 +66,9 @@ def _build_arc_continuity_index(arcs: list[dict]) -> list[dict]:
             {
                 "arc_index": idx,
                 "name": arc.get("name", ""),
+                "arc_type": arc.get("arc_type", ""),
+                "closure_level": arc.get("closure_level", ""),
+                "must_remain_open": arc.get("must_remain_open") or [],
                 "handoff_from_previous": arc.get("handoff_from_previous")
                 or arc.get("dependence_on_previous")
                 or "",
@@ -77,6 +80,12 @@ def _build_arc_continuity_index(arcs: list[dict]) -> list[dict]:
                 else 0,
                 "character_introduction_plan": arc.get("character_introduction_plan") or [],
                 "faction_introduction_plan": arc.get("faction_introduction_plan") or [],
+                "bridge_chapter_plan": arc.get("bridge_chapter_plan") or {},
+                "protagonist_continuity_state": arc.get("protagonist_continuity_state") or {},
+                "character_lifecycle_updates": arc.get("character_lifecycle_updates") or [],
+                "faction_lifecycle_updates": arc.get("faction_lifecycle_updates") or [],
+                "arc_review_targets": arc.get("arc_review_targets") or [],
+                "blueprint_repair_targets": arc.get("blueprint_repair_targets") or [],
             }
         )
     return index
@@ -168,11 +177,32 @@ def _migration_20260609_0001(conn: Connection) -> None:
     _backfill_arc_continuity_metadata(conn)
 
 
+def _migration_20260609_0002(conn: Connection) -> None:
+    _add_column_if_missing(conn, "projects", "project_schema_mode", "VARCHAR(30)")
+    _add_column_if_missing(conn, "projects", "arc_generation_version", "VARCHAR(30)")
+    _add_column_if_missing(conn, "projects", "chapter_blueprint_version", "VARCHAR(30)")
+    _add_column_if_missing(conn, "projects", "continuity_upgrade_notes", "JSON")
+    if _table_exists(conn, "projects"):
+        conn.execute(
+            text(
+                "UPDATE projects SET "
+                "project_schema_mode = COALESCE(project_schema_mode, 'legacy'), "
+                "arc_generation_version = COALESCE(arc_generation_version, 'legacy'), "
+                "chapter_blueprint_version = COALESCE(chapter_blueprint_version, 'legacy')"
+            )
+        )
+
+
 MIGRATIONS: list[tuple[str, str, MigrationFn]] = [
     (
         "20260609_0001",
         "add narrative continuity columns and safe arc bridge metadata",
         _migration_20260609_0001,
+    ),
+    (
+        "20260609_0002",
+        "add project continuity compatibility version fields",
+        _migration_20260609_0002,
     ),
 ]
 

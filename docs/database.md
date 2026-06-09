@@ -371,9 +371,24 @@ alembic upgrade head
 
 ```text
 20260609_0001 add narrative continuity columns
+20260609_0002 add project continuity compatibility version fields
 ```
 
 应用启动时会记录到 `schema_migrations`；Alembic 用于后续标准化生成和审查结构变更。
+
+可以用脚本检查当前数据库版本：
+
+```bash
+cd backend
+python -m app.scripts.check_schema
+```
+
+SQLite 升级前可以用脚本备份：
+
+```bash
+cd backend
+python -m app.scripts.backup_db
+```
 
 ## 当前限制
 

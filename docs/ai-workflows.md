@@ -291,7 +291,23 @@ POST /api/v1/projects/{project_id}/wizard/write-chapter/{chapter_id}
 - 前文角色状态未维护。
 - 关键设定仍在频繁变动。
 
-## 10. 质量审计
+## 10. 结构前置审查
+
+弧线展开章节前，可以先审查弧线是否像独立小故事、角色/组织是否空降、是否需要桥接章：
+
+```text
+POST /api/v1/projects/{project_id}/wizard/review-arc-structure/{volume_id}
+```
+
+章节蓝图写正文前，可以审查新角色/新组织入场、主角状态连续性、桥接章、状态增量和章末钩子：
+
+```text
+POST /api/v1/projects/{project_id}/wizard/review-chapter-blueprints/{volume_id}
+```
+
+这两个审查只写回审查结果和修复建议，不自动改旧正文、不自动重拆旧小说。
+
+## 11. 质量审计
 
 接口：
 

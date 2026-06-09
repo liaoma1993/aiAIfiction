@@ -18,6 +18,10 @@ class Project(BaseModel):
     secondary_themes = Column(JSON, default=list)
     motifs = Column(JSON, default=list)
     narrative_lines = Column(JSON, default=list)
+    project_schema_mode = Column(String(30), default="legacy")
+    arc_generation_version = Column(String(30), default="legacy")
+    chapter_blueprint_version = Column(String(30), default="legacy")
+    continuity_upgrade_notes = Column(JSON, default=dict)
     wizard_step = Column(Integer, default=0)
     status = Column(String(20), default="planning")
 

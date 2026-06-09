@@ -2375,6 +2375,13 @@ async def _do_expand_volume_arcs(
         volume.narrative_arcs = arcs
         volume.arc_continuity_index = _build_arc_continuity_index(arcs)
         volume.arc_bridge_checks = _build_arc_bridge_checks(arcs)
+        project = (await db.execute(select(Project).where(Project.id == project_id))).scalar_one_or_none()
+        if project:
+            project.project_schema_mode = "continuity_v1"
+            project.arc_generation_version = "continuity_v1"
+            notes = project.continuity_upgrade_notes or {}
+            notes["arc_generation"] = "用户主动重新生成弧线后启用 continuity_v1；旧正文和旧章节摘要未自动重写。"
+            project.continuity_upgrade_notes = notes
         await db.commit()
         return {"arcs": arcs, "cleared_chapters": cleared_chapters}
 
@@ -2526,6 +2533,16 @@ def _normalize_narrative_arc_payload(arcs: list[dict]) -> list[dict]:
         arc.setdefault("handoff_from_previous", arc.get("dependence_on_previous") or ("卷开局状态" if idx == 0 else "承接上一弧线终点状态"))
         arc.setdefault("handoff_to_next", arc.get("payoff_for_next") or "本弧线结尾留下的具体压力")
         arc.setdefault("continuity_chain", "")
+        arc.setdefault("arc_type", "主线目标变化")
+        arc.setdefault("closure_level", "半闭合")
+        arc.setdefault("must_remain_open", [])
+        arc.setdefault("bridge_chapter_plan", {"needed": idx > 0, "must_process": []})
+        arc.setdefault("protagonist_continuity_state", {})
+        arc.setdefault("character_lifecycle_updates", [])
+        arc.setdefault("faction_lifecycle_updates", [])
+        arc.setdefault("arc_review_targets", [])
+        arc.setdefault("blueprint_repair_targets", [])
+        arc.setdefault("compatibility_notes", "旧小说内容不自动重写；仅在用户重新生成/重拆时使用本弧线结构。")
         steps = arc.get("arc_steps")
         if not isinstance(steps, list) or not steps:
             milestones = arc.get("key_milestones") or []
@@ -2567,6 +2584,9 @@ def _build_arc_continuity_index(arcs: list[dict]) -> list[dict]:
         index.append({
             "arc_index": idx,
             "name": arc.get("name", ""),
+            "arc_type": arc.get("arc_type", ""),
+            "closure_level": arc.get("closure_level", ""),
+            "must_remain_open": arc.get("must_remain_open") or [],
             "handoff_from_previous": arc.get("handoff_from_previous") or arc.get("dependence_on_previous") or "",
             "handoff_to_next": arc.get("handoff_to_next") or arc.get("payoff_for_next") or "",
             "opening_state": arc.get("opening_state", ""),
@@ -2575,6 +2595,12 @@ def _build_arc_continuity_index(arcs: list[dict]) -> list[dict]:
             "previous_handoff_hint": arc.get("previous_handoff_hint", ""),
             "character_introduction_plan": arc.get("character_introduction_plan") or [],
             "faction_introduction_plan": arc.get("faction_introduction_plan") or [],
+            "bridge_chapter_plan": arc.get("bridge_chapter_plan") or {},
+            "protagonist_continuity_state": arc.get("protagonist_continuity_state") or {},
+            "character_lifecycle_updates": arc.get("character_lifecycle_updates") or [],
+            "faction_lifecycle_updates": arc.get("faction_lifecycle_updates") or [],
+            "arc_review_targets": arc.get("arc_review_targets") or [],
+            "blueprint_repair_targets": arc.get("blueprint_repair_targets") or [],
         })
     return index
 
@@ -2591,6 +2617,9 @@ def _build_arc_bridge_checks(arcs: list[dict]) -> list[dict]:
             "has_handoff_from_previous": bool(arc.get("handoff_from_previous") or arc.get("dependence_on_previous")),
             "has_handoff_to_next": bool(arc.get("handoff_to_next") or arc.get("payoff_for_next")),
             "has_arc_steps": bool(arc.get("arc_steps")),
+            "closure_level": arc.get("closure_level", ""),
+            "has_entry_slope": bool(arc.get("character_introduction_plan") or arc.get("faction_introduction_plan")),
+            "needs_bridge_chapter": bool((arc.get("bridge_chapter_plan") or {}).get("needed")),
             "needs_repair": (idx > 0 and not bool(arc.get("handoff_from_previous") or arc.get("dependence_on_previous"))) or not bool(arc.get("arc_steps")),
         })
     return checks
@@ -2669,12 +2698,21 @@ async def _do_expand_arc_chapters(project_id: str, volume_id: str, arc_index: in
         continuity_chain=snapshot["arc"].get("continuity_chain", ""),
         handoff_from_previous=snapshot["arc"].get("handoff_from_previous", ""),
         handoff_to_next=snapshot["arc"].get("handoff_to_next", ""),
+        arc_type=snapshot["arc"].get("arc_type", ""),
+        closure_level=snapshot["arc"].get("closure_level", ""),
+        must_remain_open=snapshot["arc"].get("must_remain_open", []),
+        bridge_chapter_plan=snapshot["arc"].get("bridge_chapter_plan", {}),
+        protagonist_continuity_state=snapshot["arc"].get("protagonist_continuity_state", {}),
+        character_lifecycle_updates=snapshot["arc"].get("character_lifecycle_updates", []),
+        faction_lifecycle_updates=snapshot["arc"].get("faction_lifecycle_updates", []),
+        blueprint_repair_targets=snapshot["arc"].get("blueprint_repair_targets", []),
     )
 
     async with async_session() as db:
         volume = (await db.execute(select(Volume).where(Volume.id == volume_id, Volume.project_id == project_id))).scalar_one_or_none()
         if not volume or not volume.narrative_arcs:
             raise RuntimeError("卷已被重新生成或删除，请刷新页面后重新展开章节")
+        project = (await db.execute(select(Project).where(Project.id == project_id))).scalar_one_or_none()
         current_arcs = volume.narrative_arcs or []
         if arc_index >= len(current_arcs) or current_arcs[arc_index].get("name", "") != snapshot["arc_name"]:
             raise RuntimeError("弧线已变化，请刷新页面后重新展开章节")
@@ -2755,6 +2793,12 @@ async def _do_expand_arc_chapters(project_id: str, volume_id: str, arc_index: in
         await db.flush()
         await _normalize_volume_arc_chapters(db, volume)
         await _refresh_volume_arc_bridges(db, volume)
+        if project:
+            project.project_schema_mode = "continuity_v1"
+            project.chapter_blueprint_version = "continuity_v1"
+            notes = project.continuity_upgrade_notes or {}
+            notes["chapter_blueprint"] = "用户主动展开章节后启用 continuity_v1 蓝图；旧正文未自动重写。"
+            project.continuity_upgrade_notes = notes
         await db.commit()
         return {"chapter_count": len(nodes), "chapters": nodes}
 
@@ -3417,6 +3461,28 @@ async def review_arc(project_id: str, volume_id: str, body: ExpandArcRequest, us
     return {"task_id": task_id}
 
 
+@router.post("/review-arc-structure/{volume_id}")
+async def review_arc_structure(project_id: str, volume_id: str, body: ExpandArcRequest, user: User = Depends(get_current_user)):
+    task_id = start_task(
+        _do_review_arc_structure(project_id, volume_id, body.arc_index),
+        "review_arc_structure",
+        project_id,
+        {"volume_id": volume_id, "arc_index": body.arc_index},
+    )
+    return {"task_id": task_id}
+
+
+@router.post("/review-chapter-blueprints/{volume_id}")
+async def review_chapter_blueprints(project_id: str, volume_id: str, body: ExpandArcRequest, user: User = Depends(get_current_user)):
+    task_id = start_task(
+        _do_review_chapter_blueprints(project_id, volume_id, body.arc_index),
+        "review_chapter_blueprints",
+        project_id,
+        {"volume_id": volume_id, "arc_index": body.arc_index},
+    )
+    return {"task_id": task_id}
+
+
 @router.post("/review-volume/{volume_id}")
 async def review_volume(project_id: str, volume_id: str, user: User = Depends(get_current_user)):
     task_id = start_task(_do_review_volume(project_id, volume_id), "review_volume", project_id, {"volume_id": volume_id})
@@ -3609,6 +3675,114 @@ async def _do_review_arc(project_id: str, volume_id: str, arc_index: int) -> dic
             review_scope, chapters_content,
         )
         return result
+
+
+async def _do_review_arc_structure(project_id: str, volume_id: str, arc_index: int) -> dict:
+    async with async_session() as db:
+        volume = (await db.execute(select(Volume).where(Volume.id == volume_id, Volume.project_id == project_id))).scalar_one_or_none()
+        if not volume or not volume.narrative_arcs:
+            raise RuntimeError("请先生成弧线")
+        arcs = list(volume.narrative_arcs or [])
+        if arc_index < 0 or arc_index >= len(arcs):
+            raise RuntimeError("弧线索引无效")
+        project = (await db.execute(select(Project).where(Project.id == project_id))).scalar_one_or_none()
+        if not project:
+            raise RuntimeError("项目不存在")
+        chars_result = await db.execute(select(Character).where(Character.project_id == project_id))
+        chars_summary = "\n".join([_build_character_profile(c) for c in chars_result.scalars().all()])
+        facs_result = await db.execute(select(Faction).where(Faction.project_id == project_id))
+        facs_summary = "\n".join([_build_faction_profile(f) for f in facs_result.scalars().all()])
+        snapshot = {
+            "title": project.title,
+            "genre": project.genre,
+            "volume_title": volume.title,
+            "volume_outline": volume.outline or "",
+            "previous_arc": arcs[arc_index - 1] if arc_index > 0 else {},
+            "current_arc": arcs[arc_index],
+            "next_arc": arcs[arc_index + 1] if arc_index + 1 < len(arcs) else {},
+            "characters_summary": chars_summary,
+            "factions_summary": facs_summary,
+        }
+
+    ai = AIService()
+    result = await ai.review_arc_structure(**snapshot)
+
+    async with async_session() as db:
+        volume = (await db.execute(select(Volume).where(Volume.id == volume_id, Volume.project_id == project_id))).scalar_one_or_none()
+        if volume and volume.narrative_arcs and arc_index < len(volume.narrative_arcs):
+            arcs = list(volume.narrative_arcs or [])
+            arc = dict(arcs[arc_index])
+            arc["structure_review"] = result
+            arcs[arc_index] = arc
+            volume.narrative_arcs = arcs
+            bridge_checks = _build_arc_bridge_checks(arcs)
+            if arc_index < len(bridge_checks):
+                bridge_checks[arc_index]["structure_review"] = result
+            volume.arc_bridge_checks = bridge_checks
+            await db.commit()
+    return result
+
+
+async def _do_review_chapter_blueprints(project_id: str, volume_id: str, arc_index: int) -> dict:
+    async with async_session() as db:
+        volume = (await db.execute(select(Volume).where(Volume.id == volume_id, Volume.project_id == project_id))).scalar_one_or_none()
+        if not volume or not volume.narrative_arcs:
+            raise RuntimeError("请先生成弧线和章节")
+        arcs = list(volume.narrative_arcs or [])
+        if arc_index < 0 or arc_index >= len(arcs):
+            raise RuntimeError("弧线索引无效")
+        arc = arcs[arc_index]
+        project = (await db.execute(select(Project).where(Project.id == project_id))).scalar_one_or_none()
+        if not project:
+            raise RuntimeError("项目不存在")
+        chapters = (await db.execute(
+            select(Chapter).where(Chapter.volume_id == volume_id, Chapter.arc_name == arc.get("name", "")).order_by(Chapter.chapter_number)
+        )).scalars().all()
+        if not chapters:
+            raise RuntimeError("该弧线无章节蓝图")
+        chars_result = await db.execute(select(Character).where(Character.project_id == project_id))
+        chars_summary = "\n".join([_build_character_profile(c) for c in chars_result.scalars().all()])
+        facs_result = await db.execute(select(Faction).where(Faction.project_id == project_id))
+        facs_summary = "\n".join([_build_faction_profile(f) for f in facs_result.scalars().all()])
+        chapter_payload = [
+            {
+                "chapter_number": ch.chapter_number,
+                "title": ch.title or "",
+                "summary": ch.summary or "",
+                "connects_from": ch.connects_from or "",
+                "connects_to": ch.connects_to or "",
+                "blueprint": ch.blueprint or {},
+                "continuity_checks": ch.continuity_checks or {},
+            }
+            for ch in chapters
+        ]
+        snapshot = {
+            "title": project.title,
+            "genre": project.genre,
+            "volume_title": volume.title,
+            "arc": arc,
+            "chapters": chapter_payload,
+            "characters_summary": chars_summary,
+            "factions_summary": facs_summary,
+        }
+
+    ai = AIService()
+    result = await ai.review_chapter_blueprints(**snapshot)
+
+    async with async_session() as db:
+        volume = (await db.execute(select(Volume).where(Volume.id == volume_id, Volume.project_id == project_id))).scalar_one_or_none()
+        if volume and volume.narrative_arcs and arc_index < len(volume.narrative_arcs):
+            arcs = list(volume.narrative_arcs or [])
+            arc = dict(arcs[arc_index])
+            arc["blueprint_review"] = result
+            arcs[arc_index] = arc
+            volume.narrative_arcs = arcs
+            bridge_checks = _build_arc_bridge_checks(arcs)
+            if arc_index < len(bridge_checks):
+                bridge_checks[arc_index]["blueprint_review"] = result
+            volume.arc_bridge_checks = bridge_checks
+            await db.commit()
+    return result
 
 
 async def _do_review_volume(project_id: str, volume_id: str) -> dict:
@@ -4226,6 +4400,34 @@ async def retry_task(project_id: str, task_id: str, user: User = Depends(get_cur
             raise HTTPException(400, "该任务缺少可重试参数")
         start_task(
             _do_review_arc(project_id, str(volume_id), int(arc_index)),
+            task_type,
+            project_id,
+            {**meta, "retry_of": task_id},
+            task_id=new_task_id,
+        )
+        return {"task_id": new_task_id}
+
+    if task_type == "review_arc_structure":
+        volume_id = meta.get("volume_id")
+        arc_index = meta.get("arc_index")
+        if volume_id is None or arc_index is None:
+            raise HTTPException(400, "该任务缺少可重试参数")
+        start_task(
+            _do_review_arc_structure(project_id, str(volume_id), int(arc_index)),
+            task_type,
+            project_id,
+            {**meta, "retry_of": task_id},
+            task_id=new_task_id,
+        )
+        return {"task_id": new_task_id}
+
+    if task_type == "review_chapter_blueprints":
+        volume_id = meta.get("volume_id")
+        arc_index = meta.get("arc_index")
+        if volume_id is None or arc_index is None:
+            raise HTTPException(400, "该任务缺少可重试参数")
+        start_task(
+            _do_review_chapter_blueprints(project_id, str(volume_id), int(arc_index)),
             task_type,
             project_id,
             {**meta, "retry_of": task_id},

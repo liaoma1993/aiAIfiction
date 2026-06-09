@@ -114,14 +114,31 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-5. 启动后端。启动时会自动执行未应用的 schema migration。
-6. 检查健康接口：
+5. 检查当前 schema 版本：
+
+```bash
+python -m app.scripts.check_schema
+```
+
+6. 启动后端。启动时会自动执行未应用的 schema migration。
+7. 再次检查 schema 版本和健康接口：
+
+```bash
+python -m app.scripts.check_schema
+```
 
 ```bash
 curl http://127.0.0.1:8001/api/health
 ```
 
 当前 migration 策略是非破坏性的：只追加字段、补结构索引、记录版本，不自动重写旧小说正文、章节摘要、弧线、角色关系或用户手动内容。
+
+SQLite 可以用内置脚本先做一次文件备份：
+
+```bash
+cd backend
+python -m app.scripts.backup_db
+```
 
 ## 本地一键开发启动
 

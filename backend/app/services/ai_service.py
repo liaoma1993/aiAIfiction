@@ -367,9 +367,24 @@ Skill 使用规则：
 - 对本弧线涉及的新组织/势力，必须设计：first_signal、symbol_or_trace、low_level_contact、rule_pressure、formal_entry_condition、cost_of_contact、must_not_do。
 - 如果某角色/组织没有预热，只能作为临时低功能配角出现，不能掌握关键答案、改变主线方向或立刻和主角深度绑定。
 
+10项结构优化必须落到字段：
+- arc_type: 弧线类型，取“主线目标变化/关系变化/信息揭露/组织接触/反派压力/资源状态/身份风险/余波过渡/卷核心危机”等之一或更准确中文。
+- closure_level: 开放/半闭合/阶段闭合/完全闭合。除全书结尾外，普通弧线禁止完全闭合。
+- must_remain_open: 本弧线结尾必须保留给后文的问题、压力、关系裂痕或物件状态。
+- bridge_chapter_plan: 是否需要桥接章；如果需要，写清 bridge_from、bridge_to、must_process、suggested_chapter_count。
+- protagonist_continuity_state: 本弧线开始/结束时主角身体、心理、目标、风险、关系、资源、认知状态，不能清零。
+- character_lifecycle_updates: 角色首次登场生命周期状态变化，状态可用“未预热/已有信号/间接影响/正式登场/初始冲突/临时合作/稳定关系”。
+- faction_lifecycle_updates: 组织首次接触生命周期状态变化，状态可用“未出现/传闻/痕迹/外围成员/规则压迫/外堂接触/核心人物登场/深度绑定”。
+- arc_review_targets: 后续弧线审查要重点检查的问题。
+- blueprint_repair_targets: 后续章节蓝图审查要重点检查的问题。
+- compatibility_notes: 旧小说兼容说明；不得自动重写旧正文、旧摘要、旧关系。
+
 根据卷大纲的复杂度和节奏，你自己判断最合适的弧线数量。每条弧线返回：
 - name: 弧线名称（8字内，要有辨识度）
+- arc_type: 弧线类型，必须说明这条弧线主要改变什么
 - narrative_function: 叙事功能——"主线推进"/"角色深化"/"世界观展开"/"伏笔铺设"/"节奏缓冲"/"高潮爆发"
+- closure_level: 开放/半闭合/阶段闭合/完全闭合。普通弧线不要完全闭合
+- must_remain_open: 数组，写本弧线结尾必须保留的未解问题/新后果/关系裂痕/物件状态/外部压力
 - emotional_color: 情感基调（如"压抑中带着希望"、"热血与背叛交织"、"绝望中寻光"）
 - description: 400-600字弧线完整叙事概要，必须写清：主角短期目标、核心对手/阻力、三次以上具体事件升级、每次升级后的即时反馈、弧线起止状态（起点和终点的质变）、与其他弧线的承接关系（为什么不换顺序）。禁止只写情绪变化和主题阐释。
 - opening_state: 本弧线开局状态，精确到主角处境、核心未解问题、读者已知信息
@@ -379,10 +394,17 @@ Skill 使用规则：
 - handoff_to_next: 交给下一弧线的具体钩子，必须能成为下一弧线开头的压力或行动理由；最后一条写“本卷收束钩子”
 - irreplaceable_value: 本弧线不可替代的价值，说明删掉后全卷会缺什么
 - protagonist_change: 主角在本弧线的认知/能力/处境/关系变化
+- protagonist_continuity_state: 对象，包含 opening 和 ending；每项写 body、mind、goal、risk、relationships、resources、knowledge
 - character_focus: 本弧线重点角色，2-5个，写角色名和功能
 - character_introduction_plan: 本弧线关键角色引入计划数组。每项包含 name、role、first_signal、indirect_presence、first_appearance、initial_conflict、trust_progression、cost_of_contact、must_not_do。已有角色也要写“如何承接既有状态”，不要突然变性格。
+- character_lifecycle_updates: 数组，写角色 entry_status 从什么变成什么，以及对应章节/台阶依据
 - faction_introduction_plan: 本弧线关键组织/势力引入计划数组。每项包含 name、narrative_function、first_signal、symbol_or_trace、low_level_contact、rule_pressure、formal_entry_condition、cost_of_contact、must_not_do。
+- faction_lifecycle_updates: 数组，写组织 exposure_stage 从什么变成什么，以及接触代价/规则认知
 - foreshadowing_plan: 本弧线伏笔计划，写清铺设/推进/回收
+- bridge_chapter_plan: 对象，包含 needed、bridge_from、bridge_to、must_process、suggested_chapter_count。若不需要桥接，needed=false，但仍说明原因
+- arc_review_targets: 数组，列出后续审查应重点检查的断裂风险
+- blueprint_repair_targets: 数组，列出章节蓝图展开时必须修的潜在问题
+- compatibility_notes: 旧小说兼容说明，强调旧内容不被自动改写
 - arc_steps: 变化台阶，4-7个对象。每个对象必须包含 step_name、starting_state、trigger_event、visible_action、friction、state_change、consequence、carry_forward。它们是弧线台阶，不是章节标题。
 - chapter_start: 粗略承载起始章号，仅供后续展开参考
 - chapter_end: 粗略承载结束章号，仅供后续展开参考
@@ -429,7 +451,10 @@ REVISE_VOLUME_ARC_PROMPT = """
 返回 JSON 对象，字段：
 {{
   "name": "8字内弧线名",
+  "arc_type": "主线目标变化/关系变化/信息揭露/组织接触/反派压力/资源状态/身份风险/余波过渡/卷核心危机",
   "narrative_function": "主线推进/角色深化/世界观展开/伏笔铺设/节奏缓冲/高潮爆发",
+  "closure_level": "开放/半闭合/阶段闭合/完全闭合",
+  "must_remain_open": ["必须保留到后文的问题或压力"],
   "emotional_color": "情感基调",
   "description": "400-600字弧线完整叙事概要，必须包含目标、阻力、事件升级、即时反馈和弧线终点",
   "opening_state": "本弧线开局状态",
@@ -439,6 +464,7 @@ REVISE_VOLUME_ARC_PROMPT = """
   "handoff_to_next": "交给下一弧线的具体钩子或压力",
   "irreplaceable_value": "删掉后全卷会缺什么",
   "protagonist_change": "主角变化",
+  "protagonist_continuity_state": {{"opening":{{"body":"","mind":"","goal":"","risk":"","relationships":"","resources":"","knowledge":""}},"ending":{{"body":"","mind":"","goal":"","risk":"","relationships":"","resources":"","knowledge":""}}}},
   "character_focus": ["角色名：功能"],
   "character_introduction_plan": [
     {{"name":"角色名","role":"叙事功能","first_signal":"正式登场前的信号","indirect_presence":"间接影响","first_appearance":"正式登场现场","initial_conflict":"与主角初始矛盾","trust_progression":["关系台阶"],"cost_of_contact":"接触代价","must_not_do":["禁止事项"]}}
@@ -446,7 +472,13 @@ REVISE_VOLUME_ARC_PROMPT = """
   "faction_introduction_plan": [
     {{"name":"组织名","narrative_function":"组织叙事功能","first_signal":"传闻或禁忌","symbol_or_trace":"标志/物件/痕迹","low_level_contact":"外围人物或低阶接触","rule_pressure":"组织规则如何压到主角身上","formal_entry_condition":"正式接触条件","cost_of_contact":"接触代价","must_not_do":["禁止事项"]}}
   ],
+  "character_lifecycle_updates": [{{"name":"角色名","from_status":"未预热","to_status":"已有信号","evidence":"具体台阶或事件"}}],
+  "faction_lifecycle_updates": [{{"name":"组织名","from_stage":"未出现","to_stage":"传闻","known_rules":["规则"],"contact_costs_paid":["代价"]}}],
   "foreshadowing_plan": ["铺设/推进/回收：具体伏笔"],
+  "bridge_chapter_plan": {{"needed":true,"bridge_from":"上一弧线结尾状态","bridge_to":"下一弧线开局压力","must_process":["余波/伤势/关系/组织预热"],"suggested_chapter_count":1}},
+  "arc_review_targets": ["弧线审查重点"],
+  "blueprint_repair_targets": ["章节蓝图修复重点"],
+  "compatibility_notes": "旧小说兼容说明",
   "arc_steps": [
     {{
       "step_name": "台阶名，不是章节名",
@@ -488,6 +520,20 @@ EXPAND_ARC_CHAPTERS_PROMPT = """
 
 张力曲线：{tension_curve}
 关键节点：{key_milestones}
+弧线类型：{arc_type}
+闭合程度：{closure_level}
+必须留给后文的问题/压力：
+{must_remain_open}
+桥接章计划：
+{bridge_chapter_plan}
+主角连续状态：
+{protagonist_continuity_state}
+角色生命周期更新：
+{character_lifecycle_updates}
+组织生命周期更新：
+{faction_lifecycle_updates}
+章节蓝图修复重点：
+{blueprint_repair_targets}
 
 上一条弧线的结尾状态（本弧线第1章从这里开始）：
 {previous_arc_ending}
@@ -547,6 +593,9 @@ Skill 使用规则：
 - 本弧线第1章必须先接 handoff_from_previous / previous_arc_ending，再进入本弧线新事件。
 - 本弧线最后1章必须把 handoff_to_next / payoff_for_next 落成具体可接的结尾状态。
 - 任何时间跳跃都必须在 summary 中交代跳过期间的代价或变化，不能用“三日后”硬切。
+- 如果 bridge_chapter_plan.needed 为 true，必须在本弧线开头或前一弧线结尾安排桥接功能章，处理余波、伤势、关系反应、组织预热和新目标形成；桥接章不是水章，必须产生状态增量。
+- 如果 closure_level 不是“完全闭合”，最后一章必须明确 must_remain_open 中哪些问题仍留到后文，并把它们写入 continuity_to_next。
+- protagonist_continuity_state 必须进入章节开场和结尾状态，不能让主角身体、心理、目标、风险、关系、资源、认知清零。
 
 角色/组织登场硬闸：
 - 新关键角色正式登场前，必须至少安排一个 first_signal 或 indirect_presence：传闻、物件、痕迹、别人反应、误导、留下的后果都可以。
@@ -792,6 +841,105 @@ CHAPTER_AUDIT_PROMPT = """
   "highlights": ["写得好的地方"],
   "suggested_rewrite": "如有需要，提供3-5句关键段落的修改示例",
   "must_carry_forward": ["审计后确认下一章必须继承的状态"]
+}}
+"""
+
+ARC_STRUCTURE_REVIEW_PROMPT = """
+你是长篇小说弧线审查器。请只审查弧线结构，不写正文，不重写用户已有小说。
+
+作品信息：
+书名《{title}》，类型{genre}
+本卷名：{volume_title}
+本卷大纲：
+{volume_outline}
+
+上一弧线：
+{previous_arc}
+
+当前弧线：
+{current_arc}
+
+下一弧线：
+{next_arc}
+
+角色：
+{characters_summary}
+
+组织/势力：
+{factions_summary}
+
+审查重点：
+1. 是否像独立小故事块，而不是长篇连续变化阶段。
+2. handoff_from_previous 是否接住上一弧线的具体后果。
+3. handoff_to_next 是否把具体压力交给下一弧线。
+4. closure_level 是否过度闭合，must_remain_open 是否具体。
+5. 关键角色是否有 first_signal、indirect_presence、first_appearance、initial_conflict、trust_progression 和 cost_of_contact。
+6. 关键组织是否有 symbol_or_trace、low_level_contact、rule_pressure、formal_entry_condition 和 cost_of_contact。
+7. 主角身体、心理、目标、风险、关系、资源、认知是否连续。
+8. 是否需要桥接章处理余波、伤势、关系反应、组织预热和新目标形成。
+9. arc_steps 是否是“触发事件 -> 选择 -> 后果 -> 下一压力”的因果递进。
+10. 旧小说兼容：审查和建议不能要求自动重写旧正文、旧章节摘要或旧角色关系。
+
+返回 JSON：
+{{
+  "passed": true,
+  "is_story_block_like": false,
+  "handoff_quality": 1,
+  "entry_slope_quality": 1,
+  "protagonist_continuity_quality": 1,
+  "closure_quality": 1,
+  "bridge_need": {{"needed": false, "reason": "", "suggested_chapter_count": 0}},
+  "sudden_character_risks": [{{"name":"角色名","risk":"突兀原因","fix":"修复建议"}}],
+  "sudden_faction_risks": [{{"name":"组织名","risk":"突兀原因","fix":"修复建议"}}],
+  "missing_handoffs": ["缺失的交接物"],
+  "arc_step_issues": ["台阶因果问题"],
+  "repair_suggestions": ["可执行修复建议"],
+  "safe_to_expand_chapters": true,
+  "must_not_auto_change": ["不得自动改写旧正文"]
+}}
+"""
+
+CHAPTER_BLUEPRINT_REVIEW_PROMPT = """
+你是章节蓝图审查器。请在写正文前审查章节蓝图是否会导致突兀、断裂或空转。
+
+作品信息：
+书名《{title}》，类型{genre}
+本卷名：{volume_title}
+
+当前弧线：
+{arc}
+
+章节蓝图列表：
+{chapters}
+
+角色：
+{characters_summary}
+
+组织/势力：
+{factions_summary}
+
+审查重点：
+1. 每章是否从上一章后果开始，而不是重新开故事。
+2. 新关键角色是否已有传闻/痕迹/间接影响；没有预热时不能承担核心秘密或救场。
+3. 新关键组织是否已有标志、外围成员、规则压力或接触代价。
+4. 主角状态是否连续：伤势、疲惫、目标、风险、关系、资源、认知不能清零。
+5. 是否需要桥接章处理上一弧线余波和下一弧线压力。
+6. 任意章节删除后前后是否仍可顺接；若可以，说明状态增量不足。
+7. 章末钩子是否具体落到物件、声音、消息、动作、选择或新麻烦。
+8. 弧线最后一章是否把 must_remain_open 和 handoff_to_next 写入 continuity_to_next。
+
+返回 JSON：
+{{
+  "passed": true,
+  "overall_score": 1,
+  "chapter_issues": [
+    {{"chapter_number":1,"title":"章节名","issue_type":"sudden_faction_entry","problem":"问题","fix":"修复建议","requires_regeneration":false}}
+  ],
+  "missing_bridge_chapters": [{{"insert_after_chapter":1,"purpose":"桥接功能","must_process":["余波"]}}],
+  "entry_gate_failures": [{{"entity":"角色或组织","chapter_number":1,"failure":"缺少预热","fix":"先安排痕迹或外围接触"}}],
+  "state_delta_gaps": [{{"chapter_number":1,"gap":"状态增量不足","fix":"增加不可替代后果"}}],
+  "safe_to_write": true,
+  "repair_tasks": ["写正文前应修复的蓝图任务"]
 }}
 """
 
@@ -1892,7 +2040,7 @@ class AIService:
             return result[0]
         raise RuntimeError("AI 返回弧线格式异常")
 
-    async def expand_arc_chapters(self, title: str, genre: str, volume_title: str, volume_outline: str, arc_name: str, arc_description: str, tension_curve: str, key_milestones: list, previous_arc_ending: str, characters_summary: str, factions_summary: str, pacing: str = "medium", event_density: str = "medium", expansion_scale: str = "standard", chapter_range_guidance: str = "按弧线复杂度自主判断", narrative_function: str = "", emotional_color: str = "", dependence_on_previous: str = "", payoff_for_next: str = "", writing_style_guidance: str = "未启用写作风格 Skill，按弧线功能和通用网文写法展开。", arc_steps: list | None = None, continuity_chain: str = "", handoff_from_previous: str = "", handoff_to_next: str = "") -> list[dict]:
+    async def expand_arc_chapters(self, title: str, genre: str, volume_title: str, volume_outline: str, arc_name: str, arc_description: str, tension_curve: str, key_milestones: list, previous_arc_ending: str, characters_summary: str, factions_summary: str, pacing: str = "medium", event_density: str = "medium", expansion_scale: str = "standard", chapter_range_guidance: str = "按弧线复杂度自主判断", narrative_function: str = "", emotional_color: str = "", dependence_on_previous: str = "", payoff_for_next: str = "", writing_style_guidance: str = "未启用写作风格 Skill，按弧线功能和通用网文写法展开。", arc_steps: list | None = None, continuity_chain: str = "", handoff_from_previous: str = "", handoff_to_next: str = "", arc_type: str = "", closure_level: str = "", must_remain_open: list | None = None, bridge_chapter_plan: dict | None = None, protagonist_continuity_state: dict | None = None, character_lifecycle_updates: list | None = None, faction_lifecycle_updates: list | None = None, blueprint_repair_targets: list | None = None) -> list[dict]:
         pacing_map = {
             "slow": ("缓慢", "生活流节奏，重心理描写与环境氛围，场景停留时间更长"),
             "medium": ("适中", "主线稳步推进，日常与冲突交替，保持阅读节奏感"),
@@ -1920,6 +2068,14 @@ class AIService:
             continuity_chain=continuity_chain or "未提供，请从弧线概要中提炼因果链。",
             arc_steps=json.dumps(arc_steps or [], ensure_ascii=False, indent=2),
             tension_curve=tension_curve, key_milestones=str(key_milestones),
+            arc_type=arc_type or "未标注，请从弧线功能判断",
+            closure_level=closure_level or "半闭合",
+            must_remain_open=json.dumps(must_remain_open or [], ensure_ascii=False, indent=2),
+            bridge_chapter_plan=json.dumps(bridge_chapter_plan or {}, ensure_ascii=False, indent=2),
+            protagonist_continuity_state=json.dumps(protagonist_continuity_state or {}, ensure_ascii=False, indent=2),
+            character_lifecycle_updates=json.dumps(character_lifecycle_updates or [], ensure_ascii=False, indent=2),
+            faction_lifecycle_updates=json.dumps(faction_lifecycle_updates or [], ensure_ascii=False, indent=2),
+            blueprint_repair_targets=json.dumps(blueprint_repair_targets or [], ensure_ascii=False, indent=2),
             previous_arc_ending=previous_arc_ending,
             characters_summary=characters_summary, factions_summary=factions_summary,
             pacing=pacing_label, pacing_desc=pacing_desc,
@@ -2051,6 +2207,56 @@ class AIService:
                 "audit_error": "质检返回格式不完整",
                 "raw_error": str(exc)[:200],
             }
+
+    async def review_arc_structure(
+        self,
+        title: str,
+        genre: str,
+        volume_title: str,
+        volume_outline: str,
+        previous_arc: dict,
+        current_arc: dict,
+        next_arc: dict,
+        characters_summary: str,
+        factions_summary: str,
+    ) -> dict:
+        return await self._ask(
+            ARC_STRUCTURE_REVIEW_PROMPT,
+            system=SYSTEM_EDITOR,
+            max_tokens=8192,
+            title=title,
+            genre=genre,
+            volume_title=volume_title,
+            volume_outline=volume_outline or "",
+            previous_arc=json.dumps(previous_arc or {}, ensure_ascii=False, indent=2),
+            current_arc=json.dumps(current_arc or {}, ensure_ascii=False, indent=2),
+            next_arc=json.dumps(next_arc or {}, ensure_ascii=False, indent=2),
+            characters_summary=characters_summary or "无",
+            factions_summary=factions_summary or "无",
+        )
+
+    async def review_chapter_blueprints(
+        self,
+        title: str,
+        genre: str,
+        volume_title: str,
+        arc: dict,
+        chapters: list[dict],
+        characters_summary: str,
+        factions_summary: str,
+    ) -> dict:
+        return await self._ask(
+            CHAPTER_BLUEPRINT_REVIEW_PROMPT,
+            system=SYSTEM_EDITOR,
+            max_tokens=8192,
+            title=title,
+            genre=genre,
+            volume_title=volume_title,
+            arc=json.dumps(arc or {}, ensure_ascii=False, indent=2),
+            chapters=json.dumps(chapters or [], ensure_ascii=False, indent=2),
+            characters_summary=characters_summary or "无",
+            factions_summary=factions_summary or "无",
+        )
 
     async def review_chapters(self, title: str, genre: str, brief: str, characters_summary: str, factions_summary: str, review_scope: str, chapters_content: str) -> dict:
         return await self._ask(REVIEW_CHAPTERS_PROMPT, system=SYSTEM_EDITOR, max_tokens=16384,
