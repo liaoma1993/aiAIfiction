@@ -294,6 +294,12 @@ Skill 使用规则：
 EXPAND_VOLUME_ARCS_PROMPT = """
 你是小说叙事架构师。根据卷内容和用户指定的展开策略，拆分为几条故事弧线。
 
+【重要定义：拆弧线不是拆章节】
+- 弧线 = 某个对象的连续变化过程，对象可以是主线目标、人物心理、人物关系、秘密揭露、反派压力、资源状态、权力格局、身体伤势或身份风险。
+- 章节 = 承载弧线变化的叙事容器。拆弧线时不要把结果写成“第几章发生什么”的章节格子。
+- 本任务只拆“变化逻辑”和“因果接力”。章节目录会在后续步骤中生成。
+- 可以给出 chapter_start/chapter_end/chapter_count 作为粗略承载范围，供界面和后续展开参考，但它们不是弧线本体，不能替代 arc_steps。
+
 书名《{title}》，类型{genre}
 本卷名：{volume_title}
 本卷大纲：{volume_outline}
@@ -334,6 +340,10 @@ Skill 使用规则：
 - 弧线长度取决于该段情节需要的叙事空间，不要强求均匀
 - 每条弧线必须写清“如果删掉这一段，全卷会缺什么”，避免水剧情
 - 每条弧线必须有明确的开局状态、终点状态和给下一弧线留下的承接条件
+- 每条弧线必须拆成 4-7 个“变化台阶”。台阶之间必须是因果递进，不允许只是程度递增。
+- 错误台阶：怀疑 → 更怀疑 → 非常怀疑 → 崩溃。
+- 正确台阶：看到矛盾证词 → 开始怀疑；亲眼发现换证物 → 怀疑加深；发现换证物是为了保护她 → 怀疑转为动摇；对方仍拒绝解释 → 动摇变成新的防备。
+- 如果某条弧线删掉后前后弧线仍可顺畅连接，说明这条弧线的因果接力失败，需要重拆。
 
 网文弧线要求——不要写成深奥场景小说：
 - 弧线必须是事件链，不是情绪散文。写清“目标 -> 阻力 -> 主角行动 -> 结果 -> 更大麻烦”。
@@ -350,17 +360,21 @@ Skill 使用规则：
 - description: 400-600字弧线完整叙事概要，必须写清：主角短期目标、核心对手/阻力、三次以上具体事件升级、每次升级后的即时反馈、弧线起止状态（起点和终点的质变）、与其他弧线的承接关系（为什么不换顺序）。禁止只写情绪变化和主题阐释。
 - opening_state: 本弧线开局状态，精确到主角处境、核心未解问题、读者已知信息
 - ending_state: 本弧线终点状态，精确到主角处境变化、信息变化、关系变化、未解问题
+- continuity_chain: 本弧线内部的因果链，用“上一状态 -> 触发事件 -> 角色选择 -> 新后果 -> 下一压力”写清连续推进逻辑
+- handoff_from_previous: 从上一弧线接来的具体交接物，必须落到物件/伤势/承诺/误会/秘密/债务/追兵/时间限制/一句话等可写进正文的东西；第一条写“卷开局状态”
+- handoff_to_next: 交给下一弧线的具体钩子，必须能成为下一弧线开头的压力或行动理由；最后一条写“本卷收束钩子”
 - irreplaceable_value: 本弧线不可替代的价值，说明删掉后全卷会缺什么
 - protagonist_change: 主角在本弧线的认知/能力/处境/关系变化
 - character_focus: 本弧线重点角色，2-5个，写角色名和功能
 - foreshadowing_plan: 本弧线伏笔计划，写清铺设/推进/回收
-- chapter_start: 起始章号
-- chapter_end: 结束章号
-- chapter_count: 包含章数
+- arc_steps: 变化台阶，4-7个对象。每个对象必须包含 step_name、starting_state、trigger_event、visible_action、friction、state_change、consequence、carry_forward。它们是弧线台阶，不是章节标题。
+- chapter_start: 粗略承载起始章号，仅供后续展开参考
+- chapter_end: 粗略承载结束章号，仅供后续展开参考
+- chapter_count: 粗略承载章数，仅供后续展开参考
 - tension_curve: 张力变化描述（如"中→攀升→高→轻微回落→爆发"）
-- key_milestones: 关键节点，3-5个，每个写清该节点的情绪价值和叙事意义
-- dependence_on_previous: 对前一条弧线的具体依赖（本弧线第1条则为"无"）
-- payoff_for_next: 为本卷后续弧线铺设的钩子（本弧线最后1条则写"本卷收束"）
+- key_milestones: 关键节点，3-5个，每个写清该节点的情绪价值、叙事意义和由哪个 arc_steps 台阶触发
+- dependence_on_previous: 对前一条弧线的具体依赖（本弧线第1条则为"无"），必须和 handoff_from_previous 一致
+- payoff_for_next: 为本卷后续弧线铺设的钩子（本弧线最后1条则写"本卷收束"），必须和 handoff_to_next 一致
 
 返回 JSON 数组，不要其他文字。
 """
@@ -384,10 +398,13 @@ REVISE_VOLUME_ARC_PROMPT = """
 要求：
 - 只返回调整后的当前弧线，不要返回数组，不要返回其他文字。
 - 必须保留当前弧线在全卷中的位置，不要跳到其他剧情段。
+- 拆弧线不是拆章节。章节只是后续承载容器；当前输出必须优先保证“变化台阶”和“因果接力”。
 - 如果是“重写”，重做弧线的冲突链、质变点和伏笔计划，但不能破坏前后承接。
 - 如果是“拉长”，增加误判、铺垫、角色反应、后果和支线压力，不要只加废话。
 - 如果是“压缩”，删掉可省略过渡，把弧线收束到核心冲突、关键转折和必要余波。
 - 按网文追读改写：必须有短期目标、具体对手/阻力、事件升级、阶段反馈和章末承接。不要把弧线写成“主角看见某种现象后心态变化”的文学说明。
+- 必须输出 4-7 个 arc_steps。相邻台阶之间必须是“触发事件 -> 角色选择 -> 后果 -> 下一压力”的因果递进，禁止只写情绪程度递增。
+- 必须输出 handoff_from_previous 和 handoff_to_next，且要落到可写进正文的具体事物：物件、伤势、承诺、误会、秘密、债务、追兵、时间限制或一句话。
 - 少用抽象词：理想主义、制度表演、信念地基、时代洪流、灰色秩序。必须落到具体事：谁卡了流程、哪份材料有问题、哪场会被怼、谁当众甩锅、主角怎么破局。
 - 必须输出中文字段。
 
@@ -399,10 +416,25 @@ REVISE_VOLUME_ARC_PROMPT = """
   "description": "400-600字弧线完整叙事概要，必须包含目标、阻力、事件升级、即时反馈和弧线终点",
   "opening_state": "本弧线开局状态",
   "ending_state": "本弧线终点状态",
+  "continuity_chain": "上一状态 -> 触发事件 -> 角色选择 -> 新后果 -> 下一压力",
+  "handoff_from_previous": "从上一弧线接来的具体交接物或状态",
+  "handoff_to_next": "交给下一弧线的具体钩子或压力",
   "irreplaceable_value": "删掉后全卷会缺什么",
   "protagonist_change": "主角变化",
   "character_focus": ["角色名：功能"],
   "foreshadowing_plan": ["铺设/推进/回收：具体伏笔"],
+  "arc_steps": [
+    {{
+      "step_name": "台阶名，不是章节名",
+      "starting_state": "台阶开始时的具体状态",
+      "trigger_event": "触发变化的具体事件",
+      "visible_action": "角色做出的可见行动",
+      "friction": "阻力、误判、打断或代价",
+      "state_change": "心理/关系/信息/资源/处境的质变",
+      "consequence": "该台阶造成的后果",
+      "carry_forward": "必须带入后续台阶或章节的东西"
+    }}
+  ],
   "chapter_start": 数字,
   "chapter_end": 数字,
   "chapter_count": 数字,
@@ -424,6 +456,12 @@ EXPAND_ARC_CHAPTERS_PROMPT = """
 弧线叙事功能：{narrative_function}
 弧线情感基调：{emotional_color}
 弧线概要：{arc_description}
+弧线内部因果链：
+{continuity_chain}
+
+弧线变化台阶（章节必须承载这些台阶，不是机械一章一个台阶）：
+{arc_steps}
+
 张力曲线：{tension_curve}
 关键节点：{key_milestones}
 
@@ -431,7 +469,9 @@ EXPAND_ARC_CHAPTERS_PROMPT = """
 {previous_arc_ending}
 
 对前一条弧线的依赖：{dependence_on_previous}
+从上一弧线接来的具体交接物/状态：{handoff_from_previous}
 为本卷后续弧线铺设的钩子需求：{payoff_for_next}
+交给下一弧线的具体钩子/压力：{handoff_to_next}
 
 角色：{characters_summary}
 势力：{factions_summary}
@@ -473,6 +513,14 @@ Skill 使用规则：
 - 长展开：增加误判、反复、支线压力、人物关系推进和阶段性小高潮。
 - 细写展开：拆开每个关键节点，让事件前置铺垫、现场执行、后果余震都有独立章节空间。
 
+弧线台阶承载规则：
+- 章节不是重新拆弧线，而是把 arc_steps 编织成可读章节。
+- 每章必须声明自己承载哪些 arc_steps，允许一个台阶拆成多章，也允许一章承载半个台阶或两个轻台阶。
+- 相邻章节必须形成“上章后果 -> 本章行动 -> 本章新后果 -> 下章压力”的接力。
+- 本弧线第1章必须先接 handoff_from_previous / previous_arc_ending，再进入本弧线新事件。
+- 本弧线最后1章必须把 handoff_to_next / payoff_for_next 落成具体可接的结尾状态。
+- 任何时间跳跃都必须在 summary 中交代跳过期间的代价或变化，不能用“三日后”硬切。
+
 网文拆章硬规则——优先“追读”，不要写成深奥场景小说：
 - 每章先确定一个读者能立刻看懂的短目标：主角要办成什么、躲开什么、证明什么、占到什么便宜。
 - 每章必须有外部阻力：有人拦、制度卡、信息差、误会、期限、利益冲突或当场翻车。不要只写主角“感受变化”。
@@ -498,8 +546,12 @@ Skill 使用规则：
   ④ 场景序列（2-4个场景，每个写清：地点→在场角色→冲突动作→结果）
   ⑤ 即时反馈（爽点/笑点/打脸/小胜/小亏/线索落地/关系推进）
   ⑥ 章末钩子（具体到一句话、一个物件、一条消息、一次敲门、一个新麻烦）
+- arc_step_refs: 本章承载的弧线台阶名列表
 - connects_from: 上一章结尾的状态（本弧线第1章则承接上一条弧线的结尾），精确到角色状态和未解问题
 - connects_to: 本章结尾状态，为下一章埋钩子，精确到角色状态和新悬疑
+- continuity_from_previous: 本章必须继承的上章后果，至少2条，落到伤势/关系/物件/秘密/压力/情绪余波
+- state_delta: 本章造成的状态变化，分身体、关系、信息、资源、外部压力、未解钩子
+- continuity_to_next: 下一章必须继承的后果，至少2条，必须具体可写
 - key_events: 核心事件列表（2-4个）
 - minor_events: 小事件/日常/伏笔铺垫（2-3个）
 - characters_in_chapter: 出场角色名列表
@@ -515,6 +567,7 @@ Skill 使用规则：
 4. 每一章的结尾必须留下悬念或推力——读者必须有理由翻页
 5. 章节之间有明确的"所以……然后呢？"逻辑链
 6. 场景切换要有锚定——每次换场景，用一句感官描述（声音/气味/光线）让读者立刻知道到了哪里
+7. 如果删除任意一章后前后仍能顺接，说明该章缺少不可替代的状态变化，必须补 state_delta 或重拆章节功能
 
 返回 JSON 数组，不要其他文字。
 """
@@ -567,6 +620,9 @@ Skill 使用规则：
 - 上章承诺、伤势、携带物、秘密、债务、误会、钩子必须在本章有回应或被明确延后。
 - 新角色不能只为送情报而来；若必须登场，要有来处、动机、代价，并登记到 [NEW_CHARACTERS]。
 - 如果本章蓝图与角色档案、上章状态冲突，优先服从角色档案和上章状态，并在剧情中自然绕开冲突。
+- 已写正文是事实，章节蓝图只是计划。若上一章正文/状态快照与蓝图冲突，必须优先承接上一章正文和状态快照。
+- 本章开头必须继承上一章至少2个具体后果：伤势/疲惫/物件/承诺/误会/秘密/债务/追兵/期限/情绪余波/关系裂痕。
+- 如果本章是跨弧线第一章，必须先接住跨弧线桥接记忆中的交接物或压力，再进入新弧线事件。
 
 作家技法要求——这不是填表，这是创作：
 
@@ -591,6 +647,7 @@ Skill 使用规则：
 - 如果是某卷的第1章（但不是全书第1章）：需要一段简短过渡，快速锚定读者在新卷的时空位置，但不用重新介绍世界观和角色。示例开局："从北境回来已是第三个月。林缺站在铁剑门山门前，发现门匾换了。"——一句话接上卷、拉进新卷。
 - 如果是某条弧线的第1章（但不是卷的第1章）：直接从上一弧线的结尾状态切入，不需要过渡，不需要重新介绍——读者刚读完上一条弧线。
 - 如果是弧线内部的续章：无缝衔接，从上一章结尾处继续。
+- 除全书第1章外，正文第一段必须回答“现在在哪里、谁在场、上一章最后发生的具体事现在造成了什么影响”。不要用天气、感慨、世界观介绍重新开局。
 
 世界观的交代要有机地融入叙事——不要写"这个世界有三大宗门"，而要通过角色动作和对话体现。例如"山门石阶上只站了两个人，往年收徒至少站三排"——门派衰落立现。
 
@@ -617,6 +674,10 @@ Skill 使用规则：
 
 写作要求：
 - 从上一章结尾的状态直接开始，场景/情绪/时间必须无缝衔接
+- 本章必须落实蓝图中的 continuity_from_previous、state_delta、continuity_to_next；如果蓝图没有这些字段，也要自行补出“上章后果→本章行动→本章新后果→下章压力”的链条
+- 人物关系变化必须有台阶：不能突然信任、突然决裂、突然成长；必须通过具体事件、动作、对话或代价表现
+- 任何时间跳跃必须交代跳过期间造成的代价或变化，例如伤势、赶路、追兵距离、关系冷却、资源消耗
+- 每个场景都要让读者一眼知道：地点、在场人物、主角短目标、阻力、结果
 - 不要输出"第X章"或章节标题——系统另行显示
 - 角色性格和说话方式要和角色档案一致，每个角色的语言指纹必须体现
 - 如已有内容（{written_so_far}字），从断点处接续，不要重复已有内容
@@ -652,6 +713,21 @@ CHAPTER_AUDIT_PROMPT = """
 10. 易懂度——读者能否一遍读懂当前地点、在场人物、目标、冲突和因果？有没有设定名词堆叠、主语不清、动作线跳跃？
 11. 标点规范——中文标点、对话引号、省略号、破折号、问号感叹号是否规范？有没有英文标点混入、逗号拖长句、重复感叹问号？
 12. 读者视角——第一次读本章的读者会卡在哪里？有哪些句子需要回看？哪些信息作者知道但读者不知道？
+13. 弧线承接——本章是否接住了上一弧线/上一章留下的交接物、伤势、物件、秘密、误会、债务或压力？有没有突然换目标、换地点、换关系？
+14. 状态增量——本章结束后是否产生了清楚的新后果？如果删掉本章，后续是否会缺少必要变化？有没有“看似发生很多事，但状态没有改变”的空转？
+
+连贯性判定重点：
+- 上章结尾或钩子是否在本章前800字内得到回应，或被明确延后。
+- 上章至少2个具体后果是否被继承。
+- 人物关系和心理变化是否有台阶，而不是突然信任、突然决裂、突然成长。
+- 时间跳跃、地点切换、弧线目标切换是否有桥。
+- 已写正文、状态快照、章节蓝图之间如有冲突，是否优先服从已写正文。
+
+可读性判定重点：
+- 当前地点、在场人物、主角短目标、阻力、结果是否一遍能懂。
+- 冲突是否具体到人、规则、物件、期限或利益，而不是抽象议论。
+- 对话是否推动关系/信息/冲突，而不是说明书。
+- 章末钩子是否落到具体声音、物件、动作、发现或一句话。
 
 输出限制：
 - 必须返回完整合法 JSON，不要 Markdown，不要代码块。
@@ -668,13 +744,16 @@ CHAPTER_AUDIT_PROMPT = """
 {{
   "passed": true/false,
   "overall_score": 1-10,
-  "scores": {{"readability":1-10,"punctuation":1-10,"dialogue":1-10,"scene_clarity":1-10,"character_consistency":1-10,"hook":1-10,"ai_flavor":1-10}},
+  "continuity_score": 1-10,
+  "readability_score": 1-10,
+  "scores": {{"continuity":1-10,"readability":1-10,"punctuation":1-10,"dialogue":1-10,"scene_clarity":1-10,"character_consistency":1-10,"hook":1-10,"ai_flavor":1-10}},
   "reader_confusions": ["读者可能看不懂的点"],
   "issues": [
-    {{"severity":"critical/high/low","dimension":"1.场景连续性","target_text":"正文中可精确定位的原文短句","fix_mode":"sentence/paragraph/context","description":"具体问题描述，引用原文证据","fix_suggestion":"具体修改建议，包括可替换的写法"}}
+    {{"severity":"critical/high/low","dimension":"1.场景连续性","target_text":"正文中可精确定位的原文短句","fix_mode":"sentence/paragraph/context","description":"具体问题描述，引用原文证据","fix_suggestion":"具体修改建议，包括可替换的写法","repair_task":"可执行修复任务，例如：重写本章前800字，从上章血指印开始，继承左肩伤和追兵临近"}}
   ],
   "highlights": ["写得好的地方"],
-  "suggested_rewrite": "如有需要，提供3-5句关键段落的修改示例"
+  "suggested_rewrite": "如有需要，提供3-5句关键段落的修改示例",
+  "must_carry_forward": ["审计后确认下一章必须继承的状态"]
 }}
 """
 
@@ -729,7 +808,7 @@ REVIEW_CHAPTERS_PROMPT = """
 被评审的章节内容：
 {chapters_content}
 
-请从以下 10 个维度逐一评审，每个维度给出评分（1-10分）和具体分析：
+请从以下 12 个维度逐一评审，每个维度给出评分（1-10分）和具体分析：
 
 1. 情节逻辑 —— 因果链是否完整？有没有"凭空出现"的转折？章节之间的因果驱动是否自然？有没有逻辑断层（前一章A说不知道X，后一章脱口而出X）？
 2. 角色一致性 —— 每个角色的行为是否符合其性格档案？说话风格是否一致（语言指纹）？情绪反应是否符合其设定？有没有角色"突然降智"或"性格突变"？
@@ -741,6 +820,8 @@ REVIEW_CHAPTERS_PROMPT = """
 8. 设定一致性 —— 有没有违反世界观设定的描写？力量体系/社会规则是否自洽？
 9. 叙事视角 —— POV是否保持一致？有没有"上帝视角"突然闯入？角色不知道的信息是否被错误地描述为角色已知？
 10. 阅读体验 —— 章节结尾是否有翻页动力？钩子是否有力？整体阅读是否有"停不下来"的感觉？
+11. 上下章节连贯 —— 每章开头是否接住上一章结尾/钩子？伤势、物件、秘密、误会、情绪余波是否持续？有没有时间、地点、目标硬切？
+12. 上下弧线连贯 —— 弧线之间是否有具体交接物或压力？上一弧线的终点是否自然逼出下一弧线？有没有进入新弧线时重新开局、遗忘旧后果？
 
 【章节结构评审边界】
 - 不要因为两个章节发生在同一地点、同一天、同一场会议、同一次走访或同一场景链里，就建议“合并章节”。网文连载允许连续多章发生在同一场景，只要每章有独立目标、阻力、转折、信息增量和章末钩子。
@@ -753,12 +834,16 @@ REVIEW_CHAPTERS_PROMPT = """
 - 具体章节号和引用的原文证据（至少引用一句话）
 - 严重程度：致命/严重/轻微
 - 具体修改建议
+- 如果是跨章节/跨弧线问题，必须说明“上一章/上一弧线留下什么”“本章/本弧线漏接什么”“应该补在哪个章节开头或结尾”
+- 修改建议必须能落地为修复任务，不要只写“加强铺垫”“保持连贯”
 
 总体评分不简单地平均——逻辑漏洞和角色崩塌的权重更高。
 
 返回 JSON：
 {{
   "overall_score": 1-10,
+  "continuity_score": 1-10,
+  "readability_score": 1-10,
   "summary": "200字总体评审意见",
   "dimensions": [
     {{"name":"1.情节逻辑","score":7,"comment":"100字分析"}}
@@ -769,7 +854,10 @@ REVIEW_CHAPTERS_PROMPT = """
   "high_issues": [...],
   "low_issues": [...],
   "strengths": ["本书优点1", "优点2"],
-  "writing_tips": ["针对本书的3-5条具体写作提升建议"]
+  "writing_tips": ["针对本书的3-5条具体写作提升建议"],
+  "continuity_repairs": [
+    {{"chapter": 8, "problem":"上下章/上下弧线断裂点", "repair_task":"具体修复任务", "must_carry_forward":["必须继承的状态"]}}
+  ]
 }}
 """
 
@@ -935,14 +1023,27 @@ STATE_EXTRACT_PROMPT = """
 正文：
 {content}
 
+提取原则：
+- 只提取会影响后续写作的状态，不复述正文。
+- 必须覆盖身体、关系、信息、物件/资源、外部压力、未解决钩子。
+- 对下一章必须继承的点要具体到可写进开头的状态，例如“左臂箭伤未处理”“女主扣着主角的刀”“追兵明早前能查到北驿”。
+- 标记哪些问题已经回应，哪些被明确延后，避免下一章遗忘上章钩子。
+
 返回 JSON：
 {{
   "facts":["新增事实"],
-  "character_changes":[{{"name":"角色名","change":"状态/关系/能力/情绪变化"}}],
+  "character_changes":[{{"name":"角色名","change":"状态/关系/能力/情绪变化","current_state":{{"body":"","emotion":"","relationship":"","knowledge":"","resources":""}}}}],
+  "relationship_changes":[{{"pair":"角色A/角色B","before":"此前关系状态","after":"本章后关系状态","evidence":"具体动作或对话"}}],
+  "object_states":[{{"name":"物件/证据/资源","holder":"持有人/位置","state":"当前状态","importance":"后续影响"}}],
   "foreshadowing_updates":[{{"name":"伏笔名","status":"播种/推进/回收","detail":"说明"}}],
   "faction_changes":[{{"name":"势力名","change":"变化"}}],
   "timeline_events":[{{"time_point":"本章","description":"事件","event_type":"event","is_major":false}}],
-  "next_must_follow":["下一章必须承接的点"]
+  "resolved_hooks":["本章已回应的上章钩子或旧问题"],
+  "deferred_hooks":["本章明确延后、后续仍需处理的问题"],
+  "external_pressures":["追兵/期限/流言/制度/敌人行动等外部压力"],
+  "next_must_follow":["下一章必须承接的点"],
+  "opening_requirements_for_next":["下一章开头必须先接住的具体状态，至少2条"],
+  "causality_links":[{{"cause":"本章原因/选择","effect":"造成的后果","chapter_from":{chapter_number},"chapter_to":"下一章"}}]
 }}
 """
 
@@ -959,15 +1060,25 @@ CHAPTER_BLUEPRINT_PROMPT = """
 - 明确本章的开场状态、场景序列、主要冲突、转折点、章末状态、下一章钩子。
 - 给出本章必须出现的关键事件、必须避开的内容、情绪曲线、节奏建议。
 - 识别本章与上一章、上一卷、当前伏笔之间的因果关系。
+- 必须优先接住已写正文和状态快照；如果章节原 summary 与已写状态冲突，以已写状态为准。
+- 必须输出 continuity_from_previous、state_delta、continuity_to_next，确保本章不是孤立剧情块。
+- 必须明确本章承载哪些弧线台阶或变化任务；如果上下文没有 arc_steps，就从章节功能中提炼。
+- 可读性优先：本章短目标、阻力、场景结果必须一眼能懂，不要写成主题阐释。
 - 蓝图必须服务于去 AI 味写作：每个场景都要有可观察动作、具体阻力、感官锚点、潜台词或不完整胜利，避免抽象心理解释和总结式悬念。
 - 输出要短但可执行，避免空泛理论。
 
 返回 JSON：
 {{
   "opening_state":"...",
+  "connects_from":"上一章/上一弧线留下的具体状态",
+  "arc_step_refs":["本章承载的弧线台阶或变化任务"],
+  "continuity_from_previous":["本章必须继承的上章后果"],
   "scene_beats":[{{"scene":1,"location":"...","characters":["..."],"purpose":"...","conflict":"...","emotion":"..."}}],
   "main_conflict":"...",
   "turning_point":"...",
+  "state_delta":{{"body":["..."],"relationship":["..."],"information":["..."],"resources":["..."],"external_pressure":["..."],"unresolved_hooks":["..."]}},
+  "connects_to":"本章结尾交给下一章的具体状态",
+  "continuity_to_next":["下一章必须继承的后果"],
   "ending_hook":"...",
   "must_include":["..."],
   "must_not_include":["AI腔模板句","抽象总结式悬念","无阻力顺滑推进"],
@@ -994,15 +1105,25 @@ GENERATE_STATE_SUMMARY_PROMPT = """
 要求：
 - 提取影响后续写作的新增事实、角色状态变化、关系变化、势力变化、时间线事件、伏笔推进和下一章必须承接点。
 - 以长期记忆为目标，不要重复正文细节。
+- 必须把“下一章开头需要接住什么”写清楚，至少包含2个具体后果：伤势/物件/秘密/误会/债务/追兵/期限/关系裂痕/情绪余波。
+- 必须提取物件和资源的持有状态，避免后续章节出现“物件突然在手里/突然消失”。
+- 必须标记关系变化的台阶，避免后续突然信任、突然决裂或突然和解。
+- 如果本章章末钩子具体，必须进入 next_must_follow 和 opening_requirements_for_next。
 
 返回 JSON：
 {{
   "facts":["..."],
   "character_changes":[{{"name":"...","change":"...","current_state":{{}}}}],
+  "relationship_changes":[{{"pair":"...","before":"...","after":"...","evidence":"..."}}],
+  "object_states":[{{"name":"...","holder":"...","state":"...","importance":"..."}}],
   "foreshadowing_updates":[{{"name":"...","status":"...","detail":"...","reveal_stage":"..."}}],
   "faction_changes":[{{"name":"...","change":"...","current_state":{{}}}}],
   "timeline_events":[{{"time_point":"...","description":"...","event_type":"event","is_major":false}}],
+  "resolved_hooks":["..."],
+  "deferred_hooks":["..."],
+  "external_pressures":["..."],
   "next_must_follow":["..."],
+  "opening_requirements_for_next":["..."],
   "causality_links":[{{"cause":"...","effect":"...","chapter_from":1,"chapter_to":2}}],
   "hard_constraints_violations":[]
 }}
@@ -1733,7 +1854,7 @@ class AIService:
             return result[0]
         raise RuntimeError("AI 返回弧线格式异常")
 
-    async def expand_arc_chapters(self, title: str, genre: str, volume_title: str, volume_outline: str, arc_name: str, arc_description: str, tension_curve: str, key_milestones: list, previous_arc_ending: str, characters_summary: str, factions_summary: str, pacing: str = "medium", event_density: str = "medium", expansion_scale: str = "standard", chapter_range_guidance: str = "按弧线复杂度自主判断", narrative_function: str = "", emotional_color: str = "", dependence_on_previous: str = "", payoff_for_next: str = "", writing_style_guidance: str = "未启用写作风格 Skill，按弧线功能和通用网文写法展开。") -> list[dict]:
+    async def expand_arc_chapters(self, title: str, genre: str, volume_title: str, volume_outline: str, arc_name: str, arc_description: str, tension_curve: str, key_milestones: list, previous_arc_ending: str, characters_summary: str, factions_summary: str, pacing: str = "medium", event_density: str = "medium", expansion_scale: str = "standard", chapter_range_guidance: str = "按弧线复杂度自主判断", narrative_function: str = "", emotional_color: str = "", dependence_on_previous: str = "", payoff_for_next: str = "", writing_style_guidance: str = "未启用写作风格 Skill，按弧线功能和通用网文写法展开。", arc_steps: list | None = None, continuity_chain: str = "", handoff_from_previous: str = "", handoff_to_next: str = "") -> list[dict]:
         pacing_map = {
             "slow": ("缓慢", "生活流节奏，重心理描写与环境氛围，场景停留时间更长"),
             "medium": ("适中", "主线稳步推进，日常与冲突交替，保持阅读节奏感"),
@@ -1758,6 +1879,8 @@ class AIService:
             title=title, genre=genre,
             volume_title=volume_title, volume_outline=volume_outline,
             arc_name=arc_name, arc_description=arc_description,
+            continuity_chain=continuity_chain or "未提供，请从弧线概要中提炼因果链。",
+            arc_steps=json.dumps(arc_steps or [], ensure_ascii=False, indent=2),
             tension_curve=tension_curve, key_milestones=str(key_milestones),
             previous_arc_ending=previous_arc_ending,
             characters_summary=characters_summary, factions_summary=factions_summary,
@@ -1767,6 +1890,8 @@ class AIService:
             chapter_range_guidance=chapter_range_guidance,
             narrative_function=narrative_function, emotional_color=emotional_color,
             dependence_on_previous=dependence_on_previous, payoff_for_next=payoff_for_next,
+            handoff_from_previous=handoff_from_previous or dependence_on_previous or "无",
+            handoff_to_next=handoff_to_next or payoff_for_next or "本弧线收束",
             writing_style_guidance=writing_style_guidance or "未启用写作风格 Skill，按弧线功能和通用网文写法展开。")
 
     async def expand_volume(self, title: str, genre: str, brief: str, volume_title: str, volume_summary: str, volume_outline: str, volume_theme: str, characters_summary: str, factions_summary: str, chapter_count: int, chapter_words: int, pacing: str = "medium", event_density: str = "medium", subplot_count: int = 2) -> list[dict]:
@@ -1861,7 +1986,10 @@ class AIService:
             return {
                 "passed": False,
                 "overall_score": 0,
+                "continuity_score": 0,
+                "readability_score": 0,
                 "scores": {
+                    "continuity": 0,
                     "readability": 0,
                     "punctuation": 0,
                     "dialogue": 0,
@@ -1881,6 +2009,7 @@ class AIService:
                 ],
                 "highlights": [],
                 "suggested_rewrite": "",
+                "must_carry_forward": [],
                 "audit_error": "质检返回格式不完整",
                 "raw_error": str(exc)[:200],
             }

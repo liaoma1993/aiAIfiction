@@ -23,6 +23,8 @@ class Volume(BaseModel):
     chapter_range_end = Column(Integer, nullable=False)
     narrative_line_distribution = Column(JSON, default=dict)
     narrative_arcs = Column(JSON, default=list)
+    arc_continuity_index = Column(JSON, default=list)
+    arc_bridge_checks = Column(JSON, default=list)
     sort_order = Column(Integer, default=0)
 
     project = relationship("Project", back_populates="volumes", lazy="noload")

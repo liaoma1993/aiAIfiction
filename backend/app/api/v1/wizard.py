@@ -1194,9 +1194,48 @@ def _build_story_state_snapshot(chapter: Chapter, prev_snapshot: str = "") -> st
         parts.append(f"章末状态：{chapter.connects_to}")
     if chapter.hook:
         parts.append(f"钩子：{chapter.hook}")
+    checks = chapter.continuity_checks or {}
+    if checks.get("state_delta"):
+        parts.append(f"状态变化：{json.dumps(checks.get('state_delta'), ensure_ascii=False)[:700]}")
+    if checks.get("continuity_to_next"):
+        parts.append(f"下章必须继承：{json.dumps(checks.get('continuity_to_next'), ensure_ascii=False)[:500]}")
+    state = _parse_state_snapshot(chapter.story_state_snapshot or "")
+    for label, key in [
+        ("关系变化", "relationship_changes"),
+        ("物件状态", "object_states"),
+        ("外部压力", "external_pressures"),
+        ("下章开头要求", "opening_requirements_for_next"),
+        ("下一章必须承接", "next_must_follow"),
+        ("延后钩子", "deferred_hooks"),
+    ]:
+        value = state.get(key)
+        if value:
+            parts.append(f"{label}：{json.dumps(value, ensure_ascii=False)[:500]}")
     if prev_snapshot:
         parts.append(f"上章快照：{prev_snapshot[:500]}")
     return "\n".join(parts) if parts else "无"
+
+
+def _format_chapter_continuity_payload(chapter: Chapter) -> str:
+    payload = {
+        "connects_from": chapter.connects_from or "",
+        "connects_to": chapter.connects_to or "",
+        "hook": chapter.hook or "",
+        "blueprint_continuity": {
+            "arc_step_refs": chapter.arc_step_refs or (chapter.blueprint or {}).get("arc_step_refs") or (chapter.continuity_checks or {}).get("arc_step_refs", []),
+            "continuity_from_previous": chapter.continuity_from_previous or (chapter.blueprint or {}).get("continuity_from_previous") or (chapter.continuity_checks or {}).get("continuity_from_previous", []),
+            "state_delta": chapter.state_delta or (chapter.blueprint or {}).get("state_delta") or (chapter.continuity_checks or {}).get("state_delta", {}),
+            "continuity_to_next": chapter.continuity_to_next or (chapter.blueprint or {}).get("continuity_to_next") or (chapter.continuity_checks or {}).get("continuity_to_next", []),
+        },
+        "state_memory": {
+            "relationship_changes": chapter.relationship_changes or [],
+            "object_states": chapter.object_states or [],
+            "external_pressures": chapter.external_pressures or [],
+            "opening_requirements_for_next": chapter.opening_requirements_for_next or [],
+        },
+        "causality_links": chapter.causality_links or [],
+    }
+    return json.dumps(payload, ensure_ascii=False, indent=2)
 
 
 def _safe_json(value, fallback):
@@ -1235,6 +1274,22 @@ def _format_arc_bridge(prev_arc: dict, prev_chapters: list[Chapter], next_arc: d
         f"叙事功能：{prev_arc.get('narrative_function', '')}",
         f"弧线概要：{_clip_text(prev_arc.get('description', ''), 500)}",
     ]
+    if prev_arc.get("continuity_chain"):
+        parts.append(f"【上一弧线因果链】{_clip_text(prev_arc.get('continuity_chain', ''), 500)}")
+    if prev_arc.get("handoff_to_next") or prev_arc.get("payoff_for_next"):
+        parts.append(f"【上一弧线交给下一弧线】{_clip_text(prev_arc.get('handoff_to_next') or prev_arc.get('payoff_for_next') or '', 500)}")
+    if next_arc and (next_arc.get("handoff_from_previous") or next_arc.get("dependence_on_previous")):
+        parts.append(f"【当前弧线必须接住】{_clip_text(next_arc.get('handoff_from_previous') or next_arc.get('dependence_on_previous') or '', 500)}")
+    if prev_arc.get("arc_steps"):
+        steps = prev_arc.get("arc_steps") or []
+        if isinstance(steps, list) and steps:
+            tail_steps = steps[-2:]
+            parts.append("【上一弧线最后变化台阶】")
+            for step in tail_steps:
+                if isinstance(step, dict):
+                    parts.append(
+                        f"- {step.get('step_name', '')}：后果={_clip_text(step.get('consequence', ''), 180)}；必须带入={_clip_text(step.get('carry_forward', ''), 180)}"
+                    )
     if recent:
         parts.append("【上一弧线最近章节主内容】")
         for ch in recent:
@@ -1256,6 +1311,7 @@ def _format_arc_bridge(prev_arc: dict, prev_chapters: list[Chapter], next_arc: d
         parts.extend([
             f"【下一弧线】{next_arc.get('name', '')}",
             f"对上一弧线的依赖：{_clip_text(next_arc.get('dependence_on_previous', ''), 400)}",
+            f"下一弧线接收物：{_clip_text(next_arc.get('handoff_from_previous', ''), 400)}",
             f"下一弧线起点：{_clip_text(next_arc.get('description', ''), 400)}",
         ])
     return "\n".join(p for p in parts if p)
@@ -1305,6 +1361,8 @@ async def _refresh_volume_arc_bridges(db: AsyncSession, volume: Volume):
                 arc["bridge_from_previous"] = bridge
                 prev_arc["bridge_to_next"] = bridge
     volume.narrative_arcs = arcs
+    volume.arc_continuity_index = _build_arc_continuity_index(arcs)
+    volume.arc_bridge_checks = _build_arc_bridge_checks(arcs)
 
 
 async def _generate_chapter_blueprint(db: AsyncSession, project_id: str, chapter: Chapter, prev_chapter: Chapter | None, vol: Volume | None) -> dict:
@@ -1328,13 +1386,27 @@ async def _generate_chapter_blueprint(db: AsyncSession, project_id: str, chapter
         blueprint["arc_bridge_context"] = bridge_context
     chapter.blueprint = blueprint
     chapter.summary = blueprint.get("summary", chapter.summary or "")
-    chapter.connects_from = prev_chapter.connects_to if prev_chapter and prev_chapter.connects_to else chapter.connects_from
+    chapter.connects_from = (
+        blueprint.get("connects_from")
+        or (prev_chapter.connects_to if prev_chapter and prev_chapter.connects_to else chapter.connects_from)
+    )
     if bridge_context and (not chapter.connects_from or chapter.connects_from.startswith("无")):
         chapter.connects_from = bridge_context
-    chapter.connects_to = blueprint.get("ending_hook", chapter.connects_to or "")
+    chapter.connects_to = blueprint.get("connects_to") or blueprint.get("ending_hook", chapter.connects_to or "")
     chapter.key_events = blueprint.get("must_include", chapter.key_events or [])
     chapter.minor_events = blueprint.get("foreshadowing_tasks", chapter.minor_events or [])
-    chapter.continuity_checks = blueprint.get("continuity_checks", {})
+    continuity_checks = blueprint.get("continuity_checks", {}) or {}
+    continuity_checks.update({
+        "arc_step_refs": blueprint.get("arc_step_refs", []),
+        "continuity_from_previous": blueprint.get("continuity_from_previous", []),
+        "state_delta": blueprint.get("state_delta", {}),
+        "continuity_to_next": blueprint.get("continuity_to_next", []),
+    })
+    chapter.continuity_checks = continuity_checks
+    chapter.arc_step_refs = blueprint.get("arc_step_refs", chapter.arc_step_refs or [])
+    chapter.continuity_from_previous = blueprint.get("continuity_from_previous", chapter.continuity_from_previous or [])
+    chapter.state_delta = blueprint.get("state_delta", chapter.state_delta or {})
+    chapter.continuity_to_next = blueprint.get("continuity_to_next", chapter.continuity_to_next or [])
     chapter.causality_links = blueprint.get("causality_links", [])
     chapter.foreshadowing_tasks = blueprint.get("foreshadowing_tasks", [])
     chapter.rhythm_profile = blueprint.get("rhythm_profile", {})
@@ -1359,6 +1431,12 @@ async def _extract_and_apply_state(db: AsyncSession, project_id: str, chapter: C
         content=content,
     )
     chapter.story_state_snapshot = json.dumps(result, ensure_ascii=False)[:3000]
+    chapter.relationship_changes = result.get("relationship_changes", []) if isinstance(result.get("relationship_changes", []), list) else []
+    chapter.object_states = result.get("object_states", []) if isinstance(result.get("object_states", []), list) else []
+    chapter.external_pressures = result.get("external_pressures", []) if isinstance(result.get("external_pressures", []), list) else []
+    chapter.opening_requirements_for_next = result.get("opening_requirements_for_next", []) if isinstance(result.get("opening_requirements_for_next", []), list) else []
+    if isinstance(result.get("causality_links"), list):
+        chapter.causality_links = result.get("causality_links", [])
 
     chars_result = await db.execute(select(Character).where(Character.project_id == project_id))
     chars = {c.name: c for c in chars_result.scalars().all()}
@@ -1501,6 +1579,7 @@ async def _do_write_chapter(project_id: str, chapter_id: str, mode: str = "appen
             chapter_summary = f"{chapter.summary or ''}\n\n【本次写作控制】{extra}\n{_writing_controls_guidance(controls)}\n【用户要求】{instruction or '无'}"
         else:
             chapter_summary = chapter.summary or instruction or ""
+        chapter_summary = f"{chapter_summary}\n\n【章节连贯性硬约束】\n{_format_chapter_continuity_payload(chapter)}"
         if bridge_context and arc_idx > 0:
             chapter_summary = f"{chapter_summary}\n\n【跨弧线桥接要求】\n{bridge_context}"
         writing_style_guidance = _format_writing_style_skill(await _active_writing_style_skill(db, project), "writing")
@@ -1544,7 +1623,10 @@ async def _do_write_chapter(project_id: str, chapter_id: str, mode: str = "appen
         chapter.status = _status_after_content_change(chapter.status)
         chapter.version = (chapter.version or 1) + 1
         with db.no_autoflush:
-            await _extract_and_apply_state(db, project_id, chapter, chapter.content)
+            state_result = await _extract_and_apply_state(db, project_id, chapter, chapter.content)
+        checks = chapter.continuity_checks or {}
+        checks["state_extract"] = state_result
+        chapter.continuity_checks = checks
         if vol:
             await _refresh_volume_arc_bridges(db, vol)
 
@@ -2149,7 +2231,7 @@ async def _do_batch_write_arc(project_id: str, volume_id: str, arc_index: int, t
 
             text, hook, new_characters = await ai.write_chapter(
                 project.title, project.genre, _wizard_story_brief(project),
-                ch.chapter_number, ch.title or "", f"{ch.summary or ''}\n\n【本次写作控制】\n{_writing_controls_guidance(write_controls)}",
+                ch.chapter_number, ch.title or "", f"{ch.summary or ''}\n\n【本次写作控制】\n{_writing_controls_guidance(write_controls)}\n\n【章节连贯性硬约束】\n{_format_chapter_continuity_payload(ch)}",
                 volume.outline or "", chars_summary, facs_summary,
                 min_words=ch.target_words or 3000, written_so_far=0,
                 previous_ending=final_ending,
@@ -2177,18 +2259,17 @@ async def _do_batch_write_arc(project_id: str, volume_id: str, arc_index: int, t
                 checks["quality_review"] = quality_review
                 ch.continuity_checks = checks
             ch.status = "completed"
-            ch.story_state_snapshot = _build_story_state_snapshot(ch, story_state_snapshot)
             total_words += len(text)
+            with db.no_autoflush:
+                state_result = await _extract_and_apply_state(db, project_id, ch, ch.content)
+            checks = ch.continuity_checks or {}
+            checks["state_extract"] = state_result
+            ch.continuity_checks = checks
             await _refresh_volume_arc_bridges(db, volume)
-            await db.commit()
 
             # propagate ending to next chapter
-            previous_ending = text[-500:] if len(text) > 500 else text
             previous_hook = hook or ""
             story_state_snapshot = _build_story_state_snapshot(ch, story_state_snapshot)
-
-            with db.no_autoflush:
-                await _extract_and_apply_state(db, project_id, ch, ch.content)
 
             if new_characters:
                 for nc in new_characters:
@@ -2217,6 +2298,7 @@ async def _do_batch_write_arc(project_id: str, volume_id: str, arc_index: int, t
             if hook:
                 previous_ending += f"\n\n【上章钩子】{hook}"
             story_state_snapshot = ch.story_state_snapshot
+            await db.commit()
 
         await db.commit()
         if task_id:
@@ -2280,6 +2362,7 @@ async def _do_expand_volume_arcs(
         length_control=snapshot["length_control"],
         writing_style_guidance=snapshot["writing_style_guidance"],
     )
+    arcs = _normalize_narrative_arc_payload(arcs)
 
     async with async_session() as db:
         volume = (await db.execute(select(Volume).where(Volume.id == volume_id, Volume.project_id == project_id))).scalar_one_or_none()
@@ -2289,6 +2372,8 @@ async def _do_expand_volume_arcs(
         if clear_existing_chapters:
             cleared_chapters = await _clear_volume_chapters(db, project_id, volume_id)
         volume.narrative_arcs = arcs
+        volume.arc_continuity_index = _build_arc_continuity_index(arcs)
+        volume.arc_bridge_checks = _build_arc_bridge_checks(arcs)
         await db.commit()
         return {"arcs": arcs, "cleared_chapters": cleared_chapters}
 
@@ -2352,7 +2437,11 @@ async def _do_revise_volume_arc(project_id: str, volume_id: str, arc_index: int,
         revised.setdefault("chapter_end", old_arc.get("chapter_end"))
         revised.setdefault("chapter_count", old_arc.get("chapter_count"))
         arcs[arc_index] = revised
+        arcs = _normalize_narrative_arc_payload(arcs)
+        revised = arcs[arc_index]
         volume.narrative_arcs = arcs
+        volume.arc_continuity_index = _build_arc_continuity_index(arcs)
+        volume.arc_bridge_checks = _build_arc_bridge_checks(arcs)
         await db.commit()
 
     chapters_result = None
@@ -2427,6 +2516,81 @@ def _arc_chapter_range_guidance(arc: dict, expansion_scale: str) -> str:
     return f"建议 {low}-{high} 章；这是内部范围，不要向用户询问具体章数。若弧线复杂度明显更高，可以超过上限，但必须保证每章有明确叙事功能。"
 
 
+def _normalize_narrative_arc_payload(arcs: list[dict]) -> list[dict]:
+    normalized: list[dict] = []
+    for idx, raw_arc in enumerate(arcs or []):
+        if not isinstance(raw_arc, dict):
+            continue
+        arc = dict(raw_arc)
+        arc.setdefault("handoff_from_previous", arc.get("dependence_on_previous") or ("卷开局状态" if idx == 0 else "承接上一弧线终点状态"))
+        arc.setdefault("handoff_to_next", arc.get("payoff_for_next") or "本弧线结尾留下的具体压力")
+        arc.setdefault("continuity_chain", "")
+        steps = arc.get("arc_steps")
+        if not isinstance(steps, list) or not steps:
+            milestones = arc.get("key_milestones") or []
+            fallback_steps = []
+            for step_idx, item in enumerate(milestones[:5], start=1):
+                label = item if isinstance(item, str) else (item.get("name") or item.get("stage") or f"关键节点{step_idx}") if isinstance(item, dict) else f"关键节点{step_idx}"
+                fallback_steps.append({
+                    "step_name": str(label)[:40],
+                    "starting_state": arc.get("opening_state", ""),
+                    "trigger_event": str(label),
+                    "visible_action": "由章节展开阶段补足具体行动",
+                    "friction": "由章节展开阶段补足具体阻力",
+                    "state_change": "由章节展开阶段补足状态变化",
+                    "consequence": arc.get("ending_state", ""),
+                    "carry_forward": arc.get("handoff_to_next") or arc.get("payoff_for_next") or "",
+                })
+            arc["arc_steps"] = fallback_steps
+        arc["bridge_check"] = {
+            "requires_previous_handoff": idx > 0,
+            "has_handoff_from_previous": bool(arc.get("handoff_from_previous") or arc.get("dependence_on_previous")),
+            "has_handoff_to_next": bool(arc.get("handoff_to_next") or arc.get("payoff_for_next")),
+            "has_arc_steps": bool(arc.get("arc_steps")),
+        }
+        normalized.append(arc)
+    for idx, arc in enumerate(normalized):
+        if idx > 0:
+            prev = normalized[idx - 1]
+            arc["previous_handoff_hint"] = prev.get("handoff_to_next") or prev.get("payoff_for_next") or prev.get("ending_state", "")
+    return normalized
+
+
+def _build_arc_continuity_index(arcs: list[dict]) -> list[dict]:
+    index: list[dict] = []
+    for idx, arc in enumerate(arcs or []):
+        if not isinstance(arc, dict):
+            continue
+        index.append({
+            "arc_index": idx,
+            "name": arc.get("name", ""),
+            "handoff_from_previous": arc.get("handoff_from_previous") or arc.get("dependence_on_previous") or "",
+            "handoff_to_next": arc.get("handoff_to_next") or arc.get("payoff_for_next") or "",
+            "opening_state": arc.get("opening_state", ""),
+            "ending_state": arc.get("ending_state", ""),
+            "arc_step_count": len(arc.get("arc_steps") or []) if isinstance(arc.get("arc_steps"), list) else 0,
+            "previous_handoff_hint": arc.get("previous_handoff_hint", ""),
+        })
+    return index
+
+
+def _build_arc_bridge_checks(arcs: list[dict]) -> list[dict]:
+    checks: list[dict] = []
+    for idx, arc in enumerate(arcs or []):
+        if not isinstance(arc, dict):
+            continue
+        checks.append({
+            "arc_index": idx,
+            "name": arc.get("name", ""),
+            "requires_previous_handoff": idx > 0,
+            "has_handoff_from_previous": bool(arc.get("handoff_from_previous") or arc.get("dependence_on_previous")),
+            "has_handoff_to_next": bool(arc.get("handoff_to_next") or arc.get("payoff_for_next")),
+            "has_arc_steps": bool(arc.get("arc_steps")),
+            "needs_repair": (idx > 0 and not bool(arc.get("handoff_from_previous") or arc.get("dependence_on_previous"))) or not bool(arc.get("arc_steps")),
+        })
+    return checks
+
+
 async def _do_expand_arc_chapters(project_id: str, volume_id: str, arc_index: int, pacing: str = "medium", event_density: str = "medium", expansion_scale: str = "standard") -> dict:
     async with async_session() as db:
         volume = (await db.execute(select(Volume).where(Volume.id == volume_id, Volume.project_id == project_id))).scalar_one_or_none()
@@ -2496,6 +2660,10 @@ async def _do_expand_arc_chapters(project_id: str, volume_id: str, arc_index: in
         dependence_on_previous=snapshot["arc"].get("dependence_on_previous", ""),
         payoff_for_next=snapshot["arc"].get("payoff_for_next", ""),
         writing_style_guidance=snapshot["writing_style_guidance"],
+        arc_steps=snapshot["arc"].get("arc_steps", []),
+        continuity_chain=snapshot["arc"].get("continuity_chain", ""),
+        handoff_from_previous=snapshot["arc"].get("handoff_from_previous", ""),
+        handoff_to_next=snapshot["arc"].get("handoff_to_next", ""),
     )
 
     async with async_session() as db:
@@ -2511,6 +2679,18 @@ async def _do_expand_arc_chapters(project_id: str, volume_id: str, arc_index: in
             connects_from = _safe_str(node_data.get("connects_from", ""))
             if idx == 0 and arc_index > 0 and (not connects_from or connects_from.startswith("无")):
                 connects_from = snapshot["previous_arc_ending"]
+            continuity_from_previous = node_data.get("continuity_from_previous", [])
+            continuity_to_next = node_data.get("continuity_to_next", [])
+            state_delta = node_data.get("state_delta", {})
+            arc_step_refs = node_data.get("arc_step_refs", [])
+            causality_links = node_data.get("causality_links") or [
+                {
+                    "cause": _safe_str(connects_from),
+                    "effect": _safe_str(node_data.get("connects_to", "")),
+                    "source": "connects_from",
+                    "target": "connects_to",
+                }
+            ]
             ch = Chapter(
                 project_id=project_id, volume_id=volume_id,
                 chapter_number=snapshot["start_chapter_number"] + idx,
@@ -2529,6 +2709,10 @@ async def _do_expand_arc_chapters(project_id: str, volume_id: str, arc_index: in
                     "summary": node_data.get("summary", ""),
                     "scene_beats": node_data.get("scene_beats", []),
                     "ending_hook": node_data.get("connects_to", ""),
+                    "arc_step_refs": arc_step_refs,
+                    "continuity_from_previous": continuity_from_previous,
+                    "state_delta": state_delta,
+                    "continuity_to_next": continuity_to_next,
                     "must_include": node_data.get("key_events", []),
                     "foreshadowing_tasks": node_data.get("minor_events", []),
                     "rhythm_profile": {
@@ -2540,6 +2724,17 @@ async def _do_expand_arc_chapters(project_id: str, volume_id: str, arc_index: in
                     },
                     "arc_bridge_context": snapshot["previous_arc_ending"] if idx == 0 and arc_index > 0 else "",
                 },
+                continuity_checks={
+                    "arc_step_refs": arc_step_refs,
+                    "continuity_from_previous": continuity_from_previous,
+                    "state_delta": state_delta,
+                    "continuity_to_next": continuity_to_next,
+                },
+                arc_step_refs=arc_step_refs,
+                continuity_from_previous=continuity_from_previous,
+                state_delta=state_delta,
+                continuity_to_next=continuity_to_next,
+                causality_links=causality_links,
                 foreshadowing_tasks=node_data.get("minor_events", []),
                 rhythm_profile={"tension": node_data.get("tension_level", 5)},
                 target_words=snapshot["default_chapter_words"],

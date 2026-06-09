@@ -31,9 +31,21 @@ async def lifespan(app: FastAPI):
                     "chapters": {
                         "blueprint": "JSON",
                         "continuity_checks": "JSON",
+                        "arc_step_refs": "JSON",
+                        "continuity_from_previous": "JSON",
+                        "state_delta": "JSON",
+                        "continuity_to_next": "JSON",
+                        "relationship_changes": "JSON",
+                        "object_states": "JSON",
+                        "external_pressures": "JSON",
+                        "opening_requirements_for_next": "JSON",
                         "causality_links": "JSON",
                         "foreshadowing_tasks": "JSON",
                         "rhythm_profile": "JSON",
+                    },
+                    "volumes": {
+                        "arc_continuity_index": "JSON",
+                        "arc_bridge_checks": "JSON",
                     },
                     "characters": {
                         "current_state": "JSON",
