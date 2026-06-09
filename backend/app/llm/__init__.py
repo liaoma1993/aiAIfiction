@@ -26,6 +26,10 @@ def refresh_provider_cache():
     aio.run(_async_refresh())
 
 
+async def async_refresh_provider_cache():
+    await _async_refresh()
+
+
 async def _async_refresh():
     global _cache, _cache_ts
     try:
@@ -38,10 +42,13 @@ async def _async_refresh():
             rows = result.scalars().all()
             _cache = [
                 {
+                    "id": str(r.id),
+                    "name": r.name,
                     "model": r.model,
                     "api_key": r.api_key,
                     "base_url": r.base_url or "https://api.openai.com/v1",
                     "provider_type": r.provider_type,
+                    "sort_order": r.sort_order or 0,
                 }
                 for r in rows
             ]
@@ -67,16 +74,25 @@ class ClaudeProvider(OpenAIProvider):
         )
 
     async def chat(self, messages, system="", temperature=0.7, max_tokens=4096):
-        msgs = [{"role": "system", "content": system}] if system else []
-        msgs.extend([{"role": m.role, "content": m.content} for m in messages])
+        msgs = [{"role": m.role, "content": m.content} for m in messages if m.role != "system"]
         timeout = httpx.Timeout(10.0, connect=10.0, read=300.0, write=30.0, pool=5.0)
+        payload = {
+            "model": self.model,
+            "messages": msgs,
+            "max_tokens": max_tokens,
+            "temperature": temperature,
+        }
+        if system:
+            payload["system"] = system
         async with httpx.AsyncClient(timeout=timeout) as client:
             resp = await client.post(
                 f"{self.base_url}/messages",
                 headers={"x-api-key": self.api_key, "anthropic-version": "2023-06-01", "Content-Type": "application/json"},
-                json={"model": self.model, "messages": msgs, "max_tokens": max_tokens, "temperature": temperature},
+                json=payload,
             )
             data = resp.json()
+            if resp.status_code != 200:
+                raise RuntimeError(f"Claude API 返回 {resp.status_code}: {str(data)[:300]}")
             if "error" in data:
                 raise RuntimeError(f"Claude error: {data['error']}")
             content = "".join(block["text"] for block in data.get("content", []) if block.get("type") == "text")
@@ -87,19 +103,76 @@ class ClaudeProvider(OpenAIProvider):
             )
 
 
+class GeminiProvider(OpenAIProvider):
+    def __init__(self, model: str = None, api_key: str = None, base_url: str = ""):
+        settings = get_settings()
+        self.model = model or settings.GEMINI_MODEL
+        self.api_key = api_key or settings.GEMINI_API_KEY
+        self.base_url = (base_url or "https://generativelanguage.googleapis.com/v1beta").rstrip("/")
+
+    async def chat(self, messages, system="", temperature=0.7, max_tokens=4096):
+        parts = []
+        if system:
+            parts.append({"text": system})
+        for msg in messages:
+            parts.append({"text": msg.content})
+        timeout = httpx.Timeout(10.0, connect=10.0, read=300.0, write=30.0, pool=5.0)
+        url = f"{self.base_url}/models/{self.model}:generateContent"
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            resp = await client.post(
+                url,
+                params={"key": self.api_key},
+                json={
+                    "contents": [{"role": "user", "parts": parts}],
+                    "generationConfig": {
+                        "temperature": temperature,
+                        "maxOutputTokens": max_tokens,
+                    },
+                },
+            )
+            data = resp.json()
+            if resp.status_code != 200:
+                raise RuntimeError(f"Gemini API 返回 {resp.status_code}: {str(data)[:300]}")
+            if "error" in data:
+                raise RuntimeError(f"Gemini error: {data['error']}")
+            candidate = (data.get("candidates") or [{}])[0]
+            content = "".join(
+                part.get("text", "")
+                for part in (candidate.get("content", {}) or {}).get("parts", [])
+            )
+            return LLMResponse(
+                content=content,
+                model=self.model,
+                tokens_used=(data.get("usageMetadata", {}) or {}).get("totalTokenCount", 0),
+                finish_reason=candidate.get("finishReason", ""),
+            )
+
+
+def _provider_from_config(provider: dict) -> OpenAIProvider:
+    provider_type = (provider.get("provider_type") or "openai").lower()
+    model = provider.get("model") or None
+    api_key = provider.get("api_key") or None
+    base_url = provider.get("base_url") or ""
+    if provider_type == "claude":
+        return ClaudeProvider(model=model, api_key=api_key)
+    if provider_type == "gemini":
+        return GeminiProvider(model=model, api_key=api_key, base_url=base_url)
+    if provider_type == "deepseek" and not base_url:
+        base_url = "https://api.deepseek.com/v1"
+    return OpenAIProvider(model=model, api_key=api_key, base_url=base_url or "https://api.openai.com/v1")
+
+
 async def get_llm(prefer: str = "openai") -> OpenAIProvider:
     providers = get_cached_providers()
     if providers:
-        if prefer == "claude":
-            claude = next((p for p in providers if p["provider_type"] == "claude"), None)
-            if claude and claude["api_key"]:
-                return ClaudeProvider(model=claude["model"], api_key=claude["api_key"])
-        p = providers[0]
-        return OpenAIProvider(model=p["model"], api_key=p["api_key"], base_url=p["base_url"])
+        preferred = next((p for p in providers if p.get("provider_type") == prefer and p.get("api_key")), None)
+        return _provider_from_config(preferred or providers[0])
 
     settings = get_settings()
     if prefer == "claude" and settings.CLAUDE_API_KEY:
         return ClaudeProvider()
+    if prefer == "gemini" and settings.GEMINI_API_KEY:
+        return GeminiProvider()
     if settings.OPENAI_API_KEY:
         return OpenAIProvider()
     if settings.DEEPSEEK_API_KEY:

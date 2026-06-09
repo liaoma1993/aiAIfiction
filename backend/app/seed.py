@@ -23,7 +23,7 @@ async def seed_defaults():
                 provider_type="deepseek",
                 api_key=settings.DEEPSEEK_API_KEY,
                 model=settings.DEEPSEEK_MODEL,
-                base_url="https://api.deepseek.com",
+                base_url="https://api.deepseek.com/v1",
                 is_active=True,
             ))
         elif not existing_provider and settings.OPENAI_API_KEY:

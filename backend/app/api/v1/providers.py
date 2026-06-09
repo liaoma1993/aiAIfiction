@@ -6,7 +6,8 @@ from app.database import get_db
 from app.models.user import User
 from app.models.llm_provider import LLMProvider
 from app.api.deps import get_current_user
-from app.llm import refresh_provider_cache
+from app.llm import async_refresh_provider_cache, _provider_from_config
+from app.llm.base import LLMMessage
 
 router = APIRouter(prefix="/providers", tags=["providers"])
 
@@ -33,7 +34,7 @@ class UpdateProviderRequest(BaseModel):
 
 @router.get("")
 async def list_providers(user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
-    result = await db.execute(select(LLMProvider).order_by(LLMProvider.sort_order))
+    result = await db.execute(select(LLMProvider).order_by(LLMProvider.sort_order, LLMProvider.created_at))
     return {"providers": result.scalars().all()}
 
 
@@ -46,7 +47,8 @@ async def create_provider(
     provider = LLMProvider(**body.model_dump())
     db.add(provider)
     await db.flush()
-    refresh_provider_cache()
+    await db.commit()
+    await async_refresh_provider_cache()
     return {"provider": provider}
 
 
@@ -64,7 +66,8 @@ async def update_provider(
     for field, value in body.model_dump(exclude_none=True).items():
         setattr(provider, field, value)
     await db.flush()
-    refresh_provider_cache()
+    await db.commit()
+    await async_refresh_provider_cache()
     return {"provider": provider}
 
 
@@ -75,6 +78,8 @@ async def delete_provider(provider_id: str, user: User = Depends(get_current_use
     if not provider:
         raise HTTPException(404, "供应商不存在")
     await db.delete(provider)
+    await db.commit()
+    await async_refresh_provider_cache()
     return {"success": True}
 
 
@@ -85,21 +90,14 @@ async def test_provider(provider_id: str, user: User = Depends(get_current_user)
     if not provider:
         raise HTTPException(404, "供应商不存在")
 
-    from app.llm.base import LLMMessage
-    import httpx
-
     try:
-        async with httpx.AsyncClient(timeout=10) as client:
-            headers = {"Authorization": f"Bearer {provider.api_key}", "Content-Type": "application/json"}
-            url = (provider.base_url or "https://api.openai.com/v1").rstrip("/") + "/chat/completions"
-            resp = await client.post(url, headers=headers, json={
-                "model": provider.model,
-                "messages": [{"role": "user", "content": "回复 ok"}],
-                "max_tokens": 5,
-            })
-            data = resp.json()
-            if resp.status_code == 200:
-                return {"success": True, "model": data.get("model", provider.model)}
-            return {"success": False, "error": data.get("error", {}).get("message", str(data))}
+        llm = _provider_from_config({
+            "provider_type": provider.provider_type,
+            "model": provider.model,
+            "api_key": provider.api_key,
+            "base_url": provider.base_url,
+        })
+        resp = await llm.chat([LLMMessage(role="user", content="回复 ok")], max_tokens=8)
+        return {"success": True, "model": resp.model or provider.model, "reply": resp.content[:50]}
     except Exception as e:
         return {"success": False, "error": str(e)}
