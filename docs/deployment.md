@@ -26,12 +26,12 @@ backend/app/main.py
 
 1. 导入所有 SQLAlchemy models。
 2. 执行 `Base.metadata.create_all()`。
-3. 如果是 SQLite，补充部分历史新增列。
+3. 执行版本化 schema migration，记录到 `schema_migrations`。
 4. Seed 默认管理员账号。
 5. Seed 默认模型供应商。
 6. 恢复中断任务状态。
 
-所以第一次启动时，如果数据库文件不存在，会自动建表。
+所以第一次启动时，如果数据库文件不存在，会自动建表；如果是旧数据库，会按 migration 版本做非破坏性升级。
 
 默认账号：
 
@@ -95,6 +95,33 @@ DATABASE_URL=postgresql+asyncpg://aifiction:aifiction@postgres:5432/aifiction
 - 后续接入外部任务队列。
 
 注意：当前项目启动时会先 `create_all()` 初始化新库，再执行版本化 schema migration。公开部署升级前请备份数据库；迁移策略要求只追加结构或补索引，不自动重写用户已有小说内容。
+
+## 版本升级
+
+从旧版本升级到新版本时建议按这个顺序操作：
+
+1. 停止后端进程。
+2. 备份数据库：
+   - SQLite：备份 `backend/aifiction.db`。
+   - Docker SQLite：备份挂载目录里的 `aifiction.db`。
+   - PostgreSQL：使用 `pg_dump` 或托管平台快照。
+3. 拉取新代码。
+4. 重新安装后端依赖：
+
+```bash
+cd backend
+source .venv/bin/activate
+pip install -r requirements.txt
+```
+
+5. 启动后端。启动时会自动执行未应用的 schema migration。
+6. 检查健康接口：
+
+```bash
+curl http://127.0.0.1:8001/api/health
+```
+
+当前 migration 策略是非破坏性的：只追加字段、补结构索引、记录版本，不自动重写旧小说正文、章节摘要、弧线、角色关系或用户手动内容。
 
 ## 本地一键开发启动
 

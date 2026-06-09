@@ -352,7 +352,7 @@ docs/database-schema.sql
 更推荐的迁移路线：
 
 1. 在 PostgreSQL 中启动一套空库。
-2. 让后端自动 create_all 建表。
+2. 让后端自动 `create_all` 建表并执行版本化 schema migration。
 3. 写一个专门的数据迁移脚本：
    - 从 SQLite 读出项目、卷、章节、角色等数据。
    - 转成 JSON 兼容结构。
@@ -366,6 +366,14 @@ cd backend
 alembic revision --autogenerate -m "change description"
 alembic upgrade head
 ```
+
+应用启动迁移和 Alembic revision 要保持同一语义版本，例如当前首版是：
+
+```text
+20260609_0001 add narrative continuity columns
+```
+
+应用启动时会记录到 `schema_migrations`；Alembic 用于后续标准化生成和审查结构变更。
 
 ## 当前限制
 

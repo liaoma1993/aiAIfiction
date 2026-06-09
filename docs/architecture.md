@@ -122,7 +122,7 @@ backend/app/
 `app/main.py` 使用 FastAPI lifespan：
 
 1. 创建数据库表。
-2. 对 SQLite 做轻量 schema 补列。
+2. 执行版本化 schema migration，记录到 `schema_migrations`。
 3. Seed 默认账号和默认模型供应商。
 4. 刷新 LLM provider cache。
 5. 恢复中断任务状态。
@@ -230,8 +230,7 @@ DATABASE_URL=postgresql+asyncpg://user:password@localhost:5432/aifiction
 
 需要补充：
 
-- `asyncpg`
-- Alembic 迁移脚本
+- PostgreSQL 升级回归测试
 - JSON 字段兼容测试
 
 ### 任务队列
