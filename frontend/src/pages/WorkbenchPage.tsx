@@ -9,7 +9,7 @@ import {
   EnvironmentOutlined, BookOutlined, FullscreenOutlined, FullscreenExitOutlined,
   DeleteOutlined, AuditOutlined, CloseOutlined, EditOutlined,
   BranchesOutlined, HistoryOutlined, StopOutlined, EyeOutlined, PlayCircleOutlined, ScissorOutlined, DownloadOutlined, ReloadOutlined,
-  DatabaseOutlined, NodeIndexOutlined, BarChartOutlined, SendOutlined,
+  DatabaseOutlined, NodeIndexOutlined, BarChartOutlined, SendOutlined, FileSearchOutlined, WarningOutlined,
 } from '@ant-design/icons';
 import { volumeApi, chapterApi, projectApi, auditApi } from '@/services/projectApi';
 import api from '@/services/api';
@@ -297,6 +297,12 @@ const GenericTaskResult = ({ result }: { result: any }) => {
     ['摘要', result?.summary || result?.result_summary || result?.message],
     ['生成内容', result?.content ? `${String(result.content).slice(0, 260)}${String(result.content).length > 260 ? '...' : ''}` : ''],
     ['章节数', result?.chapter_count || result?.segment_count],
+    ['生成模式', result?.generation_mode === 'segmented' ? '分段生成（角色 / 势力分别推进）' : result?.generation_mode],
+    ['角色数', result?.character_count],
+    ['势力数', result?.faction_count],
+    ['关系数', result?.relation_count],
+    ['弧线数', Array.isArray(result?.arcs) ? result.arcs.length : ''],
+    ['弧线质量', result?.arc_quality ? `${result.arc_quality.score ?? '-'} / 100${result.arc_quality.passed ? ' · 通过' : ' · 需检查'}` : ''],
     ['新角色', Array.isArray(result?.new_characters) ? result.new_characters.map((c: any) => c.name || c).join('、') : ''],
   ].filter(([, value]) => value);
   return (
@@ -307,6 +313,21 @@ const GenericTaskResult = ({ result }: { result: any }) => {
             <Descriptions.Item key={label} label={label}>{value}</Descriptions.Item>
           ))}
         </Descriptions>
+      )}
+      {result?.arc_quality && Array.isArray(result.arc_quality.issues) && result.arc_quality.issues.length > 0 && (
+        <Card size="small" title="弧线质量问题" className="task-report-card" style={{ marginTop: 12 }}>
+          <div className="task-issue-list">
+            {result.arc_quality.issues.map((issue: any, idx: number) => (
+              <div key={idx} className="task-issue-card orange">
+                <div className="task-issue-head">
+                  <Tag>弧线 {Number(issue.arc_index ?? 0) + 1}</Tag>
+                  {issue.name && <Text strong>{issue.name}</Text>}
+                </div>
+                <Paragraph>{issue.issue}</Paragraph>
+              </div>
+            ))}
+          </div>
+        </Card>
       )}
       <RawJsonBlock title="原始结果数据" data={result} />
     </div>
@@ -322,6 +343,267 @@ const TaskResultView = ({ task }: { task: any }) => {
   if (type === 'audit_chapter') return <AuditTaskResult result={result} />;
   return <GenericTaskResult result={result} />;
 };
+
+const SystemHealthView = ({ data }: { data: any }) => {
+  if (!data) return <Empty description="暂无健康数据" image={Empty.PRESENTED_IMAGE_SIMPLE} />;
+  const scores = data.scores || {};
+  const scoreItems = [
+    ['弧线连续', scores.arc_continuity],
+    ['蓝图质量', scores.chapter_blueprint],
+    ['钩子密度', scores.hook_density],
+    ['事件密度', scores.event_density],
+    ['伏笔追踪', scores.foreshadowing_tracking],
+    ['世界规则', scores.world_rules],
+  ];
+  const worldAudit = data.world_rule_audit;
+  return (
+    <div className="system-drawer-content">
+      <Card size="small" className="system-summary-card">
+        <div className="system-score-row">
+          <Progress type="circle" percent={Number(data.overall_score || 0)} size={88} />
+          <div>
+            <Title level={5} style={{ margin: 0 }}>项目健康度</Title>
+            <Text type="secondary">Prompt {data.prompt_version || '-'}</Text>
+          </div>
+        </div>
+      </Card>
+      <Row gutter={[8, 8]}>
+        {scoreItems.map(([label, value]) => (
+          <Col span={12} key={label}>
+            <Card size="small">
+              <Text type="secondary">{label}</Text>
+              <Progress percent={Number(value || 0)} size="small" />
+            </Card>
+          </Col>
+        ))}
+      </Row>
+      {Array.isArray(data.fatigue_warnings) && data.fatigue_warnings.length > 0 && (
+        <Alert type="warning" showIcon message="长篇疲劳警告" description={renderStringList(data.fatigue_warnings)} />
+      )}
+      {worldAudit && (
+        <Card size="small" title="世界规则闸门">
+          <div className="system-score-row compact">
+            <Progress percent={Number(worldAudit.score || 0)} size="small" status={worldAudit.passed ? 'success' : 'exception'} />
+            <Tag color={worldAudit.passed ? 'green' : 'orange'}>{worldAudit.passed ? '通过' : '需补强'}</Tag>
+          </div>
+          {Array.isArray(worldAudit.risks) && worldAudit.risks.length > 0 && (
+            <div className="system-inline-list">
+              {worldAudit.risks.slice(0, 4).map((risk: string, idx: number) => <Tag key={idx} color="orange">{risk}</Tag>)}
+            </div>
+          )}
+        </Card>
+      )}
+      {Array.isArray(data.arc_issues) && data.arc_issues.length > 0 && (
+        <Card size="small" title="弧线问题">
+          <div className="system-issue-list">
+            {data.arc_issues.slice(0, 12).map((item: any, idx: number) => (
+              <div key={idx} className="system-issue-item">
+                <Text strong>{item.volume || item.name || `弧线 ${idx + 1}`}</Text>
+                <Text type="secondary">{item.quality_gate?.related_issues?.[0]?.issue || (item.needs_repair ? '需要修复承接或台阶' : '连续性风险')}</Text>
+              </div>
+            ))}
+          </div>
+        </Card>
+      )}
+      {Array.isArray(data.blueprint_issues) && data.blueprint_issues.length > 0 && (
+        <Card size="small" title="章节蓝图问题">
+          <div className="system-issue-list">
+            {data.blueprint_issues.slice(0, 12).map((item: any) => (
+              <div key={item.chapter_number} className="system-issue-item">
+                <Text strong>第{item.chapter_number}章 {item.title || ''}</Text>
+                <Text type="secondary">{(item.gate?.issues || []).join('；') || '蓝图质量未通过'}</Text>
+              </div>
+            ))}
+          </div>
+        </Card>
+      )}
+      {Array.isArray(data.foreshadowing) && data.foreshadowing.length > 0 && (
+        <Card size="small" title="伏笔状态">
+          <Space wrap>
+            {data.foreshadowing.slice(0, 24).map((f: any, idx: number) => (
+              <Tag key={`${f.name}-${idx}`} color={['已回收', '完成', 'done'].includes(f.status) ? 'green' : 'orange'}>
+                {f.name || '未命名'} · {f.status || '未定'}
+              </Tag>
+            ))}
+          </Space>
+        </Card>
+      )}
+    </div>
+  );
+};
+
+const WorldRuleAuditView = ({ data }: { data: any }) => {
+  const audit = data?.audit || data?.world_rule_audit || data;
+  if (!audit) return <Empty description="暂无规则审计" image={Empty.PRESENTED_IMAGE_SIMPLE} />;
+  const coverage = audit.coverage || {};
+  return (
+    <div className="system-drawer-content">
+      <Card size="small" className="system-summary-card">
+        <div className="system-score-row">
+          <Progress type="circle" percent={Number(audit.score || 0)} size={88} status={audit.passed ? 'success' : 'exception'} />
+          <div>
+            <Title level={5} style={{ margin: 0 }}>世界规则审计</Title>
+            <Space wrap style={{ marginTop: 8 }}>
+              <Tag color={audit.passed ? 'green' : 'orange'}>{audit.passed ? '规则稳定' : '需要补规则'}</Tag>
+              <Tag>问题 {audit.issue_count ?? 0}</Tag>
+            </Space>
+          </div>
+        </div>
+      </Card>
+      <Row gutter={[8, 8]}>
+        {[
+          ['硬规则', coverage.hard_rules],
+          ['限制', coverage.constraints],
+          ['风格规则', coverage.tone_rules],
+          ['运行逻辑', coverage.world_logic_items],
+          ['特殊规则', coverage.special_rule_items],
+        ].map(([label, value]) => (
+          <Col span={12} key={label}>
+            <Card size="small" className="system-metric-card">
+              <Text type="secondary">{label}</Text>
+              <strong>{Number(value || 0)}</strong>
+            </Card>
+          </Col>
+        ))}
+      </Row>
+      {Array.isArray(audit.conflicts) && audit.conflicts.length > 0 && (
+        <Card size="small" title="可能冲突">
+          <div className="system-issue-list">
+            {audit.conflicts.map((item: any, idx: number) => (
+              <div key={idx} className="system-issue-item wide">
+                <Text strong>{item.source_a} / {item.source_b}</Text>
+                <Text type="secondary">{item.risk}：{item.text_a} ↔ {item.text_b}</Text>
+              </div>
+            ))}
+          </div>
+        </Card>
+      )}
+      <Card size="small" title="缺口">
+        {renderStringList(audit.gaps || [], '暂无明显缺口')}
+      </Card>
+      <Card size="small" title="风险">
+        {renderStringList(audit.risks || [], '暂无明显风险')}
+      </Card>
+      <Card size="small" title="建议动作">
+        {renderStringList(audit.recommendations || [], '暂无建议')}
+      </Card>
+    </div>
+  );
+};
+
+const PromptModulesView = ({ data }: { data: any }) => {
+  const modules = data?.modules || [];
+  const coverage = data?.coverage || {};
+  if (!data) return <Empty description="暂无提示词模块数据" image={Empty.PRESENTED_IMAGE_SIMPLE} />;
+  return (
+    <div className="system-drawer-content">
+      <Card size="small" className="system-summary-card">
+        <div className="system-score-row">
+          <div className="system-module-count">{coverage.active || 0}/{coverage.total || modules.length}</div>
+          <div>
+            <Title level={5} style={{ margin: 0 }}>提示词模块</Title>
+            <Text type="secondary">Prompt {data.prompt_version || '-'}</Text>
+          </div>
+        </div>
+      </Card>
+      <Card size="small" title="覆盖生成面">
+        <Space wrap>{(coverage.generation_surfaces || []).map((x: string) => <Tag key={x}>{x}</Tag>)}</Space>
+      </Card>
+      <div className="system-module-list">
+        {modules.map((m: any) => (
+          <Card size="small" key={m.key} className="system-module-card">
+            <div className="system-module-head">
+              <div>
+                <Text strong>{m.name}</Text>
+                <div><Text type="secondary">{m.key}</Text></div>
+              </div>
+              <Tag color={m.status === 'active' ? 'green' : 'default'}>{m.status || 'unknown'}</Tag>
+            </div>
+            <div className="system-inline-list">
+              {(m.used_in || []).map((x: string) => <Tag key={x} color="blue">{x}</Tag>)}
+            </div>
+            <div className="system-inline-list muted">
+              {(m.checks || []).map((x: string) => <Tag key={x}>{x}</Tag>)}
+            </div>
+          </Card>
+        ))}
+      </div>
+    </div>
+  );
+};
+
+const StateLedgerView = ({ data }: { data: any }) => {
+  const ledger = data?.ledger;
+  if (!ledger) return <Empty description="暂无状态账本" image={Empty.PRESENTED_IMAGE_SIMPLE} />;
+  return (
+    <div className="system-drawer-content">
+      <Card size="small" title="出场人物">
+        <Space wrap>{(ledger.characters || []).slice(0, 60).map((x: string) => <Tag key={x}>{x}</Tag>)}</Space>
+      </Card>
+      {[
+        ['开放线索', 'open_threads'],
+        ['章末钩子', 'hooks'],
+        ['关系变化', 'relationships'],
+        ['物件状态', 'objects'],
+        ['外部压力', 'external_pressures'],
+      ].map(([title, key]) => (
+        <Card size="small" title={title} key={key}>
+          <div className="system-issue-list">
+            {(ledger[key] || []).slice(-16).map((item: any, idx: number) => (
+              <div key={idx} className="system-issue-item">
+                <Text strong>{item.chapter_number ? `第${item.chapter_number}章` : `${idx + 1}`}</Text>
+                <Text type="secondary">{item.state || item.hook || item.description || item.name || JSON.stringify(item)}</Text>
+              </div>
+            ))}
+            {(!ledger[key] || ledger[key].length === 0) && <Text type="secondary">暂无</Text>}
+          </div>
+        </Card>
+      ))}
+    </div>
+  );
+};
+
+const ImpactView = ({ data }: { data: any }) => {
+  if (!data) return <Empty description="暂无影响分析" image={Empty.PRESENTED_IMAGE_SIMPLE} />;
+  const levelMap: Record<string, { label: string; color: string }> = {
+    high: { label: '高影响', color: 'red' },
+    medium: { label: '中影响', color: 'orange' },
+    low: { label: '低影响', color: 'green' },
+  };
+  const info = levelMap[data.impact_level] || { label: data.impact_level || '未知', color: 'default' };
+  return (
+    <div className="system-drawer-content">
+      <Alert
+        type={data.impact_level === 'high' ? 'error' : data.impact_level === 'medium' ? 'warning' : 'success'}
+        showIcon
+        message={<span>{data.chapter?.chapter_number ? `第${data.chapter.chapter_number}章` : '当前章节'} · <Tag color={info.color}>{info.label}</Tag></span>}
+      />
+      <Card size="small" title="可能受影响章节">
+        <div className="system-issue-list">
+          {(data.impacted_chapters || []).map((item: any) => (
+            <div key={item.chapter_number} className="system-issue-item">
+              <Text strong>第{item.chapter_number}章 {item.title || ''}</Text>
+              <Text type="secondary">{(item.reasons || []).join('；')}</Text>
+            </div>
+          ))}
+          {(!data.impacted_chapters || data.impacted_chapters.length === 0) && <Text type="secondary">未发现直接依赖章节</Text>}
+        </div>
+      </Card>
+      <Card size="small" title="建议动作">
+        {renderStringList(data.recommended_actions || [])}
+      </Card>
+    </div>
+  );
+};
+
+const arcQualityFor = (volume: any, arcIndex: number) => {
+  const check = (volume?.arc_bridge_checks || []).find((item: any) => item.arc_index === arcIndex);
+  return check?.quality_gate || check?.bridge_check || check;
+};
+
+const chapterGate = (chapter: any) => (
+  chapter?.blueprint?.blueprint_quality_gate || chapter?.continuity_checks?.blueprint_quality_gate || null
+);
 const AUDIT_SEVERITY_LABELS: Record<string, { label: string; color: string }> = {
   critical: { label: '致命', color: 'red' },
   high: { label: '严重', color: 'orange' },
@@ -451,6 +733,17 @@ export default function WorkbenchPage() {
   const [exportModalOpen, setExportModalOpen] = useState(false);
   const [exportCfg, setExportCfg] = useState({ scope: 'volume', volumeId: '', arcName: '', format: 'md' });
   const [exporting, setExporting] = useState(false);
+  const [systemDrawerOpen, setSystemDrawerOpen] = useState(false);
+  const [systemTab, setSystemTab] = useState('health');
+  const [systemLoading, setSystemLoading] = useState(false);
+  const [systemHealth, setSystemHealth] = useState<any>(null);
+  const [stateLedger, setStateLedger] = useState<any>(null);
+  const [contextPreview, setContextPreview] = useState<any>(null);
+  const [worldRuleAudit, setWorldRuleAudit] = useState<any>(null);
+  const [promptModules, setPromptModules] = useState<any>(null);
+  const [impactModalOpen, setImpactModalOpen] = useState(false);
+  const [impactLoading, setImpactLoading] = useState(false);
+  const [impactData, setImpactData] = useState<any>(null);
 
   const loadAll = () => {
     if (!projectId) return;
@@ -900,6 +1193,56 @@ export default function WorkbenchPage() {
     setExportModalOpen(true);
   };
 
+  const loadSystemPanel = async (tab: string = systemTab) => {
+    if (!projectId) return;
+    setSystemLoading(true);
+    try {
+      if (tab === 'health') {
+        const res = await api.get(`/projects/${projectId}/wizard/project-health`);
+        setSystemHealth(res.data);
+      } else if (tab === 'ledger') {
+        const res = await api.get(`/projects/${projectId}/wizard/state-ledger`);
+        setStateLedger(res.data);
+      } else if (tab === 'context') {
+        const params: any = {};
+        if (currentChapter?.id) params.chapter_id = currentChapter.id;
+        else if (currentVolume?.id) params.volume_id = currentVolume.id;
+        const res = await api.get(`/projects/${projectId}/wizard/context-preview`, { params });
+        setContextPreview(res.data);
+      } else if (tab === 'world') {
+        const res = await api.get(`/projects/${projectId}/wizard/world-rule-audit`);
+        setWorldRuleAudit(res.data);
+      } else if (tab === 'prompts') {
+        const res = await api.get(`/projects/${projectId}/wizard/prompt-modules`);
+        setPromptModules(res.data);
+      }
+    } catch (e: any) {
+      message.error(e?.response?.data?.detail || e.message || '加载系统诊断失败');
+    } finally {
+      setSystemLoading(false);
+    }
+  };
+
+  const openSystemDrawer = (tab: string = 'health') => {
+    setSystemTab(tab);
+    setSystemDrawerOpen(true);
+    loadSystemPanel(tab);
+  };
+
+  const openImpactAnalysis = async () => {
+    if (!projectId || !currentChapter?.id) return;
+    setImpactModalOpen(true);
+    setImpactLoading(true);
+    try {
+      const res = await api.get(`/projects/${projectId}/wizard/impact/chapter/${currentChapter.id}`);
+      setImpactData(res.data);
+    } catch (e: any) {
+      message.error(e?.response?.data?.detail || e.message || '影响分析失败');
+    } finally {
+      setImpactLoading(false);
+    }
+  };
+
   const doExport = async () => {
     if (!projectId || !exportCfg.volumeId) return;
     setExporting(true);
@@ -1126,6 +1469,7 @@ export default function WorkbenchPage() {
   };
 
   const currentVolume = currentChapter ? volumes.find((v: any) => v.id === currentChapter.volume_id) : null;
+  const currentChapterGate = chapterGate(currentChapter);
 
   if (loading) return <div style={{ padding: 80, textAlign: 'center' }}><Spin size="large" /></div>;
 
@@ -1152,6 +1496,7 @@ export default function WorkbenchPage() {
           <Link to={`/projects/${projectId}/story-graph`}><Button size="small" icon={<NodeIndexOutlined />}>叙事图谱</Button></Link>
           <Link to={`/projects/${projectId}/landscape`}><Button size="small" icon={<EnvironmentOutlined />}>小说景观</Button></Link>
           <Link to={`/projects/${projectId}/quality-dashboard`}><Button size="small" icon={<BarChartOutlined />}>质量</Button></Link>
+          <Button size="small" icon={<FileSearchOutlined />} onClick={() => openSystemDrawer('health')}>系统诊断</Button>
           <Button size="small" icon={<DownloadOutlined />} onClick={openExportModal}>导出</Button>
           <Badge count={tasks.filter(t => t.status === 'running').length} size="small">
             <Button size="small" onClick={() => { refreshTasks(); setTaskDrawerOpen(true); }}>任务</Button>
@@ -1211,6 +1556,20 @@ export default function WorkbenchPage() {
                               >
                                 AI调整本卷
                               </Button>
+                              <Button
+                                size="small"
+                                type="link"
+                                icon={<FileSearchOutlined />}
+                                onClick={() => {
+                                  setSystemDrawerOpen(true);
+                                  setSystemTab('context');
+                                  api.get(`/projects/${projectId}/wizard/context-preview`, { params: { volume_id: v.id } })
+                                    .then((res) => setContextPreview(res.data))
+                                    .catch((e) => message.error(e?.response?.data?.detail || e.message || '上下文预览失败'));
+                                }}
+                              >
+                                上下文
+                              </Button>
                             </Space>
                           </div>
                           <Paragraph className="volume-overview-text">
@@ -1234,6 +1593,9 @@ export default function WorkbenchPage() {
                             {arcs.map((arc: any, ai: number) => {
                             const arcChs = volChs.filter((c: any) => c.arc_name === arc.name);
                             const arcExpanded = expandedArc === ai;
+                            const quality = arcQualityFor(v, ai);
+                            const qualityPassed = quality?.passed !== false;
+                            const qualityScore = quality?.score;
                             return (
                               <div key={ai} className="arc-block">
                                 <button className={`arc-row ${arcExpanded ? 'active' : ''}`} onClick={() => setExpandedArc(arcExpanded ? null : ai)}>
@@ -1243,12 +1605,24 @@ export default function WorkbenchPage() {
                                       {arc.narrative_function || '叙事功能未定'} · 第{arc.chapter_start || '?'}-{arc.chapter_end || '?'}章
                                     </span>
                                   </span>
-                                  <Tag>{arcChs.length || arc.chapter_count || 0}章</Tag>
+                                  <Space size={4}>
+                                    {quality && <Tag color={qualityPassed ? 'green' : 'orange'}>{qualityPassed ? '连续' : '需查'}{typeof qualityScore === 'number' ? ` ${qualityScore}` : ''}</Tag>}
+                                    <Tag>{arcChs.length || arc.chapter_count || 0}章</Tag>
+                                  </Space>
                                 </button>
 
                                 {arcExpanded && (
                                   <div className="chapter-list">
                                     <div className="arc-detail">
+                                      {quality && quality.passed === false && (
+                                        <Alert
+                                          type="warning"
+                                          showIcon
+                                          style={{ marginBottom: 8 }}
+                                          message="弧线连续性需要检查"
+                                          description={(quality.related_issues || []).map((x: any) => x.issue).join('；') || '这条弧线可能缺少清晰交接、台阶或因果链。'}
+                                        />
+                                      )}
                                       <div className="arc-actionbar">
                                         <Button size="small" type="link" loading={expandLoading === `${v.id}-revise-${ai}-重写`} onClick={() => reviseVolumeArc(v, ai, '重写')}>重写</Button>
                                         <Button size="small" type="link" loading={expandLoading === `${v.id}-revise-${ai}-拉长`} onClick={() => reviseVolumeArc(v, ai, '拉长')}>拉长</Button>
@@ -1341,6 +1715,14 @@ export default function WorkbenchPage() {
                 <div>
                   <div className="chapter-kicker">{currentVolume?.title || '未分卷'} / 第{currentChapter.chapter_number}章</div>
                   <div className="chapter-title">{currentChapter.title || '未命名章节'}</div>
+                  {currentChapterGate && currentChapterGate.passed === false && (
+                    <Alert
+                      type="warning"
+                      showIcon
+                      style={{ marginTop: 6, marginBottom: 6, padding: '6px 10px' }}
+                      message={`蓝图风险：${(currentChapterGate.issues || []).join('；') || '需要检查上承下接和状态增量'}`}
+                    />
+                  )}
                   {currentChapter.connects_from && (
                     <div style={{ fontSize: 11, color: '#8c8c8c', borderLeft: '2px solid #1677ff', paddingLeft: 8, marginTop: 2 }}>
                       📥 {currentChapter.connects_from}
@@ -1372,6 +1754,7 @@ export default function WorkbenchPage() {
                   />
                   <Button size="small" type="primary" icon={<ThunderboltOutlined />} onClick={aiWriteChapter} loading={writing}>写本章</Button>
                   <Button size="small" icon={<EditOutlined />} onClick={() => setWritingSettingsOpen(true)}>写作设置</Button>
+                  <Button size="small" icon={<WarningOutlined />} onClick={openImpactAnalysis}>影响分析</Button>
                   <Space.Compact size="small">
                     {OPTIMIZE_ACTIONS.map((action) => (
                       <Button
@@ -2027,6 +2410,68 @@ export default function WorkbenchPage() {
           />
         )}
       </Drawer>
+
+      <Drawer
+        title="系统诊断"
+        open={systemDrawerOpen}
+        onClose={() => setSystemDrawerOpen(false)}
+        width={760}
+        extra={<Button size="small" icon={<ReloadOutlined />} loading={systemLoading} onClick={() => loadSystemPanel(systemTab)}>刷新</Button>}
+      >
+        <Spin spinning={systemLoading}>
+          <Tabs
+            activeKey={systemTab}
+            onChange={(key) => {
+              setSystemTab(key);
+              loadSystemPanel(key);
+            }}
+            items={[
+              {
+                key: 'health',
+                label: <span><BarChartOutlined /> 健康</span>,
+                children: <SystemHealthView data={systemHealth} />,
+              },
+              {
+                key: 'ledger',
+                label: <span><DatabaseOutlined /> 状态账本</span>,
+                children: <StateLedgerView data={stateLedger} />,
+              },
+              {
+                key: 'context',
+                label: <span><FileSearchOutlined /> 上下文</span>,
+                children: contextPreview ? (
+                  <div className="system-drawer-content">
+                    <Alert type="info" showIcon message={`当前预览范围：${contextPreview.scope || 'project'}`} />
+                    <RawJsonBlock title="生成上下文" data={contextPreview} />
+                  </div>
+                ) : <Empty description="暂无上下文预览" image={Empty.PRESENTED_IMAGE_SIMPLE} />,
+              },
+              {
+                key: 'world',
+                label: <span><AuditOutlined /> 规则</span>,
+                children: <WorldRuleAuditView data={worldRuleAudit} />,
+              },
+              {
+                key: 'prompts',
+                label: <span><BranchesOutlined /> 模块</span>,
+                children: <PromptModulesView data={promptModules} />,
+              },
+            ]}
+          />
+        </Spin>
+      </Drawer>
+
+      <Modal
+        title="改章影响分析"
+        open={impactModalOpen}
+        onCancel={() => setImpactModalOpen(false)}
+        footer={<Button onClick={() => setImpactModalOpen(false)}>关闭</Button>}
+        width={720}
+      >
+        <Spin spinning={impactLoading}>
+          <ImpactView data={impactData} />
+        </Spin>
+      </Modal>
 
       <Modal title="导出正文" open={exportModalOpen} onCancel={() => setExportModalOpen(false)} onOk={doExport} confirmLoading={exporting} okText="导出">
         <Space direction="vertical" style={{ width: '100%' }} size={12}>

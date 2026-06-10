@@ -24,6 +24,42 @@ def _compress_characters(characters: list[dict]) -> str:
     return "\n".join(parts)
 
 
+def _character_voice_library(characters: list[dict]) -> list[dict]:
+    voices = []
+    for c in characters[:12]:
+        voices.append({
+            "name": c.get("name", ""),
+            "role_type": c.get("role_type", ""),
+            "language_fingerprint": _truncate(c.get("language_fingerprint", ""), 180),
+            "behavior_pattern": _truncate(c.get("behavior_pattern", ""), 180),
+            "emotional_expression": _truncate(c.get("emotional_expression", ""), 160),
+            "must_preserve": [
+                x for x in [
+                    c.get("inner_conflict"),
+                    c.get("motivation"),
+                    str(c.get("current_state") or "")[:160],
+                ] if x
+            ][:3],
+        })
+    return voices
+
+
+def _faction_rulebook(factions: list[dict]) -> list[dict]:
+    rules = []
+    for f in factions[:10]:
+        rules.append({
+            "name": f.get("name", ""),
+            "faction_type": f.get("faction_type", ""),
+            "core_creed": _truncate(f.get("core_creed", ""), 180),
+            "hierarchy": f.get("hierarchy", [])[:6] if isinstance(f.get("hierarchy"), list) else [],
+            "core_conflict_of_interest": _truncate(f.get("core_conflict_of_interest", ""), 220),
+            "internal_faction_cracks": _truncate(f.get("internal_faction_cracks", ""), 220),
+            "strength_trajectory": _truncate(f.get("strength_trajectory", ""), 120),
+            "scene_pressure_hint": "让组织通过规矩、流程、代价、外围成员或利益冲突施压，不要只作为背景名词。",
+        })
+    return rules
+
+
 async def build_generation_context(db, project_id: str, chapter_id: str | None = None, max_recent_chapters: int = 3) -> dict:
     bible = await build_story_bible(db, project_id, chapter_id)
     current = bible.get("current_chapter") or {}
@@ -42,10 +78,12 @@ async def build_generation_context(db, project_id: str, chapter_id: str | None =
         "tone_rules": bible["world"].get("tone_rules", []),
         "world_logic": bible["world"].get("world_logic", {}),
         "characters": _compress_characters(bible.get("characters", [])),
+        "character_voice_library": _character_voice_library(bible.get("characters", [])),
         "factions": "\n".join([
             f"{f.get('name')}({f.get('faction_type')}):{_truncate(f.get('core_creed', ''), 100)}"
             for f in bible.get("factions", [])[:6]
         ]),
+        "faction_rulebook": _faction_rulebook(bible.get("factions", [])),
         "timeline": "\n".join([
             f"{e.get('time_point', '')}:{_truncate(e.get('description', ''), 100)}"
             for e in bible.get("timeline", [])[:10]

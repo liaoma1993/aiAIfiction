@@ -11,6 +11,22 @@ SYSTEM_WRITER = "你是一位成熟的类型小说家，擅长场景写作、对
 
 SYSTEM_EDITOR = "你是一位资深文学编辑，眼光毒辣，擅长发现叙事断裂、逻辑矛盾、角色崩塌和节奏失衡。你会毫不留情地指出问题，同时给出精准的修改建议。始终用中文回复。回复必须是合法的 JSON。"
 
+PROMPT_VERSION = "2026-06-continuity-v2"
+
+JSON_REPAIR_PROMPT = """
+你是严格的 JSON 修复器。把下面内容修复成合法 JSON。
+
+要求：
+- 只输出 JSON，不要解释，不要 Markdown。
+- 保留原有中文内容和字段含义。
+- 如果外层应为数组就输出数组；如果外层应为对象就输出对象。
+- 删除多余说明文字、代码围栏、尾随逗号和非法控制字符。
+- 不要新增故事内容，只修格式。
+
+待修复内容：
+{content}
+"""
+
 DE_AI_FICTION_RULES = """
 去 AI 味硬规则：
 - 从上一章结尾的具体状态直接开场，不要重新介绍世界观，不要用总结句开场。
@@ -101,7 +117,7 @@ PROJECT_CHAT_PROMPT = """
     "brief": "500字以内项目梗概，写清主角、核心冲突引擎、内在矛盾、长线悬念、独特卖点",
     "long_term_plan": {{
       "endgame": "故事最终要抵达的终局或真相；短篇也要写清结尾指向",
-      "stage_plan": ["按篇幅给出2-6个阶段/分卷递进，每项写清目标、压力升级和阶段钩子"],
+      "stage_plan": ["按作品篇幅和故事自然转折拆成长线阶段/分卷递进；短中篇从简，长篇通常3-6个，超长篇可扩展到6-8个，不要机械凑数。每项写清阶段目标、压力升级、主角身份/资源变化和阶段钩子"],
       "foreshadowing_payoffs": ["重要伏笔及预期回收方向，0-5条"]
     }},
     "tags": ["风格标签"],
@@ -313,6 +329,15 @@ EXPAND_VOLUME_ARCS_PROMPT = """
 角色：{characters_summary}
 势力：{factions_summary}
 本卷共 {chapter_count} 章。
+
+【跨卷承接上下文】
+{volume_continuity_context}
+
+跨卷使用规则：
+- 如果有上一卷终点状态，本卷第一条弧线的 handoff_from_previous 必须接住上一卷留下的具体压力、物件、伤势、秘密、债务、追兵、关系裂痕或时间限制。
+- 如果有下一卷预告，本卷最后一条弧线的 handoff_to_next 必须把具体可写的钩子交给下一卷，不要只写“引出更大危机”。
+- 不得因为拆本卷弧线而清空上一卷留下的人物状态、组织关系、物件归属、秘密暴露程度和外部压力。
+- 如果跨卷上下文为空，按本卷大纲自然拆分，但仍要给出卷开局状态和本卷收束钩子。
 
 【写作风格 Skill】
 {writing_style_guidance}
@@ -2017,7 +2042,18 @@ class AIService:
             try:
                 return self._parse_json_text(content)
             except json.JSONDecodeError:
-                raise RuntimeError(f"AI 返回格式异常: {content[:300]}")
+                repair_prompt = JSON_REPAIR_PROMPT.format(content=content[:20000])
+                repair_resp = await llm.chat(
+                    [LLMMessage(role="user", content=repair_prompt)],
+                    system=SYSTEM_EDITOR,
+                    temperature=0.1,
+                    max_tokens=min(max_tokens, 16384),
+                )
+                repaired = self._strip_json_fence(repair_resp.content)
+                try:
+                    return self._parse_json_text(repaired)
+                except json.JSONDecodeError:
+                    raise RuntimeError(f"AI 返回格式异常，自动修复失败: {content[:300]}")
 
     async def _ask_list(self, prompt: str, system: str = SYSTEM_ARCHITECT, **kwargs) -> list[dict]:
         result = await self._ask(prompt, system=system, **kwargs)
@@ -2101,6 +2137,7 @@ class AIService:
         style_focus: str = "主线清晰，角色自然成长",
         length_control: str = "按全书体量和本卷复杂度自主判断",
         writing_style_guidance: str = "未启用写作风格 Skill，按本卷大纲和通用网文写法拆分。",
+        volume_continuity_context: str = "无",
     ) -> list[dict]:
         return await self._ask_list(EXPAND_VOLUME_ARCS_PROMPT, system=SYSTEM_ARCHITECT, max_tokens=16384,
             title=title, genre=genre,
@@ -2111,6 +2148,7 @@ class AIService:
             arc_density=arc_density,
             style_focus=style_focus,
             length_control=length_control,
+            volume_continuity_context=volume_continuity_context or "无",
             writing_style_guidance=writing_style_guidance or "未启用写作风格 Skill，按本卷大纲和通用网文写法拆分。")
 
     async def revise_volume_arc(

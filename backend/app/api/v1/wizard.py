@@ -22,7 +22,7 @@ from app.models.timeline import TimelineEvent, StoryStateTrail
 from app.models.world_setting import WorldSetting
 from app.models.writing_style_skill import WritingStyleSkill
 from app.api.deps import get_current_user
-from app.services.ai_service import AIService, SYSTEM_EDITOR
+from app.services.ai_service import AIService, SYSTEM_EDITOR, PROMPT_VERSION
 from app.services.task_manager import start_task, get_task_persisted, list_tasks_persisted, update_progress, cancel_task, is_cancelled
 from app.services.story_bible import build_story_bible
 from app.services.context_builder import build_generation_context
@@ -45,6 +45,17 @@ DEFAULT_WRITING_CONTROLS = {
     "auto_quality_check": True,
     "auto_light_fix": True,
 }
+
+PROMPT_MODULES = [
+    {"key": "continuity_rules", "name": "连续性规则", "status": "active", "used_in": ["expand_volume_arcs", "expand_arc_chapters", "write_chapter"], "checks": ["connects_from", "connects_to", "handoff", "state_delta"]},
+    {"key": "arc_rules", "name": "弧线起承转交", "status": "active", "used_in": ["expand_volume_arcs", "revise_volume_arc"], "checks": ["opening_state", "ending_state", "arc_steps", "handoff_to_next"]},
+    {"key": "chapter_blueprint_rules", "name": "章节蓝图闸门", "status": "active", "used_in": ["expand_arc_chapters"], "checks": ["key_events", "arc_step_refs", "state_delta", "entry_gate_checks"]},
+    {"key": "anti_ai_style_rules", "name": "去 AI 味规则", "status": "active", "used_in": ["write_chapter", "revise_chapter"], "checks": ["concrete_opening", "subtext_dialogue", "sensory_detail", "specific_hook"]},
+    {"key": "character_entry_rules", "name": "角色入场坡度", "status": "active", "used_in": ["expand_volume_arcs", "expand_arc_chapters"], "checks": ["first_signal", "indirect_presence", "initial_conflict", "cost_of_contact"]},
+    {"key": "faction_entry_rules", "name": "组织入场坡度", "status": "active", "used_in": ["expand_volume_arcs", "expand_arc_chapters"], "checks": ["symbol_or_trace", "low_level_contact", "rule_pressure", "formal_entry_condition"]},
+    {"key": "webnovel_pacing_rules", "name": "网文追读节奏", "status": "active", "used_in": ["expand_volume_arcs", "expand_arc_chapters", "write_chapter"], "checks": ["short_goal", "external_friction", "instant_feedback", "chapter_hook"]},
+    {"key": "world_rule_conflict_rules", "name": "世界规则矛盾检测", "status": "active", "used_in": ["project_health", "world_rule_audit"], "checks": ["hard_rules", "constraints", "world_logic", "new_setting_conflict"]},
+]
 
 
 def _get_outline_write_lock(project_id: str) -> asyncio.Lock:
@@ -332,7 +343,7 @@ def _format_wizard_planning_memory(project: Project, limit: int = 2400) -> str:
                 parts.append(f"终局指向：{_clip_planning_text(long_term_plan.get('endgame'), 400)}")
             stage_plan = long_term_plan.get("stage_plan") or []
             if stage_plan:
-                parts.append("长线阶段：" + "；".join(_clip_planning_text(str(x), 260) for x in stage_plan[:6]))
+                parts.append("长线阶段：" + "；".join(_clip_planning_text(str(x), 260) for x in stage_plan[:8]))
             payoffs = long_term_plan.get("foreshadowing_payoffs") or []
             if payoffs:
                 parts.append("伏笔回收：" + "；".join(_clip_planning_text(str(x), 180) for x in payoffs[:6]))
@@ -1006,8 +1017,10 @@ async def _upsert_faction(db: AsyncSession, project_id: str, fdata: dict, existi
     return faction
 
 
-async def _do_generate_characters(project_id: str, char_count: int, faction_count: int) -> dict:
+async def _do_generate_characters(project_id: str, char_count: int, faction_count: int, task_id: str = "") -> dict:
     async with async_session() as db:
+        if task_id:
+            update_progress(task_id, 0.06, "正在读取项目与既有角色", {"stage": "loading_context"})
         result = await db.execute(select(Project).where(Project.id == project_id))
         project = result.scalar_one_or_none()
         if not project:
@@ -1019,12 +1032,16 @@ async def _do_generate_characters(project_id: str, char_count: int, faction_coun
             for c in existing_characters
         ]) or "无"
     ai = AIService()
-    chars_data, facs_result = await asyncio.gather(
-        ai.generate_characters(snapshot["title"], snapshot["genre"], snapshot["story_brief"], snapshot["core_theme"], char_count, existing_characters_summary),
-        ai.generate_factions(snapshot["title"], snapshot["genre"], snapshot["story_brief"], snapshot["core_theme"], faction_count),
-    )
+    if task_id:
+        update_progress(task_id, 0.20, "AI 正在生成角色档案", {"stage": "generating_characters", "char_count": char_count})
+    chars_data = await ai.generate_characters(snapshot["title"], snapshot["genre"], snapshot["story_brief"], snapshot["core_theme"], char_count, existing_characters_summary)
+    if task_id:
+        update_progress(task_id, 0.52, "AI 正在生成势力与关系矩阵", {"stage": "generating_factions", "faction_count": faction_count})
+    facs_result = await ai.generate_factions(snapshot["title"], snapshot["genre"], snapshot["story_brief"], snapshot["core_theme"], faction_count)
 
     async with async_session() as db:
+        if task_id:
+            update_progress(task_id, 0.74, "正在写入角色、势力和关系", {"stage": "saving_entities"})
         project = (await db.execute(select(Project).where(Project.id == project_id))).scalar_one_or_none()
         if not project:
             raise RuntimeError("项目不存在")
@@ -1061,6 +1078,7 @@ async def _do_generate_characters(project_id: str, char_count: int, faction_coun
                 ))
 
         seen_char_names = set()
+        saved_characters = 0
         for cdata in chars_data:
             name = cdata.get("name", "")
             key = _normalize_entity_name(name)
@@ -1068,10 +1086,14 @@ async def _do_generate_characters(project_id: str, char_count: int, faction_coun
                 continue
             seen_char_names.add(key)
             await _upsert_character(db, project_id, cdata, character_by_name)
+            saved_characters += 1
 
         project.wizard_step = max(project.wizard_step, 3)
         await db.commit()
-        return {"success": True}
+        result = {"success": True, "character_count": saved_characters, "faction_count": len(faction_map), "relation_count": len(cross_matrix), "generation_mode": "segmented"}
+        if task_id:
+            update_progress(task_id, 1, "角色势力生成完成", {"stage": "completed", **result})
+        return result
 
 
 async def _do_generate_characters_draft(project_id: str, char_count: int, faction_count: int) -> dict:
@@ -1095,11 +1117,13 @@ async def _do_generate_characters_draft(project_id: str, char_count: int, factio
 
 @router.post("/generate-characters")
 async def generate_characters(project_id: str, body: GenerateRequest, user: User = Depends(get_current_user)):
-    task_id = start_task(
-        _do_generate_characters(project_id, body.char_count, body.faction_count),
+    task_id = str(uuid.uuid4())
+    start_task(
+        _do_generate_characters(project_id, body.char_count, body.faction_count, task_id),
         "generate_characters",
         project_id,
-        {"char_count": body.char_count, "faction_count": body.faction_count},
+        {"char_count": body.char_count, "faction_count": body.faction_count, "generation_mode": "segmented"},
+        task_id=task_id,
     )
     return {"task_id": task_id}
 
@@ -1283,6 +1307,238 @@ def _safe_json(value, fallback):
 def _clip_text(text, limit: int = 600) -> str:
     text = "" if text is None else str(text)
     return text if len(text) <= limit else text[:limit] + "..."
+
+
+def _list_preview(items, limit: int = 5) -> str:
+    if not items:
+        return ""
+    if not isinstance(items, list):
+        return _clip_text(str(items), 400)
+    return "；".join(_clip_text(_safe_str(x), 120) for x in items[:limit])
+
+
+async def _format_volume_continuity_context(db: AsyncSession, project_id: str, volume: Volume) -> str:
+    prev_volume = (await db.execute(
+        select(Volume)
+        .where(Volume.project_id == project_id, Volume.volume_number < volume.volume_number)
+        .order_by(Volume.volume_number.desc())
+        .limit(1)
+    )).scalar_one_or_none()
+    next_volume = (await db.execute(
+        select(Volume)
+        .where(Volume.project_id == project_id, Volume.volume_number > volume.volume_number)
+        .order_by(Volume.volume_number.asc())
+        .limit(1)
+    )).scalar_one_or_none()
+
+    parts: list[str] = []
+    if prev_volume:
+        parts.append(f"【上一卷】第{prev_volume.volume_number}卷《{prev_volume.title}》")
+        if prev_volume.summary:
+            parts.append(f"上一卷摘要：{_clip_text(prev_volume.summary, 500)}")
+        if prev_volume.outline:
+            parts.append(f"上一卷大纲要点：{_clip_text(prev_volume.outline, 700)}")
+        prev_arcs = prev_volume.narrative_arcs or []
+        if prev_arcs:
+            last_arc = prev_arcs[-1]
+            parts.append(f"上一卷最后弧线：{last_arc.get('name', '')}")
+            parts.append(f"终点状态：{_clip_text(last_arc.get('ending_state', ''), 400)}")
+            parts.append(f"交给后文：{_clip_text(last_arc.get('handoff_to_next') or last_arc.get('payoff_for_next') or '', 500)}")
+            open_threads = last_arc.get("must_remain_open") or []
+            if open_threads:
+                parts.append(f"上一卷未闭合问题：{_list_preview(open_threads, 8)}")
+        last_chapter = (await db.execute(
+            select(Chapter)
+            .where(Chapter.project_id == project_id, Chapter.volume_id == prev_volume.id)
+            .order_by(Chapter.chapter_number.desc(), Chapter.updated_at.desc())
+            .limit(1)
+        )).scalar_one_or_none()
+        if last_chapter:
+            parts.append(f"上一卷最后章节：第{last_chapter.chapter_number}章《{last_chapter.title or ''}》")
+            if last_chapter.connects_to:
+                parts.append(f"上一卷章末状态：{_clip_text(last_chapter.connects_to, 500)}")
+            if last_chapter.hook:
+                parts.append(f"上一卷最后钩子：{_clip_text(last_chapter.hook, 300)}")
+            state = _parse_state_snapshot(last_chapter.story_state_snapshot or "")
+            for label, key in [
+                ("人物/事实变化", "facts"),
+                ("下卷必须承接", "next_must_follow"),
+                ("物件状态", "object_states"),
+                ("外部压力", "external_pressures"),
+            ]:
+                value = state.get(key)
+                if value:
+                    parts.append(f"{label}：{_list_preview(value, 8)}")
+    else:
+        parts.append("【上一卷】无（本卷是第一卷或缺少上一卷）")
+
+    parts.append(f"【当前卷】第{volume.volume_number}卷《{volume.title}》")
+    if volume.summary:
+        parts.append(f"当前卷摘要：{_clip_text(volume.summary, 500)}")
+
+    if next_volume:
+        parts.append(f"【下一卷预告】第{next_volume.volume_number}卷《{next_volume.title}》")
+        if next_volume.summary:
+            parts.append(f"下一卷摘要：{_clip_text(next_volume.summary, 500)}")
+        if next_volume.outline:
+            parts.append(f"下一卷大纲要点：{_clip_text(next_volume.outline, 500)}")
+    else:
+        parts.append("【下一卷预告】无（本卷可能是当前最后一卷）")
+
+    return _clip_text("\n".join(p for p in parts if p), 3200)
+
+
+def _score_arc_quality(arcs: list[dict]) -> dict:
+    issues: list[dict] = []
+    for idx, arc in enumerate(arcs or []):
+        if not isinstance(arc, dict):
+            continue
+        required = [
+            ("opening_state", "缺少弧线开局状态"),
+            ("ending_state", "缺少弧线终点状态"),
+            ("handoff_to_next", "缺少交给下一弧线/下一卷的具体钩子"),
+            ("continuity_chain", "缺少内部因果链"),
+            ("irreplaceable_value", "缺少不可替代价值"),
+        ]
+        if idx > 0:
+            required.append(("handoff_from_previous", "缺少从上一弧线接来的具体交接物"))
+        for key, message in required:
+            if not arc.get(key):
+                issues.append({"arc_index": idx, "name": arc.get("name", ""), "issue": message, "field": key})
+        steps = arc.get("arc_steps") or []
+        if not isinstance(steps, list) or len(steps) < 4:
+            issues.append({"arc_index": idx, "name": arc.get("name", ""), "issue": "arc_steps 少于4个，弧线容易像摘要", "field": "arc_steps"})
+        if idx > 0:
+            prev = arcs[idx - 1] if idx - 1 < len(arcs) and isinstance(arcs[idx - 1], dict) else {}
+            prev_handoff = prev.get("handoff_to_next") or prev.get("payoff_for_next") or prev.get("ending_state") or ""
+            current_handoff = arc.get("handoff_from_previous") or arc.get("dependence_on_previous") or ""
+            if prev_handoff and current_handoff and not any(token in current_handoff for token in re.split(r"[，。；、\s]+", prev_handoff) if len(token) >= 2):
+                issues.append({"arc_index": idx, "name": arc.get("name", ""), "issue": "当前弧线接收物和上一弧线交出物语义可能不一致", "field": "handoff_from_previous"})
+    score = max(0, 100 - len(issues) * 8)
+    return {
+        "score": score,
+        "passed": score >= 75 and not any(i.get("field") in {"handoff_from_previous", "handoff_to_next", "arc_steps"} for i in issues),
+        "issues": issues[:20],
+        "issue_count": len(issues),
+    }
+
+
+def _chapter_blueprint_gate(node_data: dict, idx: int, arc_index: int, previous_arc_ending: str = "") -> dict:
+    issues: list[str] = []
+    if not node_data.get("connects_from"):
+        issues.append("缺少 connects_from，上承状态不明确")
+    if not node_data.get("connects_to"):
+        issues.append("缺少 connects_to，章末交接不明确")
+    if not node_data.get("key_events"):
+        issues.append("缺少 key_events，章节可能没有可见事件")
+    if not node_data.get("arc_step_refs"):
+        issues.append("缺少 arc_step_refs，未标明承载哪段弧线台阶")
+    if not node_data.get("state_delta"):
+        issues.append("缺少 state_delta，状态增量不明确")
+    if idx == 0 and arc_index > 0 and previous_arc_ending and not node_data.get("connects_from"):
+        issues.append("跨弧线第一章没有显式接住上一弧线")
+    entry_checks = node_data.get("entry_gate_checks") or {}
+    if isinstance(entry_checks, dict) and entry_checks.get("passed") is False:
+        issues.append("角色/组织入场硬闸未通过")
+    return {
+        "passed": not issues,
+        "score": max(0, 100 - len(issues) * 15),
+        "issues": issues,
+    }
+
+
+def _flatten_world_values(value, prefix: str = "") -> list[str]:
+    if value in (None, "", [], {}):
+        return []
+    if isinstance(value, str):
+        return [f"{prefix}{value}" if prefix else value]
+    if isinstance(value, list):
+        result: list[str] = []
+        for item in value:
+            result.extend(_flatten_world_values(item, prefix))
+        return result
+    if isinstance(value, dict):
+        result = []
+        for key, item in value.items():
+            result.extend(_flatten_world_values(item, f"{prefix}{key}："))
+        return result
+    return [f"{prefix}{value}" if prefix else str(value)]
+
+
+def _world_rule_audit_payload(world: WorldSetting | None, project: Project | None = None) -> dict:
+    if not world:
+        return {
+            "score": 0,
+            "passed": False,
+            "conflicts": [],
+            "gaps": ["尚未生成世界观规则"],
+            "risks": ["缺少 hard_rules / world_logic / constraints，后续生成容易临时加万能设定"],
+            "recommendations": ["先生成世界观，再进行章节写作"],
+        }
+    hard_rules = world.hard_rules or []
+    constraints = world.constraints or []
+    tone_rules = world.tone_rules or []
+    logic_items = _flatten_world_values(world.world_logic or {})
+    special_items = _flatten_world_values(world.special_rules or {})
+    conflicts: list[dict] = []
+    gaps: list[str] = []
+    risks: list[str] = []
+
+    if len(hard_rules) < 4:
+        gaps.append("hard_rules 少于4条，世界硬约束不足")
+    if len(constraints) < 3:
+        gaps.append("constraints 少于3条，生成边界不足")
+    if not logic_items:
+        gaps.append("world_logic 为空，缺少世界运行逻辑")
+    if project and project.core_theme and not any(project.core_theme in item for item in hard_rules + constraints + logic_items):
+        risks.append("世界规则未显式绑定项目核心主题，后续可能偏题")
+
+    combined = [(str(x), "hard_rules") for x in hard_rules] + [(str(x), "constraints") for x in constraints] + [(str(x), "world_logic") for x in logic_items] + [(str(x), "special_rules") for x in special_items]
+    contradiction_pairs = [("不能", "可以"), ("禁止", "允许"), ("不可", "可"), ("必须", "随意"), ("唯一", "多个"), ("无法", "能够")]
+    for idx, (text_a, source_a) in enumerate(combined):
+        for text_b, source_b in combined[idx + 1:]:
+            shared_tokens = [token for token in re.split(r"[，。；、\s：:]+", text_a) if len(token) >= 3 and token in text_b]
+            if not shared_tokens:
+                continue
+            if any(a in text_a and b in text_b or b in text_a and a in text_b for a, b in contradiction_pairs):
+                conflicts.append({
+                    "source_a": source_a,
+                    "text_a": _clip_text(text_a, 180),
+                    "source_b": source_b,
+                    "text_b": _clip_text(text_b, 180),
+                    "shared": shared_tokens[:3],
+                    "risk": "可能存在规则表述互相冲突",
+                })
+
+    if not any("代价" in str(x) or "成本" in str(x) for x in hard_rules + constraints + logic_items):
+        risks.append("缺少能力/资源/制度代价规则，容易出现无成本开挂")
+    if not any("信息" in str(x) or "秘密" in str(x) or "知道" in str(x) for x in hard_rules + constraints + logic_items):
+        risks.append("缺少信息边界规则，角色可能知道不该知道的事")
+    if not any("组织" in str(x) or "势力" in str(x) or "制度" in str(x) or "流程" in str(x) for x in hard_rules + constraints + logic_items):
+        risks.append("缺少组织/制度执行规则，势力可能沦为背景名词")
+
+    issue_count = len(conflicts) + len(gaps) + len(risks)
+    score = max(0, 100 - len(conflicts) * 18 - len(gaps) * 10 - len(risks) * 6)
+    return {
+        "score": score,
+        "passed": score >= 75 and not conflicts,
+        "conflicts": conflicts[:20],
+        "gaps": gaps,
+        "risks": risks,
+        "issue_count": issue_count,
+        "recommendations": [
+            "把世界规则改成可执行限制：谁受限、在哪种场景受限、违反有什么代价",
+            "每条强能力/强资源都补一个成本、冷却、权限或信息边界",
+            "组织规则要能制造具体阻力：流程、审批、外围成员、处罚、交换代价",
+        ],
+        "coverage": {
+            "hard_rules": len(hard_rules),
+            "constraints": len(constraints),
+            "tone_rules": len(tone_rules),
+            "world_logic_items": len(logic_items),
+            "special_rule_items": len(special_items),
+        },
+    }
 
 
 def _parse_state_snapshot(snapshot: str) -> dict:
@@ -2427,8 +2683,11 @@ async def _do_expand_volume_arcs(
     style_focus: str = "主线清晰，角色自然成长",
     length_control: str = "按全书体量和本卷复杂度自主判断",
     clear_existing_chapters: bool = False,
+    task_id: str = "",
 ) -> dict:
     async with async_session() as db:
+        if task_id:
+            update_progress(task_id, 0.08, "正在读取卷、角色和势力上下文", {"stage": "loading_context", "volume_id": volume_id})
         volume = (await db.execute(select(Volume).where(Volume.id == volume_id, Volume.project_id == project_id))).scalar_one_or_none()
         if not volume:
             raise RuntimeError("卷不存在")
@@ -2439,6 +2698,7 @@ async def _do_expand_volume_arcs(
         chars_summary = ", ".join([f"{c.name}({c.role_type})" for c in chars_result.scalars().all()])
         facs_result = await db.execute(select(Faction).where(Faction.project_id == project_id))
         facs_summary = ", ".join([f"{f.name}({f.faction_type})" for f in facs_result.scalars().all()])
+        volume_continuity_context = await _format_volume_continuity_context(db, project_id, volume)
         snapshot = {
             "title": project.title,
             "genre": project.genre,
@@ -2447,6 +2707,7 @@ async def _do_expand_volume_arcs(
             "chapter_count": volume.chapter_count,
             "chars_summary": chars_summary,
             "facs_summary": facs_summary,
+            "volume_continuity_context": volume_continuity_context,
             "arc_strategy": arc_strategy,
             "arc_density": arc_density,
             "style_focus": style_focus,
@@ -2455,6 +2716,8 @@ async def _do_expand_volume_arcs(
         }
 
     ai = AIService()
+    if task_id:
+        update_progress(task_id, 0.22, "AI 正在拆分本卷弧线并处理跨卷承接", {"stage": "generating_arcs", "volume_id": volume_id})
     arcs = await ai.expand_volume_arcs(
         snapshot["title"],
         snapshot["genre"],
@@ -2468,10 +2731,16 @@ async def _do_expand_volume_arcs(
         style_focus=snapshot["style_focus"],
         length_control=snapshot["length_control"],
         writing_style_guidance=snapshot["writing_style_guidance"],
+        volume_continuity_context=snapshot["volume_continuity_context"],
     )
+    if task_id:
+        update_progress(task_id, 0.72, "正在校验弧线连续性和交接物", {"stage": "validating_arcs", "volume_id": volume_id})
     arcs = _normalize_narrative_arc_payload(arcs)
+    arc_quality = _score_arc_quality(arcs)
 
     async with async_session() as db:
+        if task_id:
+            update_progress(task_id, 0.86, "正在写入弧线规划和质量检查结果", {"stage": "saving_arcs", "volume_id": volume_id, "arc_quality": arc_quality})
         volume = (await db.execute(select(Volume).where(Volume.id == volume_id, Volume.project_id == project_id))).scalar_one_or_none()
         if not volume:
             raise RuntimeError("卷已被重新生成或删除，请刷新页面后重新展开弧线")
@@ -2480,16 +2749,34 @@ async def _do_expand_volume_arcs(
             cleared_chapters = await _clear_volume_chapters(db, project_id, volume_id)
         volume.narrative_arcs = arcs
         volume.arc_continuity_index = _build_arc_continuity_index(arcs)
-        volume.arc_bridge_checks = _build_arc_bridge_checks(arcs)
+        bridge_checks = _build_arc_bridge_checks(arcs)
+        for check in bridge_checks:
+            check["quality_gate"] = {
+                "score": arc_quality["score"],
+                "passed": arc_quality["passed"],
+                "related_issues": [i for i in arc_quality["issues"] if i.get("arc_index") == check.get("arc_index")],
+            }
+        volume.arc_bridge_checks = bridge_checks
         project = (await db.execute(select(Project).where(Project.id == project_id))).scalar_one_or_none()
         if project:
             project.project_schema_mode = "continuity_v1"
             project.arc_generation_version = "continuity_v1"
             notes = project.continuity_upgrade_notes or {}
             notes["arc_generation"] = "用户主动重新生成弧线后启用 continuity_v1；旧正文和旧章节摘要未自动重写。"
+            notes["last_arc_quality"] = arc_quality
+            notes["last_volume_continuity_context"] = snapshot["volume_continuity_context"]
+            notes["prompt_version"] = PROMPT_VERSION
             project.continuity_upgrade_notes = notes
         await db.commit()
-        return {"arcs": arcs, "cleared_chapters": cleared_chapters}
+        if task_id:
+            update_progress(task_id, 1, "卷弧线展开完成", {
+                "stage": "completed",
+                "volume_id": volume_id,
+                "arc_count": len(arcs),
+                "cleared_chapters": cleared_chapters,
+                "arc_quality": arc_quality,
+            })
+        return {"arcs": arcs, "cleared_chapters": cleared_chapters, "arc_quality": arc_quality}
 
 
 async def _do_revise_volume_arc(project_id: str, volume_id: str, arc_index: int, action: str, instruction: str = "", regenerate_chapters: bool = False) -> dict:
@@ -2828,6 +3115,8 @@ async def _do_expand_arc_chapters(project_id: str, volume_id: str, arc_index: in
             connects_from = _safe_str(node_data.get("connects_from", ""))
             if idx == 0 and arc_index > 0 and (not connects_from or connects_from.startswith("无")):
                 connects_from = snapshot["previous_arc_ending"]
+                node_data["connects_from"] = connects_from
+            blueprint_quality_gate = _chapter_blueprint_gate(node_data, idx, arc_index, snapshot["previous_arc_ending"])
             continuity_from_previous = node_data.get("continuity_from_previous", [])
             continuity_to_next = node_data.get("continuity_to_next", [])
             state_delta = node_data.get("state_delta", {})
@@ -2862,6 +3151,7 @@ async def _do_expand_arc_chapters(project_id: str, volume_id: str, arc_index: in
                 minor_events=node_data.get("minor_events", []),
                 scene_count=node_data.get("scene_count", 3),
                 blueprint={
+                    "prompt_version": PROMPT_VERSION,
                     "chapter_function": chapter_function,
                     "opening_state": node_data.get("connects_from", ""),
                     "summary": node_data.get("summary", ""),
@@ -2878,6 +3168,7 @@ async def _do_expand_arc_chapters(project_id: str, volume_id: str, arc_index: in
                     "character_voice_constraints": character_voice_constraints,
                     "information_reveal_plan": information_reveal_plan,
                     "repair_priority_hint": repair_priority_hint,
+                    "blueprint_quality_gate": blueprint_quality_gate,
                     "must_include": node_data.get("key_events", []),
                     "foreshadowing_tasks": node_data.get("minor_events", []),
                     "rhythm_profile": {
@@ -2902,6 +3193,7 @@ async def _do_expand_arc_chapters(project_id: str, volume_id: str, arc_index: in
                     "character_voice_constraints": character_voice_constraints,
                     "information_reveal_plan": information_reveal_plan,
                     "repair_priority_hint": repair_priority_hint,
+                    "blueprint_quality_gate": blueprint_quality_gate,
                 },
                 arc_step_refs=arc_step_refs,
                 continuity_from_previous=continuity_from_previous,
@@ -3380,9 +3672,11 @@ class ExpandVolumeArcsRequest(BaseModel):
 
 @router.post("/expand-volume-arcs/{volume_id}")
 async def expand_volume_arcs(project_id: str, volume_id: str, body: ExpandVolumeArcsRequest | None = None, user: User = Depends(get_current_user)):
+    import uuid as _uuid
     body = body or ExpandVolumeArcsRequest()
-    task_id = start_task(
-        _do_expand_volume_arcs(project_id, volume_id, body.arc_strategy, body.arc_density, body.style_focus, body.length_control, body.clear_existing_chapters),
+    task_id = str(_uuid.uuid4())
+    start_task(
+        _do_expand_volume_arcs(project_id, volume_id, body.arc_strategy, body.arc_density, body.style_focus, body.length_control, body.clear_existing_chapters, task_id),
         "expand_volume_arcs",
         project_id,
         {
@@ -3393,6 +3687,7 @@ async def expand_volume_arcs(project_id: str, volume_id: str, body: ExpandVolume
             "length_control": body.length_control,
             "clear_existing_chapters": body.clear_existing_chapters,
         },
+        task_id=task_id,
     )
     return {"task_id": task_id}
 
@@ -4408,6 +4703,198 @@ async def project_tasks(project_id: str, user: User = Depends(get_current_user))
     return {"tasks": await list_tasks_persisted(project_id)}
 
 
+@router.get("/state-ledger")
+async def project_state_ledger(project_id: str, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    chapters = (await db.execute(
+        select(Chapter).where(Chapter.project_id == project_id).order_by(Chapter.chapter_number)
+    )).scalars().all()
+    trails = (await db.execute(
+        select(StoryStateTrail).where(StoryStateTrail.project_id == project_id).order_by(StoryStateTrail.chapter_number)
+    )).scalars().all()
+
+    ledger = {
+        "characters": [],
+        "relationships": [],
+        "objects": [],
+        "external_pressures": [],
+        "open_threads": [],
+        "hooks": [],
+        "recent_state_deltas": [],
+    }
+    for ch in chapters:
+        if ch.characters_in_chapter:
+            ledger["characters"].extend([_safe_str(x) for x in ch.characters_in_chapter[:8]])
+        if ch.relationship_changes:
+            ledger["relationships"].extend(ch.relationship_changes[:8])
+        if ch.object_states:
+            ledger["objects"].extend(ch.object_states[:8])
+        if ch.external_pressures:
+            ledger["external_pressures"].extend(ch.external_pressures[:8])
+        if ch.connects_to:
+            ledger["open_threads"].append({"chapter_number": ch.chapter_number, "title": ch.title, "state": _clip_text(ch.connects_to, 220)})
+        if ch.hook:
+            ledger["hooks"].append({"chapter_number": ch.chapter_number, "title": ch.title, "hook": _clip_text(ch.hook, 220), "status": "待追踪"})
+        if ch.state_delta:
+            ledger["recent_state_deltas"].append({"chapter_number": ch.chapter_number, "delta": ch.state_delta})
+        state = _parse_state_snapshot(ch.story_state_snapshot or "")
+        for key, target in [
+            ("relationship_changes", "relationships"),
+            ("object_states", "objects"),
+            ("external_pressures", "external_pressures"),
+            ("next_must_follow", "open_threads"),
+        ]:
+            value = state.get(key)
+            if value:
+                if target == "open_threads":
+                    ledger[target].extend({"chapter_number": ch.chapter_number, "state": _safe_str(x)} for x in value[:8])
+                else:
+                    ledger[target].extend(value[:8] if isinstance(value, list) else [value])
+    for trail in trails[-20:]:
+        snap = trail.state_snapshot or {}
+        if isinstance(snap, dict) and snap.get("next_must_follow"):
+            ledger["open_threads"].extend({"chapter_number": trail.chapter_number, "state": _safe_str(x)} for x in snap.get("next_must_follow", [])[:5])
+
+    ledger["characters"] = sorted(set(x for x in ledger["characters"] if x))[:80]
+    for key in ["relationships", "objects", "external_pressures", "open_threads", "hooks", "recent_state_deltas"]:
+        ledger[key] = ledger[key][-80:]
+    return {"prompt_version": PROMPT_VERSION, "ledger": ledger}
+
+
+@router.get("/project-health")
+async def project_health(project_id: str, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    project = (await db.execute(select(Project).where(Project.id == project_id))).scalar_one_or_none()
+    world = (await db.execute(select(WorldSetting).where(WorldSetting.project_id == project_id))).scalar_one_or_none()
+    volumes = (await db.execute(select(Volume).where(Volume.project_id == project_id).order_by(Volume.volume_number))).scalars().all()
+    chapters = (await db.execute(select(Chapter).where(Chapter.project_id == project_id).order_by(Chapter.chapter_number))).scalars().all()
+    foreshadowing = (await db.execute(select(ForeshadowingPlan).where(ForeshadowingPlan.project_id == project_id))).scalars().all()
+    world_rule_audit = _world_rule_audit_payload(world, project)
+
+    arc_issues = []
+    for v in volumes:
+        for check in v.arc_bridge_checks or []:
+            if check.get("needs_repair") or (check.get("quality_gate") and not check["quality_gate"].get("passed", True)):
+                arc_issues.append({"volume": v.title, **check})
+
+    blueprint_issues = []
+    hook_count = 0
+    no_event_count = 0
+    repeated_titles: dict[str, int] = {}
+    for ch in chapters:
+        repeated_titles[ch.title or ""] = repeated_titles.get(ch.title or "", 0) + 1
+        if ch.hook or ch.connects_to:
+            hook_count += 1
+        if not ch.key_events:
+            no_event_count += 1
+        gate = (ch.blueprint or {}).get("blueprint_quality_gate") or (ch.continuity_checks or {}).get("blueprint_quality_gate")
+        if gate and not gate.get("passed", True):
+            blueprint_issues.append({"chapter_number": ch.chapter_number, "title": ch.title, "gate": gate})
+
+    fatigue = []
+    if len(chapters) >= 8:
+        recent = chapters[-8:]
+        if sum(1 for ch in recent if not ch.key_events) >= 4:
+            fatigue.append("最近8章中至少4章缺少 key_events，可能出现事件推进疲劳")
+        if sum(1 for ch in recent if not (ch.hook or ch.connects_to)) >= 4:
+            fatigue.append("最近8章中至少4章缺少章末钩子或交接状态")
+    repeated = [title for title, count in repeated_titles.items() if title and count > 1]
+    if repeated:
+        fatigue.append("存在重复章节标题，可能有生成重复或结构混乱：" + "、".join(repeated[:8]))
+
+    scores = {
+        "arc_continuity": max(0, 100 - len(arc_issues) * 10),
+        "chapter_blueprint": max(0, 100 - len(blueprint_issues) * 8),
+        "hook_density": round((hook_count / len(chapters)) * 100) if chapters else 0,
+        "event_density": round(((len(chapters) - no_event_count) / len(chapters)) * 100) if chapters else 0,
+        "foreshadowing_tracking": max(0, 100 - sum(1 for f in foreshadowing if f.status not in {"已回收", "完成", "done"}) * 5),
+        "world_rules": world_rule_audit["score"],
+    }
+    overall = round(sum(scores.values()) / len(scores)) if scores else 0
+    return {
+        "prompt_version": PROMPT_VERSION,
+        "overall_score": overall,
+        "scores": scores,
+        "arc_issues": arc_issues[:30],
+        "blueprint_issues": blueprint_issues[:30],
+        "fatigue_warnings": fatigue,
+        "world_rule_audit": world_rule_audit,
+        "foreshadowing": [{"name": f.name, "status": f.status, "plant_stage": f.plant_stage, "reveal_stage": f.reveal_stage} for f in foreshadowing[:80]],
+    }
+
+
+@router.get("/world-rule-audit")
+async def world_rule_audit(project_id: str, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    project = (await db.execute(select(Project).where(Project.id == project_id))).scalar_one_or_none()
+    world = (await db.execute(select(WorldSetting).where(WorldSetting.project_id == project_id))).scalar_one_or_none()
+    return {"prompt_version": PROMPT_VERSION, "audit": _world_rule_audit_payload(world, project)}
+
+
+@router.get("/prompt-modules")
+async def prompt_modules(project_id: str, user: User = Depends(get_current_user)):
+    return {
+        "prompt_version": PROMPT_VERSION,
+        "modules": PROMPT_MODULES,
+        "coverage": {
+            "active": len([m for m in PROMPT_MODULES if m.get("status") == "active"]),
+            "total": len(PROMPT_MODULES),
+            "generation_surfaces": sorted({surface for m in PROMPT_MODULES for surface in m.get("used_in", [])}),
+        },
+    }
+
+
+@router.get("/context-preview")
+async def generation_context_preview(project_id: str, chapter_id: str | None = None, volume_id: str | None = None, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    if chapter_id:
+        context = await build_generation_context(db, project_id, chapter_id)
+        return {"prompt_version": PROMPT_VERSION, "scope": "chapter", "context": context}
+    if volume_id:
+        volume = (await db.execute(select(Volume).where(Volume.id == volume_id, Volume.project_id == project_id))).scalar_one_or_none()
+        if not volume:
+            raise HTTPException(404, "卷不存在")
+        return {
+            "prompt_version": PROMPT_VERSION,
+            "scope": "volume",
+            "volume_continuity_context": await _format_volume_continuity_context(db, project_id, volume),
+            "arc_continuity_index": volume.arc_continuity_index or [],
+            "arc_bridge_checks": volume.arc_bridge_checks or [],
+        }
+    bible = await build_story_bible(db, project_id)
+    return {"prompt_version": PROMPT_VERSION, "scope": "project", "context": bible}
+
+
+@router.get("/impact/chapter/{chapter_id}")
+async def chapter_change_impact(project_id: str, chapter_id: str, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    chapter = (await db.execute(select(Chapter).where(Chapter.id == chapter_id, Chapter.project_id == project_id))).scalar_one_or_none()
+    if not chapter:
+        raise HTTPException(404, "章节不存在")
+    later = (await db.execute(
+        select(Chapter)
+        .where(Chapter.project_id == project_id, Chapter.chapter_number > chapter.chapter_number)
+        .order_by(Chapter.chapter_number)
+        .limit(12)
+    )).scalars().all()
+    impacted = []
+    for ch in later:
+        reasons = []
+        if ch.connects_from and chapter.connects_to and chapter.connects_to[:30] in ch.connects_from:
+            reasons.append("connects_from 直接引用本章结尾状态")
+        if ch.arc_name == chapter.arc_name:
+            reasons.append("同一弧线章节，可能共享 arc_steps 和状态链")
+        if set(_safe_str(x) for x in (chapter.characters_in_chapter or [])) & set(_safe_str(x) for x in (ch.characters_in_chapter or [])):
+            reasons.append("共享出场角色，人物状态可能受影响")
+        if reasons:
+            impacted.append({"chapter_number": ch.chapter_number, "title": ch.title, "reasons": reasons})
+    return {
+        "chapter": {"chapter_number": chapter.chapter_number, "title": chapter.title, "arc_name": chapter.arc_name},
+        "impact_level": "high" if len(impacted) >= 5 else "medium" if impacted else "low",
+        "impacted_chapters": impacted,
+        "recommended_actions": [
+            "只改本章正文时，至少同步检查下一章 connects_from",
+            "改动章末钩子时，建议重跑本章之后的章节蓝图审查",
+            "改动人物重大选择/伤势/秘密时，建议重新抽取状态账本",
+        ],
+    }
+
+
 @router.post("/cancel-task/{task_id}")
 async def cancel_task_endpoint(project_id: str, task_id: str, user: User = Depends(get_current_user)):
     if cancel_task(task_id):
@@ -4538,6 +5025,7 @@ async def retry_task(project_id: str, task_id: str, user: User = Depends(get_cur
                 meta.get("style_focus", "主线清晰，角色自然成长"),
                 meta.get("length_control", "按全书体量和本卷复杂度自主判断"),
                 bool(meta.get("clear_existing_chapters", False)),
+                new_task_id,
             ),
             task_type,
             project_id,
@@ -4766,10 +5254,10 @@ async def retry_task(project_id: str, task_id: str, user: User = Depends(get_cur
 
     if task_type == "generate_characters":
         start_task(
-            _do_generate_characters(project_id, int(meta.get("char_count", 6)), int(meta.get("faction_count", 3))),
+            _do_generate_characters(project_id, int(meta.get("char_count", 6)), int(meta.get("faction_count", 3)), new_task_id),
             task_type,
             project_id,
-            {**meta, "retry_of": task_id},
+            {**meta, "retry_of": task_id, "generation_mode": "segmented"},
             task_id=new_task_id,
         )
         return {"task_id": new_task_id}

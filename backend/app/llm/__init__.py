@@ -6,6 +6,8 @@ from app.llm.openai_provider import OpenAIProvider
 from app.llm.base import LLMResponse
 from app.config import get_settings
 
+LLM_READ_TIMEOUT_SECONDS = 3600.0
+
 _cache: list[dict] = []
 _cache_lock = threading.Lock()
 _cache_ts = 0.0
@@ -75,7 +77,7 @@ class ClaudeProvider(OpenAIProvider):
 
     async def chat(self, messages, system="", temperature=0.7, max_tokens=4096):
         msgs = [{"role": m.role, "content": m.content} for m in messages if m.role != "system"]
-        timeout = httpx.Timeout(10.0, connect=10.0, read=300.0, write=30.0, pool=5.0)
+        timeout = httpx.Timeout(10.0, connect=10.0, read=LLM_READ_TIMEOUT_SECONDS, write=30.0, pool=5.0)
         payload = {
             "model": self.model,
             "messages": msgs,
@@ -85,11 +87,14 @@ class ClaudeProvider(OpenAIProvider):
         if system:
             payload["system"] = system
         async with httpx.AsyncClient(timeout=timeout) as client:
-            resp = await client.post(
-                f"{self.base_url}/messages",
-                headers={"x-api-key": self.api_key, "anthropic-version": "2023-06-01", "Content-Type": "application/json"},
-                json=payload,
-            )
+            try:
+                resp = await client.post(
+                    f"{self.base_url}/messages",
+                    headers={"x-api-key": self.api_key, "anthropic-version": "2023-06-01", "Content-Type": "application/json"},
+                    json=payload,
+                )
+            except httpx.TimeoutException as e:
+                raise RuntimeError(f"Claude 请求超时（读取超过 {int(LLM_READ_TIMEOUT_SECONDS)} 秒）") from e
             data = resp.json()
             if resp.status_code != 200:
                 raise RuntimeError(f"Claude API 返回 {resp.status_code}: {str(data)[:300]}")
@@ -116,20 +121,23 @@ class GeminiProvider(OpenAIProvider):
             parts.append({"text": system})
         for msg in messages:
             parts.append({"text": msg.content})
-        timeout = httpx.Timeout(10.0, connect=10.0, read=300.0, write=30.0, pool=5.0)
+        timeout = httpx.Timeout(10.0, connect=10.0, read=LLM_READ_TIMEOUT_SECONDS, write=30.0, pool=5.0)
         url = f"{self.base_url}/models/{self.model}:generateContent"
         async with httpx.AsyncClient(timeout=timeout) as client:
-            resp = await client.post(
-                url,
-                params={"key": self.api_key},
-                json={
-                    "contents": [{"role": "user", "parts": parts}],
-                    "generationConfig": {
-                        "temperature": temperature,
-                        "maxOutputTokens": max_tokens,
+            try:
+                resp = await client.post(
+                    url,
+                    params={"key": self.api_key},
+                    json={
+                        "contents": [{"role": "user", "parts": parts}],
+                        "generationConfig": {
+                            "temperature": temperature,
+                            "maxOutputTokens": max_tokens,
+                        },
                     },
-                },
-            )
+                )
+            except httpx.TimeoutException as e:
+                raise RuntimeError(f"Gemini 请求超时（读取超过 {int(LLM_READ_TIMEOUT_SECONDS)} 秒）") from e
             data = resp.json()
             if resp.status_code != 200:
                 raise RuntimeError(f"Gemini API 返回 {resp.status_code}: {str(data)[:300]}")

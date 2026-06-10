@@ -21,11 +21,14 @@ def _now() -> str:
 def _format_db_task(task: GenerationTask) -> dict:
     config = task.precision_config or {}
     result = task.result_summary or {}
+    error = task.error_message
+    if task.status == "failed" and not error:
+        error = "任务失败，但旧记录没有保存具体错误；常见原因是 LLM 请求超时或服务中断，请重新发起"
     return {
         "id": str(task.id),
         "status": task.status,
         "result": result.get("result"),
-        "error": task.error_message,
+        "error": error,
         "progress": (task.progress or 0) / 100,
         "progress_label": config.get("progress_label", ""),
         "detail": config.get("detail", {}),
@@ -223,7 +226,7 @@ def _schedule_retry(coro_factory, attempts: int = 3, delay: float = 0.25):
     _schedule(_retry())
 
 
-def start_task(coro: Coroutine, task_type: str = "ai", project_id: str | None = None, meta: dict | None = None, task_id: str | None = None, timeout: int = 900) -> str:
+def start_task(coro: Coroutine, task_type: str = "ai", project_id: str | None = None, meta: dict | None = None, task_id: str | None = None, timeout: int = 3600) -> str:
     if task_id is None:
         duplicate_id = _find_running_duplicate(task_type, project_id, meta or {})
         if duplicate_id:
@@ -265,11 +268,16 @@ def start_task(coro: Coroutine, task_type: str = "ai", project_id: str | None = 
                 text = f"{hours}小时{minutes}分钟"
             error = f"AI 生成超时（{text}）"
             _tasks[task_id]["error"] = error
-            await _persist_update_with_retry(task_id, status="failed", error=error)
+            detail = {"stage": "timeout", "timeout_seconds": timeout, "error_type": "TimeoutError"}
+            _tasks[task_id]["detail"] = detail
+            await _persist_update_with_retry(task_id, status="failed", error=error, detail=detail)
         except Exception as e:
+            error = str(e) or e.__class__.__name__ or "后台任务失败，未返回具体错误"
+            detail = {"stage": "failed", "error_type": e.__class__.__name__}
             _tasks[task_id]["status"] = "failed"
-            _tasks[task_id]["error"] = str(e)
-            await _persist_update_with_retry(task_id, status="failed", error=str(e))
+            _tasks[task_id]["error"] = error
+            _tasks[task_id]["detail"] = detail
+            await _persist_update_with_retry(task_id, status="failed", error=error, detail=detail)
         finally:
             _tasks[task_id]["updated_at"] = _now()
 
