@@ -67,6 +67,13 @@ def get_cached_providers() -> list[dict]:
     return _cache
 
 
+async def get_cached_providers_async() -> list[dict]:
+    global _cache, _cache_ts
+    if not _cache or time.time() - _cache_ts > CACHE_TTL:
+        await _async_refresh()
+    return _cache
+
+
 class ClaudeProvider(OpenAIProvider):
     def __init__(self, model: str = None, api_key: str = None, provider_id: str = "", provider_name: str = ""):
         settings = get_settings()
@@ -300,15 +307,18 @@ def _provider_from_config(provider: dict) -> OpenAIProvider:
     if provider_type == "gemini":
         return GeminiProvider(model=model, api_key=api_key, base_url=base_url, provider_id=provider.get("id") or "", provider_name=provider.get("name") or "")
     if provider_type == "deepseek" and not base_url:
-        base_url = "https://api.deepseek.com/v1"
+        base_url = "https://api.deepseek.com"
     return OpenAIProvider(model=model, api_key=api_key, base_url=base_url or "https://api.openai.com/v1", provider_id=provider.get("id") or "", provider_name=provider.get("name") or "", provider_type=provider_type)
 
 
-async def get_llm(prefer: str = "openai") -> OpenAIProvider:
-    providers = get_cached_providers()
+async def get_llm(prefer: str | None = None) -> OpenAIProvider:
+    providers = await get_cached_providers_async()
     if providers:
-        preferred = next((p for p in providers if p.get("provider_type") == prefer and p.get("api_key")), None)
-        return _provider_from_config(preferred or providers[0])
+        if prefer:
+            preferred = next((p for p in providers if p.get("provider_type") == prefer and p.get("api_key")), None)
+            if preferred:
+                return _provider_from_config(preferred)
+        return _provider_from_config(providers[0])
 
     settings = get_settings()
     if prefer == "claude" and settings.CLAUDE_API_KEY:

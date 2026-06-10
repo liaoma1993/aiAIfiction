@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Card, Input, Button, Typography, Tag, Row, Col, Spin, message, Space, Alert, List, Divider, Select } from 'antd';
-import { ThunderboltOutlined, ReloadOutlined, LoadingOutlined, SendOutlined, CheckOutlined } from '@ant-design/icons';
+import { ArrowLeftOutlined, ThunderboltOutlined, ReloadOutlined, LoadingOutlined, SendOutlined, CheckOutlined } from '@ant-design/icons';
 import { useProjectStore } from '@/stores/useProjectStore';
 import api from '@/services/api';
 import { writingStyleSkillApi } from '@/services/projectApi';
@@ -9,7 +9,14 @@ import { writingStyleSkillApi } from '@/services/projectApi';
 const { Title, Paragraph, Text } = Typography;
 const { TextArea } = Input;
 
-const GENRES = ['仙侠', '科幻', '武侠', '都市', '悬疑', '奇幻', '言情', '历史'];
+const GENRES = [
+  '玄幻', '奇幻', '仙侠', '修真', '武侠', '科幻', '星际', '赛博朋克',
+  '都市', '现实', '职场', '官场', '商战', '娱乐圈', '校园', '青春',
+  '悬疑', '推理', '刑侦', '惊悚', '恐怖', '灵异', '克苏鲁',
+  '历史', '架空历史', '军事', '战争', '权谋', '宫斗',
+  '言情', '古言', '现言', '纯爱', '轻小说', '二次元',
+  '游戏', '电竞', '体育', '末世', '废土', '无限流', '系统流', '穿越', '重生',
+];
 const PLANNING_DRAFT_KEY = 'aifiction:create-project-planning-draft:v1';
 
 type ChatMessage = {
@@ -300,10 +307,13 @@ export default function CreateProjectPage() {
 
   return (
     <div style={{ maxWidth: 1120, margin: '0 auto', padding: '36px 24px' }}>
-	      <Title level={2} style={{ marginBottom: 8 }}>创建小说项目</Title>
-	      <Paragraph style={{ color: 'var(--text-secondary)', marginBottom: 24 }}>
-	        先像聊天一样把想法说出来，AI 会先陪你把细节聊清楚；等方向稳定后再生成 3-6 个候选方案。未确认创建前，对话会自动保存在本机浏览器草稿里。
-	      </Paragraph>
+      <Space align="center" style={{ marginBottom: 8 }}>
+        <Button icon={<ArrowLeftOutlined />} onClick={() => navigate('/dashboard')}>返回项目列表</Button>
+        <Title level={2} style={{ margin: 0 }}>创建小说项目</Title>
+      </Space>
+      <Paragraph style={{ color: 'var(--text-secondary)', marginBottom: 24 }}>
+        先像聊天一样把想法说出来，AI 会先陪你把细节聊清楚；等方向稳定后再生成 3-6 个候选方案。未确认创建前，对话会自动保存在本机浏览器草稿里。
+      </Paragraph>
 
       <Row gutter={[20, 20]}>
         <Col xs={24} lg={14}>
@@ -417,9 +427,9 @@ export default function CreateProjectPage() {
               <Button icon={<ThunderboltOutlined />} onClick={handleGenerate} disabled={loading || (!chatInput.trim() && messages.length === 0)}>
                 生成3-6个方案
               </Button>
-	              <Button icon={<ReloadOutlined />} onClick={resetConversation} disabled={loading}>
-	                清空本地草稿
-	              </Button>
+              <Button icon={<ReloadOutlined />} onClick={resetConversation} disabled={loading}>
+                清空本地草稿
+              </Button>
             </Space>
           </Card>
         </Col>
