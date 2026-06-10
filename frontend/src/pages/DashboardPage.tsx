@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Button, Typography, Spin, Card, Statistic, Row, Col, Tag, Popconfirm, message, Space, Modal, Input } from 'antd';
-import { PlusOutlined, ArrowRightOutlined, DeleteOutlined, SettingOutlined, BookOutlined, EditOutlined, ReadOutlined } from '@ant-design/icons';
+import { PlusOutlined, ArrowRightOutlined, DeleteOutlined, SettingOutlined, BookOutlined, EditOutlined, ReadOutlined, DatabaseOutlined } from '@ant-design/icons';
 import { useProjectStore } from '@/stores/useProjectStore';
 import { chapterApi, volumeApi } from '@/services/projectApi';
 
@@ -79,6 +79,7 @@ export default function DashboardPage() {
         <div style={{ display: 'flex', gap: 12 }}>
           <Button icon={<ReadOutlined />} onClick={() => navigate('/writing-style-skills')}>写作风格</Button>
           <Button icon={<SettingOutlined />} onClick={() => navigate('/settings/providers')}>模型管理</Button>
+          <Button icon={<DatabaseOutlined />} onClick={() => navigate('/settings/llm-call-logs')}>调用记录</Button>
           <Button type="primary" size="large" icon={<PlusOutlined />} onClick={() => navigate('/projects/create')}>
             创建新项目
           </Button>

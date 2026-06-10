@@ -22,6 +22,7 @@ import app.models.outline  # noqa: F401
 import app.models.chapter  # noqa: F401
 import app.models.world_setting  # noqa: F401
 import app.models.llm_provider  # noqa: F401
+import app.models.llm_call_log  # noqa: F401
 import app.models.writing_style_skill  # noqa: F401
 
 config = context.config

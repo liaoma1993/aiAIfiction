@@ -1,5 +1,7 @@
 from app.llm.base import LLMMessage
 from app.llm import get_llm
+from app.services.llm_call_logger import llm_call_context
+import inspect
 import json
 import re
 
@@ -2034,26 +2036,33 @@ class AIService:
     async def _ask(self, prompt: str, system: str = SYSTEM_ARCHITECT, max_tokens: int = 128000, **kwargs) -> dict:
         llm = await get_llm()
         formatted = prompt.format(**kwargs)
-        try:
-            return await llm.chat_json([LLMMessage(role="user", content=formatted)], system=system, max_tokens=max_tokens)
-        except json.JSONDecodeError:
-            resp = await llm.chat([LLMMessage(role="user", content=formatted)], system=system, temperature=0.7, max_tokens=max_tokens)
-            content = self._strip_json_fence(resp.content)
+        caller = inspect.currentframe().f_back
+        function_name = kwargs.get("function_name") or (caller.f_code.co_name if caller else "_ask")
+        project_name = kwargs.get("project_name") or kwargs.get("title") or kwargs.get("project_title") or ""
+        project_id = kwargs.get("project_id") or ""
+        task_id = kwargs.get("task_id") or ""
+        with llm_call_context(function_name=function_name, project_name=project_name, project_id=project_id, task_id=task_id):
             try:
-                return self._parse_json_text(content)
+                return await llm.chat_json([LLMMessage(role="user", content=formatted)], system=system, max_tokens=max_tokens)
             except json.JSONDecodeError:
-                repair_prompt = JSON_REPAIR_PROMPT.format(content=content[:20000])
-                repair_resp = await llm.chat(
-                    [LLMMessage(role="user", content=repair_prompt)],
-                    system=SYSTEM_EDITOR,
-                    temperature=0.1,
-                    max_tokens=min(max_tokens, 16384),
-                )
-                repaired = self._strip_json_fence(repair_resp.content)
+                resp = await llm.chat([LLMMessage(role="user", content=formatted)], system=system, temperature=0.7, max_tokens=max_tokens)
+                content = self._strip_json_fence(resp.content)
                 try:
-                    return self._parse_json_text(repaired)
+                    return self._parse_json_text(content)
                 except json.JSONDecodeError:
-                    raise RuntimeError(f"AI 返回格式异常，自动修复失败: {content[:300]}")
+                    repair_prompt = JSON_REPAIR_PROMPT.format(content=content[:20000])
+                    with llm_call_context(function_name=f"{function_name}.json_repair", project_name=project_name, project_id=project_id, task_id=task_id):
+                        repair_resp = await llm.chat(
+                            [LLMMessage(role="user", content=repair_prompt)],
+                            system=SYSTEM_EDITOR,
+                            temperature=0.1,
+                            max_tokens=min(max_tokens, 16384),
+                        )
+                    repaired = self._strip_json_fence(repair_resp.content)
+                    try:
+                        return self._parse_json_text(repaired)
+                    except json.JSONDecodeError:
+                        raise RuntimeError(f"AI 返回格式异常，自动修复失败: {content[:300]}")
 
     async def _ask_list(self, prompt: str, system: str = SYSTEM_ARCHITECT, **kwargs) -> list[dict]:
         result = await self._ask(prompt, system=system, **kwargs)
@@ -2270,7 +2279,8 @@ class AIService:
             punctuation_rules=PUNCTUATION_RULES.strip(),
             de_ai_rules=DE_AI_FICTION_RULES.strip(),
         )
-        resp = await llm.chat([LLMMessage(role="user", content=prompt)], system=SYSTEM_WRITER, max_tokens=16384)
+        with llm_call_context(function_name="write_chapter", project_name=title):
+            resp = await llm.chat([LLMMessage(role="user", content=prompt)], system=SYSTEM_WRITER, max_tokens=16384)
         text = self._clean_chapter_text(resp.content)
         hook = ""
         new_characters = []

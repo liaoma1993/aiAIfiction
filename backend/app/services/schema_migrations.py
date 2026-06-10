@@ -193,6 +193,54 @@ def _migration_20260609_0002(conn: Connection) -> None:
         )
 
 
+def _migration_20260610_0003(conn: Connection) -> None:
+    timestamp_type = "TIMESTAMP" if conn.dialect.name != "sqlite" else "DATETIME"
+    json_type = "JSON"
+    if not _table_exists(conn, "llm_call_logs"):
+        conn.exec_driver_sql(
+            f"""
+            CREATE TABLE llm_call_logs (
+                id VARCHAR(36) PRIMARY KEY,
+                project_id VARCHAR(36) NULL,
+                project_name VARCHAR(200) NOT NULL DEFAULT '',
+                task_id VARCHAR(36) NOT NULL DEFAULT '',
+                function_name VARCHAR(100) NOT NULL DEFAULT '',
+                provider_id VARCHAR(36) NOT NULL DEFAULT '',
+                provider_name VARCHAR(100) NOT NULL DEFAULT '',
+                provider_type VARCHAR(30) NOT NULL DEFAULT '',
+                model_name VARCHAR(120) NOT NULL DEFAULT '',
+                request_type VARCHAR(30) NOT NULL DEFAULT 'chat',
+                status VARCHAR(20) NOT NULL DEFAULT 'success',
+                system_prompt TEXT NOT NULL DEFAULT '',
+                prompt TEXT NOT NULL DEFAULT '',
+                response_content TEXT NOT NULL DEFAULT '',
+                error_message TEXT NOT NULL DEFAULT '',
+                input_tokens INTEGER NOT NULL DEFAULT 0,
+                output_tokens INTEGER NOT NULL DEFAULT 0,
+                total_tokens INTEGER NOT NULL DEFAULT 0,
+                duration_ms INTEGER NOT NULL DEFAULT 0,
+                temperature VARCHAR(20) NOT NULL DEFAULT '',
+                max_tokens INTEGER NOT NULL DEFAULT 0,
+                request_payload {json_type},
+                response_metadata {json_type},
+                created_at {timestamp_type} NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at {timestamp_type} NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE SET NULL
+            )
+            """
+        )
+    for index_name, column_name in (
+        ("ix_llm_call_logs_project_id", "project_id"),
+        ("ix_llm_call_logs_project_name", "project_name"),
+        ("ix_llm_call_logs_task_id", "task_id"),
+        ("ix_llm_call_logs_function_name", "function_name"),
+        ("ix_llm_call_logs_model_name", "model_name"),
+        ("ix_llm_call_logs_status", "status"),
+        ("ix_llm_call_logs_created_at", "created_at"),
+    ):
+        conn.exec_driver_sql(f"CREATE INDEX IF NOT EXISTS {index_name} ON llm_call_logs ({column_name})")
+
+
 MIGRATIONS: list[tuple[str, str, MigrationFn]] = [
     (
         "20260609_0001",
@@ -203,6 +251,11 @@ MIGRATIONS: list[tuple[str, str, MigrationFn]] = [
         "20260609_0002",
         "add project continuity compatibility version fields",
         _migration_20260609_0002,
+    ),
+    (
+        "20260610_0003",
+        "create llm call logs table",
+        _migration_20260610_0003,
     ),
 ]
 

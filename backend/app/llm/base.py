@@ -8,7 +8,10 @@ class LLMResponse:
     content: str
     model: str
     tokens_used: int = 0
+    input_tokens: int = 0
+    output_tokens: int = 0
     finish_reason: str = ""
+    metadata: dict = field(default_factory=dict)
 
 
 @dataclass

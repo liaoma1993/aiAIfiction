@@ -8,6 +8,7 @@ from app.models.llm_provider import LLMProvider
 from app.api.deps import get_current_user
 from app.llm import async_refresh_provider_cache, _provider_from_config
 from app.llm.base import LLMMessage
+from app.services.llm_call_logger import llm_call_context
 
 router = APIRouter(prefix="/providers", tags=["providers"])
 
@@ -97,7 +98,8 @@ async def test_provider(provider_id: str, user: User = Depends(get_current_user)
             "api_key": provider.api_key,
             "base_url": provider.base_url,
         })
-        resp = await llm.chat([LLMMessage(role="user", content="回复 ok")], max_tokens=8)
+        with llm_call_context(function_name="test_provider", project_name="模型管理"):
+            resp = await llm.chat([LLMMessage(role="user", content="回复 ok")], max_tokens=8)
         return {"success": True, "model": resp.model or provider.model, "reply": resp.content[:50]}
     except Exception as e:
         return {"success": False, "error": str(e)}

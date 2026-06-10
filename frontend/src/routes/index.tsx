@@ -18,6 +18,7 @@ import QualityDashboardPage from '@/pages/QualityDashboardPage';
 import LoginPage from '@/pages/LoginPage';
 import NotFoundPage from '@/pages/NotFoundPage';
 import ProvidersPage from '@/pages/ProvidersPage';
+import LLMCallLogsPage from '@/pages/LLMCallLogsPage';
 import WritingStyleSkillsPage from '@/pages/WritingStyleSkillsPage';
 
 export const router = createBrowserRouter([
@@ -48,6 +49,7 @@ export const router = createBrowserRouter([
         ],
       },
       { path: '/settings/providers', element: <ProvidersPage /> },
+      { path: '/settings/llm-call-logs', element: <LLMCallLogsPage /> },
       { path: '*', element: <NotFoundPage /> },
     ],
   },
