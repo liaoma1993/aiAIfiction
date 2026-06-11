@@ -601,6 +601,26 @@ const arcQualityFor = (volume: any, arcIndex: number) => {
   return check?.quality_gate || check?.bridge_check || check;
 };
 
+const arcQualityIssues = (quality: any) => (
+  Array.isArray(quality?.related_issues) ? quality.related_issues
+    : Array.isArray(quality?.issues) ? quality.issues
+      : quality?.needs_repair ? [{ issue: quality.quality_gate?.related_issues?.[0]?.issue || '需要补齐弧线交接、变化台阶或因果链' }]
+        : []
+);
+
+const arcContinuityRepairInstruction = (quality: any, arc: any) => {
+  const issues = arcQualityIssues(quality).map((item: any) => item.issue || item.description || '').filter(Boolean);
+  const issueText = issues.length ? issues.join('；') : '这条弧线可能缺少清晰交接、变化台阶或因果链。';
+  return [
+    '请只修复这条弧线的连续性结构，不要改变本卷主线目标、章节范围和弧线核心功能。',
+    `当前质量问题：${issueText}`,
+    '必须补齐或重写：handoff_from_previous、handoff_to_next、opening_state、ending_state、continuity_chain、arc_steps。',
+    'arc_steps 必须有 4-7 个变化台阶，每个台阶写清 starting_state、trigger_event、visible_action、friction、state_change、consequence、carry_forward。',
+    '交接物必须具体到可写进正文的东西，例如物件、伤势、承诺、误会、秘密、债务、追兵、时间限制或一句话。',
+    `当前弧线：${arc?.name || ''}`,
+  ].join('\n');
+};
+
 const chapterGate = (chapter: any) => (
   chapter?.blueprint?.blueprint_quality_gate || chapter?.continuity_checks?.blueprint_quality_gate || null
 );
@@ -1321,7 +1341,7 @@ export default function WorkbenchPage() {
     } catch (e: any) { message.error(e.message || '失败'); setExpandLoading(null); }
   };
 
-  const reviseVolumeArc = async (vol: any, arcIndex: number, action: string) => {
+  const reviseVolumeArc = async (vol: any, arcIndex: number, action: string, customInstruction?: string) => {
     if (!projectId) return;
     const key = `${vol.id}-revise-${arcIndex}-${action}`;
     setExpandLoading(key);
@@ -1329,11 +1349,11 @@ export default function WorkbenchPage() {
       const res = await api.post(`/projects/${projectId}/wizard/revise-volume-arc/${vol.id}`, {
         arc_index: arcIndex,
         action,
-        instruction: action === '拉长'
+        instruction: customInstruction || (action === '拉长'
           ? '拉长人物反应、误判、铺垫和余波，让这条弧线更适合长篇连载。'
           : action === '压缩'
             ? '删掉可省略过渡，保留核心冲突、关键转折和必要承接。'
-            : '重新设计这条弧线的冲突链、质变点、伏笔计划和角色变化，保持前后承接。',
+            : '重新设计这条弧线的冲突链、质变点、伏笔计划和角色变化，保持前后承接。'),
       });
       await pollTask(res.data.task_id, 90);
       const vols = await volumeApi.list(projectId);
@@ -1620,7 +1640,32 @@ export default function WorkbenchPage() {
                                           showIcon
                                           style={{ marginBottom: 8 }}
                                           message="弧线连续性需要检查"
-                                          description={(quality.related_issues || []).map((x: any) => x.issue).join('；') || '这条弧线可能缺少清晰交接、台阶或因果链。'}
+                                          description={(
+                                            <div>
+                                              <div style={{ marginBottom: 8 }}>
+                                                {arcQualityIssues(quality).map((x: any, idx: number) => (
+                                                  <Tag key={idx} color="orange" style={{ marginBottom: 4 }}>
+                                                    {x.field ? `${x.field}：` : ''}{x.issue || x.description || '连续性风险'}
+                                                  </Tag>
+                                                ))}
+                                                {arcQualityIssues(quality).length === 0 && '这条弧线可能缺少清晰交接、变化台阶或因果链。'}
+                                              </div>
+                                              <Space size={8} wrap>
+                                                <Button
+                                                  size="small"
+                                                  type="primary"
+                                                  loading={expandLoading === `${v.id}-revise-${ai}-修复连续性`}
+                                                  onClick={(e) => {
+                                                    e.stopPropagation();
+                                                    reviseVolumeArc(v, ai, '修复连续性', arcContinuityRepairInstruction(quality, arc));
+                                                  }}
+                                                >
+                                                  按连续性修复
+                                                </Button>
+                                                <Text type="secondary">修复后会重新计算弧线质量，再决定是否适合展开章节。</Text>
+                                              </Space>
+                                            </div>
+                                          )}
                                         />
                                       )}
                                       <div className="arc-actionbar">

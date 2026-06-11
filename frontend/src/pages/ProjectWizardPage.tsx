@@ -104,12 +104,22 @@ export default function ProjectWizardPage() {
     updateProject({ wizard_step: next });
   };
 
+  const goToStep = async (target: number) => {
+    const maxReached = project?.wizard_step || 0;
+    if (target > maxReached) {
+      message.warning('请先完成前面的步骤');
+      return;
+    }
+    setStep(target);
+    await updateProject({ wizard_step: target });
+  };
+
   if (loading) return <div style={{ padding: 48, textAlign: 'center' }}><Spin size="large" /></div>;
   if (!project) return <div style={{ padding: 48, textAlign: 'center' }}>项目不存在</div>;
 
   return (
     <div style={{ maxWidth: 900, margin: '0 auto', padding: '32px 24px' }}>
-      <Steps current={step} style={{ marginBottom: 40 }}
+      <Steps current={step} onChange={goToStep} style={{ marginBottom: 40 }}
         items={[
           { title: '📖 故事设定', description: 'AI 生成书名梗概' },
           { title: '🌍 世界观', description: 'AI 生成六维设定' },

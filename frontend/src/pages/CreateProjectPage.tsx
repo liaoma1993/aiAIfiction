@@ -46,9 +46,43 @@ const appendInputText = (current: string, addition: string) => {
   return base ? `${base}\n${next}` : next;
 };
 
+const structuredText = (value: any): string => {
+  if (value === undefined || value === null) return '';
+  if (typeof value === 'string') return value.trim();
+  if (Array.isArray(value)) return value.map(structuredText).filter(Boolean).join('；');
+  if (typeof value === 'object') {
+    const labels: Record<string, string> = {
+      stage: '阶段',
+      title: '标题',
+      goal: '目标',
+      pressure_upgrade: '压力升级',
+      protagonist_change: '主角变化',
+      hook: '钩子',
+      event: '事件',
+      protagonist_action: '行动',
+      obstacle: '阻力',
+      payoff: '反馈',
+      carry_forward: '后续',
+      name: '名称',
+      description: '说明',
+      plant_stage: '埋设',
+      reveal_stage: '回收',
+      payoff_type: '兑现',
+    };
+    return Object.entries(value)
+      .map(([key, item]) => {
+        const text = structuredText(item);
+        return text ? `${labels[key] || key}：${text}` : '';
+      })
+      .filter(Boolean)
+      .join('；');
+  }
+  return String(value).trim();
+};
+
 const asTextList = (value: any): string[] => {
   if (Array.isArray(value)) {
-    return value.map((item) => typeof item === 'string' ? item : JSON.stringify(item)).filter(Boolean);
+    return value.map(structuredText).filter(Boolean);
   }
   return typeof value === 'string' && value.trim() ? [value.trim()] : [];
 };
@@ -85,6 +119,76 @@ const renderEventChainItem = (item: any, i: number) => {
       <Text type="secondary" style={{ marginRight: 6 }}>{i + 1}.</Text>
       <span>{parts.join('；')}</span>
     </List.Item>
+  );
+};
+
+const renderStagePlanItem = (item: any, i: number) => {
+  if (!item || typeof item !== 'object') {
+    return (
+      <List.Item style={{ padding: '8px 0' }}>
+        <Text type="secondary" style={{ marginRight: 6 }}>{i + 1}.</Text>{String(item)}
+      </List.Item>
+    );
+  }
+  const stageTitle = item.stage || item.title || `阶段 ${i + 1}`;
+  const rows = [
+    ['目标', item.goal],
+    ['压力升级', item.pressure_upgrade],
+    ['主角变化', item.protagonist_change],
+    ['阶段钩子', item.hook],
+  ].filter(([, value]) => value);
+  return (
+    <List.Item style={{ padding: '8px 0' }}>
+      <div style={{ width: '100%', borderLeft: '3px solid #1677ff', padding: '6px 0 6px 12px', background: 'rgba(22, 119, 255, 0.04)' }}>
+        <Text strong>{i + 1}. {stageTitle}</Text>
+        <div style={{ marginTop: 6 }}>
+          {rows.map(([label, value]) => (
+            <Paragraph key={label} style={{ marginBottom: 4, lineHeight: 1.7 }}>
+              <Text type="secondary">{label}：</Text>{structuredText(value)}
+            </Paragraph>
+          ))}
+        </div>
+      </div>
+    </List.Item>
+  );
+};
+
+const renderWrappedTextList = (items: any[], accent: 'blue' | 'purple' | 'green' | 'orange' = 'blue') => {
+  const borderColor = {
+    blue: '#1677ff',
+    purple: '#722ed1',
+    green: '#52c41a',
+    orange: '#fa8c16',
+  }[accent];
+  const background = {
+    blue: 'rgba(22, 119, 255, 0.04)',
+    purple: 'rgba(114, 46, 209, 0.04)',
+    green: 'rgba(82, 196, 26, 0.05)',
+    orange: 'rgba(250, 140, 22, 0.05)',
+  }[accent];
+  return (
+    <List
+      size="small"
+      dataSource={items}
+      renderItem={(item, i) => (
+        <List.Item style={{ padding: '6px 0' }}>
+          <div style={{
+            width: '100%',
+            minWidth: 0,
+            borderLeft: `3px solid ${borderColor}`,
+            background,
+            padding: '6px 10px',
+            lineHeight: 1.7,
+            whiteSpace: 'pre-wrap',
+            overflowWrap: 'anywhere',
+            wordBreak: 'break-word',
+          }}>
+            <Text type="secondary" style={{ marginRight: 6 }}>{i + 1}.</Text>
+            {structuredText(item)}
+          </div>
+        </List.Item>
+      )}
+    />
   );
 };
 
@@ -575,7 +679,7 @@ export default function CreateProjectPage() {
                 )}
                 {asTextList(currentDraft.boundary_locks).length > 0 && (
                   <DraftSection title="边界锁定">
-                    {asTextList(currentDraft.boundary_locks).map((item, i) => <Tag key={i} style={{ marginBottom: 6 }}>{item}</Tag>)}
+                    {renderWrappedTextList(currentDraft.boundary_locks || [], 'orange')}
                   </DraftSection>
                 )}
                 {currentDraft.long_term_plan?.endgame && (
@@ -583,18 +687,18 @@ export default function CreateProjectPage() {
                     <Paragraph style={{ whiteSpace: 'pre-wrap', marginBottom: 0 }}>{currentDraft.long_term_plan.endgame}</Paragraph>
                   </DraftSection>
                 )}
-                {asTextList(currentDraft.long_term_plan?.stage_plan).length > 0 && (
+                {Array.isArray(currentDraft.long_term_plan?.stage_plan) && currentDraft.long_term_plan.stage_plan.length > 0 && (
                   <DraftSection title="长线阶段">
                     <List
                       size="small"
-                      dataSource={asTextList(currentDraft.long_term_plan?.stage_plan)}
-                      renderItem={(item, i) => <List.Item style={{ padding: '4px 0' }}><Text type="secondary">{i + 1}. </Text>{item}</List.Item>}
+                      dataSource={currentDraft.long_term_plan.stage_plan}
+                      renderItem={renderStagePlanItem}
                     />
                   </DraftSection>
                 )}
                 {asTextList(currentDraft.long_term_plan?.foreshadowing_payoffs).length > 0 && (
                   <DraftSection title="伏笔回收">
-                    {asTextList(currentDraft.long_term_plan?.foreshadowing_payoffs).map((item, i) => <Tag key={i} style={{ marginBottom: 6 }}>{item}</Tag>)}
+                    {renderWrappedTextList(currentDraft.long_term_plan?.foreshadowing_payoffs || [], 'purple')}
                   </DraftSection>
                 )}
                 {currentDraft.open_questions?.length > 0 && (

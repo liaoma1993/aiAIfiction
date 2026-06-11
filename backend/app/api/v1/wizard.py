@@ -292,12 +292,61 @@ def _as_string_list(value, limit: int = 10) -> list[str]:
         return []
     items: list[str] = []
     for item in value:
-        text = str(item).strip()
+        text = _planning_value_text(item).strip()
         if text:
             items.append(text)
         if len(items) >= limit:
             break
     return items
+
+
+def _planning_value_text(value) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value.strip()
+    if isinstance(value, list):
+        return "；".join(_planning_value_text(x) for x in value if _planning_value_text(x))
+    if isinstance(value, dict):
+        labels = {
+            "stage": "阶段",
+            "title": "标题",
+            "goal": "目标",
+            "pressure_upgrade": "压力升级",
+            "protagonist_change": "主角变化",
+            "hook": "钩子",
+            "event": "事件",
+            "protagonist_action": "主角行动",
+            "obstacle": "阻力",
+            "payoff": "反馈",
+            "carry_forward": "后续承接",
+            "name": "名称",
+            "description": "说明",
+            "plant_stage": "埋设",
+            "reveal_stage": "回收",
+            "payoff_type": "兑现方式",
+        }
+        parts = []
+        for key, item in value.items():
+            text = _planning_value_text(item)
+            if text:
+                parts.append(f"{labels.get(key, key)}：{text}")
+        return "；".join(parts)
+    return str(value).strip()
+
+
+def _format_stage_plan_item(item, idx: int) -> str:
+    if not isinstance(item, dict):
+        return _planning_value_text(item)
+    title = item.get("stage") or item.get("title") or f"阶段{idx + 1}"
+    fields = [
+        ("goal", "目标"),
+        ("pressure_upgrade", "压力升级"),
+        ("protagonist_change", "主角变化"),
+        ("hook", "阶段钩子"),
+    ]
+    details = [f"{label}：{_planning_value_text(item.get(key))}" for key, label in fields if item.get(key)]
+    return f"{idx + 1}. {title}" + ("；" + "；".join(details) if details else "")
 
 
 def _build_wizard_planning_memory(messages: list[dict], selected_draft: dict, suggestions: list[dict]) -> dict:
@@ -376,7 +425,7 @@ def _format_type_model(type_model: dict, prefix: str = "") -> list[str]:
     ]
 
 
-def _format_wizard_planning_memory(project: Project, limit: int = 2400) -> str:
+def _format_wizard_planning_memory(project: Project, limit: int = 14000) -> str:
     style = project.writing_style or {}
     memory = style.get("wizard_planning_memory") if isinstance(style, dict) else {}
     if not isinstance(memory, dict) or not memory:
@@ -415,7 +464,7 @@ def _format_wizard_planning_memory(project: Project, limit: int = 2400) -> str:
         early_event_chain = selected.get("early_event_chain") or []
         if isinstance(early_event_chain, list) and early_event_chain:
             event_parts = []
-            for item in early_event_chain[:5]:
+            for item in early_event_chain:
                 if isinstance(item, dict):
                     event_parts.append(
                         " / ".join(str(x) for x in [
@@ -430,9 +479,20 @@ def _format_wizard_planning_memory(project: Project, limit: int = 2400) -> str:
                     event_parts.append(str(item))
             if event_parts:
                 parts.append("第一批具体事件链：" + "；".join(_clip_planning_text(x, 220) for x in event_parts))
+        readability_gate = selected.get("readability_gate") or {}
+        if isinstance(readability_gate, dict) and readability_gate:
+            gate_parts = []
+            if readability_gate.get("passed") is not None:
+                gate_parts.append(f"是否通过：{readability_gate.get('passed')}")
+            if readability_gate.get("risks"):
+                gate_parts.append("风险：" + _planning_value_text(readability_gate.get("risks")))
+            if readability_gate.get("fix_strategy"):
+                gate_parts.append("修复策略：" + _planning_value_text(readability_gate.get("fix_strategy")))
+            if gate_parts:
+                parts.append("可读性闸门：" + "；".join(gate_parts))
         boundary_locks = selected.get("boundary_locks") or []
         if boundary_locks:
-            parts.append("边界锁定：" + "；".join(str(x) for x in boundary_locks[:8]))
+            parts.append("边界锁定：" + "；".join(_planning_value_text(x) for x in boundary_locks))
         if selected.get("brief"):
             parts.append(f"草案：{_clip_planning_text(selected.get('brief'), 900)}")
         long_term_plan = selected.get("long_term_plan") or {}
@@ -441,13 +501,16 @@ def _format_wizard_planning_memory(project: Project, limit: int = 2400) -> str:
                 parts.append(f"终局指向：{_clip_planning_text(long_term_plan.get('endgame'), 400)}")
             stage_plan = long_term_plan.get("stage_plan") or []
             if stage_plan:
-                parts.append("长线阶段：" + "；".join(_clip_planning_text(str(x), 260) for x in stage_plan[:8]))
+                parts.append("长线阶段：\n" + "\n".join(_format_stage_plan_item(x, idx) for idx, x in enumerate(stage_plan)))
             payoffs = long_term_plan.get("foreshadowing_payoffs") or []
             if payoffs:
-                parts.append("伏笔回收：" + "；".join(_clip_planning_text(str(x), 180) for x in payoffs[:6]))
+                parts.append("伏笔回收：" + "；".join(_planning_value_text(x) for x in payoffs))
         tags = selected.get("tags") or []
         if tags:
-            parts.append("风格标签：" + "、".join(str(x) for x in tags[:10]))
+            parts.append("风格标签：" + "、".join(str(x) for x in tags))
+        open_questions = selected.get("open_questions") or []
+        if open_questions:
+            parts.append("未确认问题：" + "；".join(_planning_value_text(x) for x in open_questions))
     user_messages = [
         _clip_planning_text(item.get("content", ""), 220)
         for item in (memory.get("messages") or [])
@@ -464,8 +527,8 @@ def _world_rule_defaults_from_project(project: Project) -> dict:
     selected = _selected_draft_from_project(project)
     tone_profile = _draft_meta_from_style(style if isinstance(style, dict) else {}, "tone_profile")
     type_model = _draft_meta_from_style(style if isinstance(style, dict) else {}, "type_model")
-    boundary_locks = _as_string_list(selected.get("boundary_locks"), 8)
-    tags = _as_string_list(selected.get("tags"), 8)
+    boundary_locks = _as_string_list(selected.get("boundary_locks"), 50)
+    tags = _as_string_list(selected.get("tags"), 50)
     hard_rules = []
     if selected.get("core_engine"):
         hard_rules.append(f"核心引擎不能偏离：{selected.get('core_engine')}")
@@ -486,14 +549,14 @@ def _world_rule_defaults_from_project(project: Project) -> dict:
     if isinstance(long_term_plan, dict) and long_term_plan.get("endgame"):
         constraints.append(f"后续发展不能偏离终局指向：{long_term_plan.get('endgame')}")
     return {
-        "hard_rules": hard_rules[:10],
-        "tone_rules": tone_rules[:8],
-        "constraints": constraints[:8],
+        "hard_rules": hard_rules[:50],
+        "tone_rules": tone_rules[:30],
+        "constraints": constraints[:30],
     }
 
 
-def _wizard_story_brief(project: Project, limit: int = 5000) -> str:
-    planning = _format_wizard_planning_memory(project, 3200)
+def _wizard_story_brief(project: Project, limit: int = 20000) -> str:
+    planning = _format_wizard_planning_memory(project, 14000)
     brief = project.story_brief or ""
     return _clip_planning_text(f"{brief}\n\n{planning}" if planning else brief, limit)
 
@@ -2984,7 +3047,24 @@ async def _do_revise_volume_arc(project_id: str, volume_id: str, arc_index: int,
         revised = arcs[arc_index]
         volume.narrative_arcs = arcs
         volume.arc_continuity_index = _build_arc_continuity_index(arcs)
-        volume.arc_bridge_checks = _build_arc_bridge_checks(arcs)
+        arc_quality = _score_arc_quality(arcs)
+        bridge_checks = _build_arc_bridge_checks(arcs)
+        for check in bridge_checks:
+            check["quality_gate"] = {
+                "score": arc_quality["score"],
+                "passed": arc_quality["passed"],
+                "related_issues": [i for i in arc_quality["issues"] if i.get("arc_index") == check.get("arc_index")],
+            }
+        volume.arc_bridge_checks = bridge_checks
+        if project:
+            notes = project.continuity_upgrade_notes or {}
+            notes["last_arc_quality"] = arc_quality
+            notes["last_arc_revise"] = {
+                "volume_id": volume_id,
+                "arc_index": arc_index,
+                "action": action,
+            }
+            project.continuity_upgrade_notes = notes
         await db.commit()
 
     chapters_result = None
@@ -3008,6 +3088,7 @@ async def _do_revise_volume_arc(project_id: str, volume_id: str, arc_index: int,
     return {
         "arc": revised,
         "arc_index": arc_index,
+        "arc_quality": arc_quality,
         "regenerated_chapters": bool(regenerate_chapters),
         "chapters": chapters_result,
     }
