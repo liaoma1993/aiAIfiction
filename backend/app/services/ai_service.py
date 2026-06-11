@@ -2231,7 +2231,7 @@ class AIService:
         writing_style_guidance: str = "未启用写作风格 Skill，按本卷大纲和通用网文写法拆分。",
         volume_continuity_context: str = "无",
     ) -> list[dict]:
-        return await self._ask_list(EXPAND_VOLUME_ARCS_PROMPT, system=SYSTEM_ARCHITECT, max_tokens=1280000,
+        return await self._ask_list(EXPAND_VOLUME_ARCS_PROMPT, system=SYSTEM_ARCHITECT, max_tokens=393216,
             title=title, genre=genre,
             volume_title=volume_title, volume_outline=volume_outline,
             characters_summary=characters_summary, factions_summary=factions_summary,
