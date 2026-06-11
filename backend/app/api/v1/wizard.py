@@ -1963,6 +1963,45 @@ async def _run_prewrite_diagnosis(
     )
 
 
+def _format_prewrite_diagnosis_guidance(diagnosis: dict | None) -> str:
+    if not isinstance(diagnosis, dict):
+        return ""
+    blocking = diagnosis.get("blocking_issues") if isinstance(diagnosis.get("blocking_issues"), list) else []
+    warnings = diagnosis.get("soft_warnings") if isinstance(diagnosis.get("soft_warnings"), list) else []
+    must_fix = diagnosis.get("must_fix_before_write") if isinstance(diagnosis.get("must_fix_before_write"), list) else []
+    safe_start = diagnosis.get("safe_starting_point") or ""
+    if not blocking and not warnings and not must_fix and not safe_start:
+        return ""
+    parts = ["【写作前置诊断修复要求】"]
+    if blocking:
+        parts.append("系统发现以下连续性缺口，本次写正文必须先修复，不能忽略：")
+        for idx, item in enumerate(blocking[:5], start=1):
+            if isinstance(item, dict):
+                parts.append(f"{idx}. 类型：{item.get('type', 'blocking')}；问题：{item.get('problem', '')}；修复：{item.get('fix', '')}")
+            else:
+                parts.append(f"{idx}. {item}")
+    if must_fix:
+        parts.append("写正文前必须落实：")
+        parts.extend([f"- {x}" for x in must_fix[:6]])
+    if safe_start:
+        parts.append(f"建议开场落点：{safe_start}")
+    if warnings:
+        parts.append("软提醒：")
+        for idx, item in enumerate(warnings[:4], start=1):
+            if isinstance(item, dict):
+                parts.append(f"{idx}. {item.get('problem', '')}；建议：{item.get('fix', '')}")
+            else:
+                parts.append(f"{idx}. {item}")
+    parts.append("执行规则：正文开场必须接住上述缺口，再推进原章节蓝图；不得把诊断内容写成旁白说明或列表。")
+    return "\n".join(p for p in parts if p)
+
+
+def _prewrite_should_block(controls: dict | None) -> bool:
+    if not isinstance(controls, dict):
+        return False
+    return bool(controls.get("strict_prewrite_check") or controls.get("block_on_prewrite_failure"))
+
+
 async def _extract_and_apply_state(db: AsyncSession, project_id: str, chapter: Chapter, content: str) -> dict:
     bible = await build_story_bible(db, project_id, chapter.id)
     context = await build_generation_context(db, project_id, chapter.id)
@@ -2122,6 +2161,7 @@ async def _do_write_chapter(project_id: str, chapter_id: str, mode: str = "appen
             await _generate_chapter_blueprint(db, project_id, chapter, prev_chapter, vol)
         context = await build_generation_context(db, project_id, chapter.id)
         ai = AIService()
+        prewrite_guidance = ""
         if controls.get("auto_prewrite_check", True):
             diagnosis = await _run_prewrite_diagnosis(
                 ai,
@@ -2137,13 +2177,19 @@ async def _do_write_chapter(project_id: str, chapter_id: str, mode: str = "appen
             checks["prewrite_diagnosis"] = diagnosis
             chapter.continuity_checks = checks
             if diagnosis.get("can_write") is False and diagnosis.get("blocking_issues"):
-                await db.commit()
-                raise RuntimeError(f"写作前置诊断未通过：{json.dumps(diagnosis.get('blocking_issues'), ensure_ascii=False)[:500]}")
+                prewrite_guidance = _format_prewrite_diagnosis_guidance(diagnosis)
+                checks["prewrite_diagnosis_action"] = "injected_into_writing_prompt"
+                chapter.continuity_checks = checks
+                if _prewrite_should_block(controls):
+                    await db.commit()
+                    raise RuntimeError(f"写作前置诊断未通过：{json.dumps(diagnosis.get('blocking_issues'), ensure_ascii=False)[:500]}")
         if controls:
             extra = "；".join([f"{k}:{v}" for k, v in controls.items() if v not in [None, ""]])
             chapter_summary = f"{chapter.summary or ''}\n\n【本次写作控制】{extra}\n{_writing_controls_guidance(controls)}\n【用户要求】{instruction or '无'}"
         else:
             chapter_summary = chapter.summary or instruction or ""
+        if prewrite_guidance:
+            chapter_summary = f"{chapter_summary}\n\n{prewrite_guidance}"
         chapter_summary = f"{chapter_summary}\n\n【章节连贯性硬约束】\n{_format_chapter_continuity_payload(chapter)}"
         if bridge_context and arc_idx > 0:
             chapter_summary = f"{chapter_summary}\n\n【跨弧线桥接要求】\n{bridge_context}"
@@ -2790,6 +2836,7 @@ async def _do_batch_write_arc(project_id: str, volume_id: str, arc_index: int, t
                 await _generate_chapter_blueprint(db, project_id, ch, None, volume)
             if arc_bridge_context and isinstance(ch.blueprint, dict):
                 ch.blueprint["arc_bridge_context"] = arc_bridge_context
+            prewrite_guidance = ""
             if write_controls.get("auto_prewrite_check", True):
                 diagnosis = await _run_prewrite_diagnosis(
                     ai,
@@ -2805,7 +2852,11 @@ async def _do_batch_write_arc(project_id: str, volume_id: str, arc_index: int, t
                 checks["prewrite_diagnosis"] = diagnosis
                 ch.continuity_checks = checks
                 if diagnosis.get("can_write") is False and diagnosis.get("blocking_issues"):
-                    raise RuntimeError(f"第{ch.chapter_number}章写作前置诊断未通过：{json.dumps(diagnosis.get('blocking_issues'), ensure_ascii=False)[:500]}")
+                    prewrite_guidance = _format_prewrite_diagnosis_guidance(diagnosis)
+                    checks["prewrite_diagnosis_action"] = "injected_into_writing_prompt"
+                    ch.continuity_checks = checks
+                    if _prewrite_should_block(write_controls):
+                        raise RuntimeError(f"第{ch.chapter_number}章写作前置诊断未通过：{json.dumps(diagnosis.get('blocking_issues'), ensure_ascii=False)[:500]}")
 
             pov_char = "主角"
             if ch.characters_in_chapter:
@@ -2813,7 +2864,7 @@ async def _do_batch_write_arc(project_id: str, volume_id: str, arc_index: int, t
 
             text, hook, new_characters = await ai.write_chapter(
                 project.title, project.genre, _wizard_story_brief(project),
-                ch.chapter_number, ch.title or "", f"{ch.summary or ''}\n\n【本次写作控制】\n{_writing_controls_guidance(write_controls)}\n\n【章节连贯性硬约束】\n{_format_chapter_continuity_payload(ch)}",
+                ch.chapter_number, ch.title or "", f"{ch.summary or ''}\n\n{prewrite_guidance}\n\n【本次写作控制】\n{_writing_controls_guidance(write_controls)}\n\n【章节连贯性硬约束】\n{_format_chapter_continuity_payload(ch)}",
                 volume.outline or "", chars_summary, facs_summary,
                 min_words=ch.target_words or 3000, written_so_far=0,
                 previous_ending=final_ending,

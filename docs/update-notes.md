@@ -46,6 +46,20 @@
 
 本次追加更新没有数据库结构变更，不需要执行升级 SQL。
 
+### 追加更新：写作前置诊断不再默认打断任务
+
+批量写作和单章写作的前置诊断发现 `missing_handoff` 等连续性缺口时，系统不再默认抛出 `RuntimeError` 导致任务失败。
+
+新的处理方式：
+
+- 前置诊断结果仍会写入章节 `continuity_checks.prewrite_diagnosis`。
+- 如果存在阻断项，系统会把 `problem`、`fix`、`must_fix_before_write`、`safe_starting_point` 注入正文写作提示词。
+- 正文开场必须先修复诊断指出的承接缺口，再推进原章节蓝图。
+- 章节会记录 `continuity_checks.prewrite_diagnosis_action = injected_into_writing_prompt`，方便追踪。
+- 只有显式启用 `strict_prewrite_check` 或 `block_on_prewrite_failure` 时，前置诊断失败才会继续阻断写作任务。
+
+这样可以避免“诊断发现问题但没有自动修复入口，批量任务直接失败”的情况。
+
 ### 数据库升级说明
 
 本次更新没有数据库结构变更。
