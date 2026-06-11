@@ -704,6 +704,142 @@ const arcHasStructuralGaps = (quality: any, checks: any[] = []) => (
   quality?.passed === false || checks.some((item: any) => item.failed)
 );
 
+const scoreColor = (score: number) => score >= 85 ? 'green' : score >= 75 ? 'blue' : score >= 60 ? 'orange' : 'red';
+
+const volumeQualityFor = (volume: any, volumeChapters: any[] = [], project: any = null) => {
+  const arcs = Array.isArray(volume?.narrative_arcs) ? volume.narrative_arcs : [];
+  const summaryText = [volume?.summary, volume?.outline, volume?.theme].filter(Boolean).join('\n');
+  const arcStepsCount = arcs.reduce((sum: number, arc: any) => sum + (Array.isArray(arc?.arc_steps) ? arc.arc_steps.length : 0), 0);
+  const arcQuality = _scoreArcQualityForVolume(arcs, volume);
+  const chapterTarget = Number(volume?.chapter_count || volume?.chapter_range_end - volume?.chapter_range_start + 1 || 0);
+  const chapterCapacityRatio = chapterTarget > 0 ? Math.min(1, arcStepsCount / Math.max(4, Math.ceil(chapterTarget / 2))) : (arcStepsCount ? 1 : 0);
+  const hasForeshadowing = arcs.some((arc: any) => Array.isArray(arc?.foreshadowing_plan) && arc.foreshadowing_plan.length > 0);
+  const hasCharacterOrFactionPlan = arcs.some((arc: any) => (
+    (Array.isArray(arc?.character_introduction_plan) && arc.character_introduction_plan.length > 0)
+    || (Array.isArray(arc?.character_focus) && arc.character_focus.length > 0)
+    || (Array.isArray(arc?.faction_introduction_plan) && arc.faction_introduction_plan.length > 0)
+    || (Array.isArray(arc?.faction_focus) && arc.faction_focus.length > 0)
+  ));
+  const lastArc = arcs[arcs.length - 1] || {};
+  const dimensions = [
+    {
+      key: 'volume_goal',
+      label: '卷目标',
+      score: summaryText.length >= 80 ? 90 : summaryText.length >= 30 ? 74 : 45,
+      help: '这一卷是否有明确阶段目标、主要看点和阶段承诺。',
+      issue: '卷目标偏虚，需要写清这一卷主角要完成什么。',
+      action: '修复卷目标',
+    },
+    {
+      key: 'pressure_upgrade',
+      label: '压力升级',
+      score: arcs.length >= 3 && arcs.filter((arc: any) => arc?.tension_curve || arc?.handoff_to_next || arc?.payoff_for_next).length >= Math.max(2, arcs.length - 1) ? 86 : arcs.length >= 2 ? 68 : 42,
+      help: '本卷压力是否从开局到中段、卷末逐步变强。',
+      issue: '压力升级不够清楚，容易变成事件平铺。',
+      action: '补强压力升级',
+    },
+    {
+      key: 'arc_chain',
+      label: '弧线链',
+      score: arcQuality.score,
+      help: '本卷弧线之间是否有上承下启、接收物和交出物。',
+      issue: '弧线链存在断点，需要优化前后交接。',
+      action: '优化弧线链',
+    },
+    {
+      key: 'protagonist_change',
+      label: '主角变化',
+      score: arcs.some((arc: any) => arc?.protagonist_change) ? 84 : 58,
+      help: '卷末主角是否产生身份、资源、认知、关系或能力变化。',
+      issue: '主角阶段变化不够明确。',
+      action: '补主角阶段变化',
+    },
+    {
+      key: 'chapter_capacity',
+      label: '章节承载',
+      score: arcs.length === 0 ? 35 : Math.round(55 + chapterCapacityRatio * 35),
+      help: '弧线数量和变化台阶是否足够支撑本卷章节数。',
+      issue: '变化台阶偏少，展开章节后可能水或散。',
+      action: '补变化台阶',
+    },
+    {
+      key: 'foreshadowing',
+      label: '伏笔安排',
+      score: hasForeshadowing ? 82 : 62,
+      help: '本卷是否安排伏笔铺设、推进或阶段回收。',
+      issue: '伏笔安排偏弱，建议补铺设/推进/回收。',
+      action: '补伏笔安排',
+    },
+    {
+      key: 'ending_hook',
+      label: '卷末钩子',
+      score: lastArc?.handoff_to_next || lastArc?.payoff_for_next || lastArc?.ending_state ? 86 : 48,
+      help: '卷末是否解决本卷问题，并交出下一卷的新压力。',
+      issue: '卷末钩子不清楚，下一卷入口偏弱。',
+      action: '补卷末钩子',
+    },
+    {
+      key: 'role_faction_usage',
+      label: '角色势力',
+      score: hasCharacterOrFactionPlan ? 82 : 66,
+      help: '本卷关键角色和势力是否真正承担行动功能。',
+      issue: '角色/势力使用偏弱，容易只停留在设定名词。',
+      action: '补角色势力功能',
+    },
+    {
+      key: 'style_alignment',
+      label: '风格承接',
+      score: project?.writing_style?.tone_profile || project?.writing_style?.type_model ? 82 : 72,
+      help: '本卷是否承接项目创建时的题材模型和总体风格。',
+      issue: '建议在卷概要里明确承接项目总体风格和题材爽点。',
+      action: '补风格承接',
+    },
+  ];
+  const score = Math.max(0, Math.min(100, Math.round(dimensions.reduce((sum, item) => sum + item.score, 0) / dimensions.length)));
+  const issues = dimensions.filter((item) => item.score < 60).map((item) => ({ field: item.key, issue: item.issue, action: item.action }));
+  const warnings = dimensions.filter((item) => item.score >= 60 && item.score < 75).map((item) => ({ field: item.key, issue: item.issue, action: item.action }));
+  return {
+    score,
+    passed: score >= 75 && issues.length === 0,
+    color: scoreColor(score),
+    label: score >= 75 && issues.length === 0 ? `卷结构 ${score}` : `卷需优化 ${score}`,
+    dimensions,
+    issues,
+    warnings,
+    arcQuality,
+    chapterTarget,
+    arcStepsCount,
+    writtenChapters: volumeChapters.filter((ch: any) => ch.content).length,
+  };
+};
+
+const _scoreArcQualityForVolume = (arcs: any[] = [], volume: any = null) => {
+  if (!arcs.length) {
+    return { score: 35, issues: [{ field: 'narrative_arcs', issue: '本卷还没有拆出弧线' }], warnings: [] };
+  }
+  const issues: any[] = [];
+  const warnings: any[] = [];
+  arcs.forEach((arc: any, idx: number) => {
+    if (!arc?.opening_state) issues.push({ arc_index: idx, field: 'opening_state', issue: '缺少弧线开局状态' });
+    if (!arc?.ending_state) issues.push({ arc_index: idx, field: 'ending_state', issue: '缺少弧线终点状态' });
+    if (idx > 0 && !(arc?.handoff_from_previous || arc?.dependence_on_previous)) issues.push({ arc_index: idx, field: 'handoff_from_previous', issue: '缺少上承交接' });
+    if (!(arc?.handoff_to_next || arc?.payoff_for_next)) warnings.push({ arc_index: idx, field: 'handoff_to_next', issue: '下启钩子不够明确' });
+    if (!arc?.continuity_chain) issues.push({ arc_index: idx, field: 'continuity_chain', issue: '缺少因果链' });
+    if (!Array.isArray(arc?.arc_steps) || arc.arc_steps.length < 4) issues.push({ arc_index: idx, field: 'arc_steps', issue: '变化台阶少于4个' });
+  });
+  const bridgeChecks = Array.isArray(volume?.arc_bridge_checks) ? volume.arc_bridge_checks : [];
+  bridgeChecks.forEach((check: any) => {
+    const gate = check?.quality_gate || check?.bridge_check || check;
+    if (gate?.passed === false) issues.push(...arcQualityIssues(gate));
+    warnings.push(...arcQualityWarnings(gate));
+  });
+  return {
+    score: Math.max(0, 100 - issues.length * 6 - warnings.length * 3),
+    issues,
+    warnings,
+  };
+};
+
 const arcQualityChecks = (arc: any, index: number, quality: any) => {
   const issueFields = new Set(arcQualityIssues(quality).map((x: any) => x.field).filter(Boolean));
   const warningFields = new Set(arcQualityWarnings(quality).map((x: any) => x.field).filter(Boolean));
@@ -863,6 +999,8 @@ export default function WorkbenchPage() {
   const [contextPreview, setContextPreview] = useState<any>(null);
   const [worldRuleAudit, setWorldRuleAudit] = useState<any>(null);
   const [promptModules, setPromptModules] = useState<any>(null);
+  const [volumeDetailOpen, setVolumeDetailOpen] = useState(false);
+  const [volumeDetail, setVolumeDetail] = useState<any>(null);
   const [arcDetailOpen, setArcDetailOpen] = useState(false);
   const [arcDetail, setArcDetail] = useState<any>(null);
   const [impactModalOpen, setImpactModalOpen] = useState(false);
@@ -1358,6 +1496,36 @@ export default function WorkbenchPage() {
     setArcDetailOpen(true);
   };
 
+  const openVolumeDetail = (volume: any) => {
+    setVolumeDetail(volume);
+    setVolumeDetailOpen(true);
+  };
+
+  const openVolumeContext = (volume: any) => {
+    if (!projectId || !volume?.id) return;
+    setSystemDrawerOpen(true);
+    setSystemTab('context');
+    api.get(`/projects/${projectId}/wizard/context-preview`, { params: { volume_id: volume.id } })
+      .then((res) => setContextPreview(res.data))
+      .catch((e) => message.error(e?.response?.data?.detail || e.message || '上下文预览失败'));
+  };
+
+  const reviewVolume = async (vol: any) => {
+    if (!projectId || !vol?.id) return;
+    setReviewing(true);
+    try {
+      const res = await api.post(`/projects/${projectId}/wizard/review-volume/${vol.id}`);
+      message.loading({ content: 'AI 正在评审整卷…', key: 'review', duration: 0 });
+      const result = await pollTask(res.data.task_id, 180, 'review');
+      setReviewResult(result);
+      setReviewScope({ volumeId: vol.id, arcIndex: null, name: vol.title || `卷${vol.volume_number}` });
+      setReviewModalOpen(true);
+    } catch (e: any) {
+      message.error({ content: e.message || '评审失败', key: 'review' });
+    }
+    setReviewing(false);
+  };
+
   const openImpactAnalysis = async () => {
     if (!projectId || !currentChapter?.id) return;
     setImpactModalOpen(true);
@@ -1619,6 +1787,10 @@ export default function WorkbenchPage() {
   const detailWarnings = arcQualityWarnings(detailQuality);
   const detailHasStructuralGaps = arcHasStructuralGaps(detailQuality, detailChecks);
   const detailArcChapters = detailArc ? chapters.filter((c: any) => c.volume_id === detailVolume?.id && c.arc_name === detailArc.name) : [];
+  const activeVolumeDetail = volumeDetail ? (volumes.find((v: any) => v.id === volumeDetail.id) || volumeDetail) : null;
+  const detailVolumeChapters = activeVolumeDetail ? chapters.filter((c: any) => c.volume_id === activeVolumeDetail.id) : [];
+  const detailVolumeQuality = activeVolumeDetail ? volumeQualityFor(activeVolumeDetail, detailVolumeChapters, project) : null;
+  const detailVolumeArcs = Array.isArray(activeVolumeDetail?.narrative_arcs) ? activeVolumeDetail.narrative_arcs : [];
 
   if (loading) return <div style={{ padding: 80, textAlign: 'center' }}><Spin size="large" /></div>;
 
@@ -1665,6 +1837,7 @@ export default function WorkbenchPage() {
                 const volChs = chapters.filter((c: any) => c.volume_id === v.id);
                 const arcs = v.narrative_arcs || [];
                 const isExpanded = expandedVolume === v.id;
+                const volumeQuality = volumeQualityFor(v, volChs, project);
 
                 return (
                   <section key={v.id} className={`volume-card ${isExpanded ? 'active' : ''}`}>
@@ -1674,7 +1847,17 @@ export default function WorkbenchPage() {
                         {v.summary && <span className="volume-summary">{v.summary}</span>}
                       </span>
                       <span className="volume-meta">
+                        <Tag color={volumeQuality.color}>{volumeQuality.label}</Tag>
                         <Tag>{volChs.length}章</Tag>
+                        <Button
+                          size="small"
+                          type="text"
+                          icon={<FileSearchOutlined />}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            openVolumeDetail(v);
+                          }}
+                        />
                         <Popconfirm title="删除？" onConfirm={() => deleteVolume(v)}>
                           <Button size="small" type="text" danger icon={<DeleteOutlined />} />
                         </Popconfirm>
@@ -1683,47 +1866,34 @@ export default function WorkbenchPage() {
 
                     {isExpanded && (
                       <div className="volume-body">
-                        <div className="volume-overview-box">
-                          <div className="volume-overview-head">
-                            <Text strong>故事大概</Text>
-                            <Space size={4} wrap>
-                              <Button
-                                size="small"
-                                type="link"
-                                icon={<ThunderboltOutlined />}
-                                loading={adjustingOutline && adjustVol?.id === v.id && adjustScope === 'summary_only'}
-                                onClick={() => openAdjustOutlineModal(v, 'summary_only')}
-                              >
-                                AI调整故事大概
-                              </Button>
-                              <Button
-                                size="small"
-                                type="link"
-                                icon={<BranchesOutlined />}
-                                loading={adjustingOutline && adjustVol?.id === v.id && adjustScope === 'outline'}
-                                onClick={() => openAdjustOutlineModal(v, 'outline')}
-                              >
-                                AI调整本卷
-                              </Button>
-                              <Button
-                                size="small"
-                                type="link"
-                                icon={<FileSearchOutlined />}
-                                onClick={() => {
-                                  setSystemDrawerOpen(true);
-                                  setSystemTab('context');
-                                  api.get(`/projects/${projectId}/wizard/context-preview`, { params: { volume_id: v.id } })
-                                    .then((res) => setContextPreview(res.data))
-                                    .catch((e) => message.error(e?.response?.data?.detail || e.message || '上下文预览失败'));
-                                }}
-                              >
-                                上下文
-                              </Button>
-                            </Space>
-                          </div>
-                          <Paragraph className="volume-overview-text">
-                            {v.summary || '本卷还没有故事大概，可以先用「AI调整故事大概」生成一个更清楚的卷概要。'}
-                          </Paragraph>
+                        <div className="volume-compact-box">
+                          <Space size={[4, 4]} wrap>
+                            <Tag color={volumeQuality.color}>{volumeQuality.label}</Tag>
+                            {volumeQuality.issues.length > 0 && <Tag color="orange">问题 {volumeQuality.issues.length}</Tag>}
+                            {volumeQuality.warnings.length > 0 && <Tag color="blue">提醒 {volumeQuality.warnings.length}</Tag>}
+                            <Tag>{arcs.length} 条弧线</Tag>
+                          </Space>
+                          <Space size={4} wrap>
+                            <Button size="small" type="link" icon={<FileSearchOutlined />} onClick={() => openVolumeDetail(v)}>卷详情</Button>
+                            <Button
+                              size="small"
+                              type="link"
+                              icon={<ThunderboltOutlined />}
+                              loading={adjustingOutline && adjustVol?.id === v.id && adjustScope === 'summary_only'}
+                              onClick={() => openAdjustOutlineModal(v, 'summary_only')}
+                            >
+                              调整概要
+                            </Button>
+                            <Button
+                              size="small"
+                              type="link"
+                              icon={<BranchesOutlined />}
+                              loading={adjustingOutline && adjustVol?.id === v.id && adjustScope === 'outline'}
+                              onClick={() => openAdjustOutlineModal(v, 'outline')}
+                            >
+                              调整本卷
+                            </Button>
+                          </Space>
                         </div>
                         {!arcs.length ? (
                           <Button type="dashed" size="small" block icon={<ThunderboltOutlined />}
@@ -2499,6 +2669,158 @@ export default function WorkbenchPage() {
       </Modal>
 
       <Drawer
+        title="卷轴详情"
+        open={volumeDetailOpen}
+        onClose={() => setVolumeDetailOpen(false)}
+        width={940}
+        extra={activeVolumeDetail ? (
+          <Space size={8} wrap>
+            <Button
+              size="small"
+              icon={<ThunderboltOutlined />}
+              loading={adjustingOutline && adjustVol?.id === activeVolumeDetail.id && adjustScope === 'summary_only'}
+              onClick={() => openAdjustOutlineModal(activeVolumeDetail, 'summary_only')}
+            >
+              调整概要
+            </Button>
+            <Button
+              size="small"
+              icon={<BranchesOutlined />}
+              loading={adjustingOutline && adjustVol?.id === activeVolumeDetail.id && adjustScope === 'outline'}
+              onClick={() => openAdjustOutlineModal(activeVolumeDetail, 'outline')}
+            >
+              调整本卷
+            </Button>
+            <Button size="small" icon={<ReloadOutlined />} loading={expandLoading === activeVolumeDetail.id} onClick={() => openExpandModal(activeVolumeDetail)}>重拆弧线</Button>
+            <Button size="small" icon={<AuditOutlined />} loading={reviewing} onClick={() => reviewVolume(activeVolumeDetail)}>评审整卷</Button>
+            <Button size="small" icon={<FileSearchOutlined />} onClick={() => openVolumeContext(activeVolumeDetail)}>上下文</Button>
+          </Space>
+        ) : null}
+      >
+        {activeVolumeDetail && detailVolumeQuality ? (
+          <div className="volume-detail-drawer">
+            <div className="volume-detail-hero">
+              <div>
+                <Text type="secondary">卷{activeVolumeDetail.volume_number} · 第{activeVolumeDetail.chapter_range_start || '?'}-{activeVolumeDetail.chapter_range_end || '?'}章</Text>
+                <Title level={4}>{activeVolumeDetail.title || '未命名卷'}</Title>
+                <Space size={[6, 6]} wrap>
+                  <Tag color={detailVolumeQuality.color}>{detailVolumeQuality.label}</Tag>
+                  <Tag>{detailVolumeArcs.length} 条弧线</Tag>
+                  <Tag>{detailVolumeChapters.length} 章</Tag>
+                  <Tag>{detailVolumeQuality.writtenChapters} 章已写</Tag>
+                  <Tag>{detailVolumeQuality.arcStepsCount} 个台阶</Tag>
+                </Space>
+              </div>
+            </div>
+
+            <Alert
+              className="arc-detail-status-alert"
+              type={detailVolumeQuality.passed ? 'success' : detailVolumeQuality.issues.length ? 'warning' : 'info'}
+              showIcon
+              message={detailVolumeQuality.passed ? '卷结构可用' : detailVolumeQuality.issues.length ? '卷结构需要补强' : '卷结构有优化提醒'}
+              description="这里的分数是卷级结构分，判断整卷目标、压力升级、弧线链、章节承载和卷末钩子；它不是正文质量分。"
+            />
+
+            <div className="volume-score-grid">
+              {detailVolumeQuality.dimensions.map((item: any) => (
+                <div key={item.key} className="volume-score-card">
+                  <div className="volume-score-card-head">
+                    <Text strong>{item.label}</Text>
+                    <Tag color={scoreColor(item.score)}>{item.score}</Tag>
+                  </div>
+                  <Progress percent={item.score} size="small" showInfo={false} strokeColor={item.score >= 75 ? '#1677ff' : item.score >= 60 ? '#faad14' : '#ff4d4f'} />
+                  <Text type="secondary">{item.help}</Text>
+                </div>
+              ))}
+            </div>
+
+            {(detailVolumeQuality.issues.length > 0 || detailVolumeQuality.warnings.length > 0) && (
+              <div className="arc-detail-section">
+                <div className="arc-detail-section-title">卷级问题</div>
+                <div className="arc-detail-tags">
+                  {detailVolumeQuality.issues.map((item: any, idx: number) => (
+                    <Tag key={`issue-${idx}`} color="orange">{item.action}：{item.issue}</Tag>
+                  ))}
+                  {detailVolumeQuality.warnings.map((item: any, idx: number) => (
+                    <Tag key={`warning-${idx}`} color="blue">{item.action}：{item.issue}</Tag>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <div className="arc-detail-section">
+              <div className="arc-detail-section-title">卷轴内容</div>
+              <Descriptions size="small" bordered column={1}>
+                <Descriptions.Item label="故事大概">{renderArcValue(activeVolumeDetail.summary)}</Descriptions.Item>
+                <Descriptions.Item label="卷大纲">{renderArcValue(activeVolumeDetail.outline)}</Descriptions.Item>
+                <Descriptions.Item label="主题/阶段">{renderArcValue(activeVolumeDetail.theme)}</Descriptions.Item>
+                <Descriptions.Item label="情绪弧线">{renderArcValue(activeVolumeDetail.emotional_arc_description)}</Descriptions.Item>
+                <Descriptions.Item label="叙事线分布">{renderArcValue(activeVolumeDetail.narrative_line_distribution)}</Descriptions.Item>
+                <Descriptions.Item label="张力曲线">{renderArcValue(activeVolumeDetail.tension_curve)}</Descriptions.Item>
+              </Descriptions>
+            </div>
+
+            <div className="arc-detail-section">
+              <div className="arc-detail-section-title">弧线链</div>
+              {detailVolumeArcs.length > 0 ? (
+                <div className="volume-arc-chain">
+                  {detailVolumeArcs.map((arc: any, idx: number) => {
+                    const arcChs = detailVolumeChapters.filter((ch: any) => ch.arc_name === arc.name);
+                    const quality = arcQualityFor(activeVolumeDetail, idx);
+                    const checks = arcQualityChecks(arc, idx, quality);
+                    const status = arcQualityStatus(quality, checks);
+                    return (
+                      <div key={idx} className="volume-arc-chain-item">
+                        <div className="volume-arc-chain-head">
+                          <Tag color="geekblue">弧线 {idx + 1}</Tag>
+                          <Text strong>{arc.name || '未命名弧线'}</Text>
+                          {quality && <Tag color={status.color}>{status.label}</Tag>}
+                          <Tag>{arcChs.length || arc.chapter_count || 0}章</Tag>
+                        </div>
+                        <Text type="secondary">{arc.narrative_function || arc.description || '暂无叙事功能说明'}</Text>
+                        <div className="volume-arc-chain-bridge">
+                          <span><Text strong>上承</Text>{arc.handoff_from_previous || arc.dependence_on_previous || '未填写'}</span>
+                          <span><Text strong>下启</Text>{arc.handoff_to_next || arc.payoff_for_next || '未填写'}</span>
+                        </div>
+                        <Button size="small" type="link" icon={<FileSearchOutlined />} onClick={() => openArcDetail(activeVolumeDetail, arc, idx, quality)}>查看弧线详情</Button>
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : <Text type="secondary">本卷还没有拆出弧线。</Text>}
+            </div>
+
+            <div className="arc-detail-section arc-detail-two-col">
+              <div>
+                <div className="arc-detail-section-title">章节承载</div>
+                <div className="volume-detail-list">
+                  <div><Text strong>规划章节</Text><span>{detailVolumeQuality.chapterTarget || activeVolumeDetail.chapter_count || 0} 章</span></div>
+                  <div><Text strong>已有章节</Text><span>{detailVolumeChapters.length} 章</span></div>
+                  <div><Text strong>已写正文</Text><span>{detailVolumeQuality.writtenChapters} 章</span></div>
+                  <div><Text strong>变化台阶</Text><span>{detailVolumeQuality.arcStepsCount} 个</span></div>
+                </div>
+              </div>
+              <div>
+                <div className="arc-detail-section-title">章节列表</div>
+                {detailVolumeChapters.length ? (
+                  <div className="volume-chapter-mini-list">
+                    {detailVolumeChapters.map((ch: any) => (
+                      <button key={ch.id} className="volume-chapter-mini-row" onClick={() => { selectChapter(ch); setVolumeDetailOpen(false); }}>
+                        <span>第{ch.chapter_number}章 {ch.title || ''}</span>
+                        {ch.content ? <Tag color="green">已有</Tag> : <Tag>未写</Tag>}
+                      </button>
+                    ))}
+                  </div>
+                ) : <Text type="secondary">暂无章节</Text>}
+              </div>
+            </div>
+          </div>
+        ) : (
+          <Empty description="暂无卷轴详情" image={Empty.PRESENTED_IMAGE_SIMPLE} />
+        )}
+      </Drawer>
+
+      <Drawer
         title="弧线详情"
         open={arcDetailOpen}
         onClose={() => setArcDetailOpen(false)}
@@ -2549,13 +2871,14 @@ export default function WorkbenchPage() {
                   <Tag>{detailArcChapters.length || detailArc.chapter_count || 0}章</Tag>
                 </Space>
               </div>
-              <Alert
-                type={detailHasStructuralGaps ? 'warning' : detailWarnings.length ? 'info' : 'success'}
-                showIcon
-                message={detailHasStructuralGaps ? '结构缺口需要先修复' : detailWarnings.length ? '交接提醒，不阻止展开章节' : '结构连续性可用'}
-                description="这里的分数是结构连续性分，不是剧情质量分；80 分以上通常可继续展开章节。"
-              />
             </div>
+            <Alert
+              className="arc-detail-status-alert"
+              type={detailHasStructuralGaps ? 'warning' : detailWarnings.length ? 'info' : 'success'}
+              showIcon
+              message={detailHasStructuralGaps ? '结构缺口需要先修复' : detailWarnings.length ? '交接提醒，不阻止展开章节' : '结构连续性可用'}
+              description="这里的分数是结构连续性分，不是剧情质量分；80 分以上通常可继续展开章节。"
+            />
 
             <div className="arc-detail-section">
               <div className="arc-detail-section-title">结构检查</div>
