@@ -126,6 +126,29 @@ const renderStringList = (items: any[], emptyText = '暂无') => {
   );
 };
 
+const arcValueText = (value: any) => {
+  if (value === null || value === undefined || value === '') return '';
+  if (typeof value === 'string') return value;
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+  return value.description || value.summary || value.detail || value.name || JSON.stringify(value, null, 2);
+};
+
+const renderArcValue = (value: any, emptyText = '未填写') => {
+  if (value === null || value === undefined || value === '' || (Array.isArray(value) && value.length === 0)) {
+    return <Text type="secondary">{emptyText}</Text>;
+  }
+  if (Array.isArray(value)) {
+    return (
+      <div className="arc-detail-list">
+        {value.map((item: any, idx: number) => (
+          <div key={idx} className="arc-detail-list-item">{arcValueText(item)}</div>
+        ))}
+      </div>
+    );
+  }
+  return <Paragraph className="arc-detail-text">{arcValueText(value)}</Paragraph>;
+};
+
 const RawJsonBlock = ({ title, data }: { title: string; data: any }) => (
   <Collapse
     size="small"
@@ -293,6 +316,8 @@ const AuditTaskResult = ({ result }: { result: any }) => (
 
 const GenericTaskResult = ({ result }: { result: any }) => {
   if (typeof result === 'string') return <Alert type="success" showIcon message={result} />;
+  const arcIssues = Array.isArray(result?.arc_quality?.issues) ? result.arc_quality.issues : [];
+  const arcWarnings = Array.isArray(result?.arc_quality?.warnings) ? result.arc_quality.warnings : [];
   const summaryItems = [
     ['摘要', result?.summary || result?.result_summary || result?.message],
     ['生成内容', result?.content ? `${String(result.content).slice(0, 260)}${String(result.content).length > 260 ? '...' : ''}` : ''],
@@ -314,13 +339,34 @@ const GenericTaskResult = ({ result }: { result: any }) => {
           ))}
         </Descriptions>
       )}
-      {result?.arc_quality && Array.isArray(result.arc_quality.issues) && result.arc_quality.issues.length > 0 && (
+      {result?.arc_quality && arcIssues.length > 0 && (
         <Card size="small" title="弧线质量问题" className="task-report-card" style={{ marginTop: 12 }}>
           <div className="task-issue-list">
-            {result.arc_quality.issues.map((issue: any, idx: number) => (
+            {arcIssues.map((issue: any, idx: number) => (
               <div key={idx} className="task-issue-card orange">
                 <div className="task-issue-head">
                   <Tag>弧线 {Number(issue.arc_index ?? 0) + 1}</Tag>
+                  {issue.name && <Text strong>{issue.name}</Text>}
+                </div>
+                <Paragraph>{issue.issue}</Paragraph>
+              </div>
+            ))}
+          </div>
+        </Card>
+      )}
+      {result?.arc_quality && arcWarnings.length > 0 && (
+        <Card size="small" title="弧线质量提醒" className="task-report-card" style={{ marginTop: 12 }}>
+          <Alert
+            type="info"
+            showIcon
+            message="这些不是阻断问题，弧线可以继续展开；如果你追求更严密的交接，可以进入对应弧线点“优化交接”。"
+            style={{ marginBottom: 12 }}
+          />
+          <div className="task-issue-list">
+            {arcWarnings.map((issue: any, idx: number) => (
+              <div key={idx} className="task-issue-card">
+                <div className="task-issue-head">
+                  <Tag color="blue">弧线 {Number(issue.arc_index ?? 0) + 1}</Tag>
                   {issue.name && <Text strong>{issue.name}</Text>}
                 </div>
                 <Paragraph>{issue.issue}</Paragraph>
@@ -608,9 +654,20 @@ const arcQualityIssues = (quality: any) => (
         : []
 );
 
-const arcContinuityRepairInstruction = (quality: any, arc: any) => {
+const arcQualityWarnings = (quality: any) => (
+  Array.isArray(quality?.related_warnings) ? quality.related_warnings
+    : Array.isArray(quality?.warnings) ? quality.warnings
+      : []
+);
+
+const arcContinuityRepairInstruction = (quality: any, arc: any, checks: any[] = []) => {
   const issues = arcQualityIssues(quality).map((item: any) => item.issue || item.description || '').filter(Boolean);
-  const issueText = issues.length ? issues.join('；') : '这条弧线可能缺少清晰交接、变化台阶或因果链。';
+  const missing = checks
+    .filter((item: any) => item.failed)
+    .map((item: any) => `缺少${item.label}(${item.key})`);
+  const issueText = [...issues, ...missing].length
+    ? [...issues, ...missing].join('；')
+    : '这条弧线可能缺少清晰交接、变化台阶或因果链。';
   return [
     '请只修复这条弧线的连续性结构，不要改变本卷主线目标、章节范围和弧线核心功能。',
     `当前质量问题：${issueText}`,
@@ -619,6 +676,51 @@ const arcContinuityRepairInstruction = (quality: any, arc: any) => {
     '交接物必须具体到可写进正文的东西，例如物件、伤势、承诺、误会、秘密、债务、追兵、时间限制或一句话。',
     `当前弧线：${arc?.name || ''}`,
   ].join('\n');
+};
+
+const arcHandoffPolishInstruction = (quality: any, arc: any) => {
+  const warnings = arcQualityWarnings(quality).map((item: any) => item.issue || item.description || '').filter(Boolean);
+  return [
+    '请只优化这条弧线与前后弧线的交接表达，不要改变弧线名称、章节范围、核心事件、主角阶段目标和结局。',
+    `当前提醒：${warnings.join('；') || '交接语义需要更清晰。'}`,
+    '重点调整 handoff_from_previous、handoff_to_next、dependence_on_previous、payoff_for_next、continuity_chain，让上一弧线交出的具体物件/压力/承诺/秘密，能被本弧线明确接住，并把本弧线的新后果交给下一弧线。',
+    `当前弧线：${arc?.name || ''}`,
+  ].join('\n');
+};
+
+const arcQualityStatus = (quality: any, checks: any[] = []) => {
+  const score = typeof quality?.score === 'number' ? quality.score : null;
+  const issues = arcQualityIssues(quality);
+  const warnings = arcQualityWarnings(quality);
+  const hasStructuralGaps = checks.some((item: any) => item.failed);
+  if (!quality) return { label: '未检查', color: 'default', help: '这条弧线还没有连续性评分。' };
+  if (quality.passed === false || hasStructuralGaps) return { label: `结构需修${score !== null ? ` ${score}` : ''}`, color: 'orange', help: '缺少关键结构字段，建议先修复再展开章节。' };
+  if (warnings.length) return { label: `交接提醒${score !== null ? ` ${score}` : ''}`, color: 'blue', help: '结构可用，但前后弧线交接表达还可以更清楚。' };
+  if (issues.length) return { label: `结构通过${score !== null ? ` ${score}` : ''}`, color: 'green', help: '没有阻断问题，可以继续展开章节。' };
+  return { label: `结构通过${score !== null ? ` ${score}` : ''}`, color: 'green', help: '结构完整，可以继续展开章节。' };
+};
+
+const arcHasStructuralGaps = (quality: any, checks: any[] = []) => (
+  quality?.passed === false || checks.some((item: any) => item.failed)
+);
+
+const arcQualityChecks = (arc: any, index: number, quality: any) => {
+  const issueFields = new Set(arcQualityIssues(quality).map((x: any) => x.field).filter(Boolean));
+  const warningFields = new Set(arcQualityWarnings(quality).map((x: any) => x.field).filter(Boolean));
+  const rows = [
+    { key: 'opening_state', label: '开局状态', ok: Boolean(arc?.opening_state), help: '弧线开始时人物/局势处在什么状态。' },
+    { key: 'ending_state', label: '终点状态', ok: Boolean(arc?.ending_state), help: '弧线结束时产生了什么新局面。' },
+    { key: 'handoff_from_previous', label: '上承交接', ok: index === 0 || Boolean(arc?.handoff_from_previous || arc?.dependence_on_previous), help: '是否明确接住上一弧线交出的物件、压力、秘密或承诺。' },
+    { key: 'handoff_to_next', label: '下启钩子', ok: Boolean(arc?.handoff_to_next || arc?.payoff_for_next), help: '是否把新压力交给下一弧线或下一卷。' },
+    { key: 'continuity_chain', label: '因果链', ok: Boolean(arc?.continuity_chain), help: '是否写清上一状态 -> 触发事件 -> 选择 -> 后果 -> 下一压力。' },
+    { key: 'arc_steps', label: '变化台阶', ok: Array.isArray(arc?.arc_steps) && arc.arc_steps.length >= 4, help: '是否有至少 4 个可承载章节的变化台阶。' },
+    { key: 'irreplaceable_value', label: '不可替代', ok: Boolean(arc?.irreplaceable_value), help: '是否说明删掉这条弧线后全卷会缺什么。' },
+  ];
+  return rows.map((row) => ({
+    ...row,
+    warning: warningFields.has(row.key),
+    failed: issueFields.has(row.key) || !row.ok,
+  }));
 };
 
 const chapterGate = (chapter: any) => (
@@ -761,6 +863,8 @@ export default function WorkbenchPage() {
   const [contextPreview, setContextPreview] = useState<any>(null);
   const [worldRuleAudit, setWorldRuleAudit] = useState<any>(null);
   const [promptModules, setPromptModules] = useState<any>(null);
+  const [arcDetailOpen, setArcDetailOpen] = useState(false);
+  const [arcDetail, setArcDetail] = useState<any>(null);
   const [impactModalOpen, setImpactModalOpen] = useState(false);
   const [impactLoading, setImpactLoading] = useState(false);
   const [impactData, setImpactData] = useState<any>(null);
@@ -1249,6 +1353,11 @@ export default function WorkbenchPage() {
     loadSystemPanel(tab);
   };
 
+  const openArcDetail = (volume: any, arc: any, arcIndex: number, quality: any) => {
+    setArcDetail({ volume, arc, arcIndex, quality });
+    setArcDetailOpen(true);
+  };
+
   const openImpactAnalysis = async () => {
     if (!projectId || !currentChapter?.id) return;
     setImpactModalOpen(true);
@@ -1358,6 +1467,16 @@ export default function WorkbenchPage() {
       await pollTask(res.data.task_id, 90);
       const vols = await volumeApi.list(projectId);
       setVolumes(vols);
+      if (arcDetailOpen && arcDetail?.volume?.id === vol.id && arcDetail?.arcIndex === arcIndex) {
+        const updatedVol = vols.find((item: any) => item.id === vol.id);
+        const updatedArc = updatedVol?.narrative_arcs?.[arcIndex];
+        setArcDetail(updatedArc ? {
+          volume: updatedVol,
+          arc: updatedArc,
+          arcIndex,
+          quality: arcQualityFor(updatedVol, arcIndex),
+        } : null);
+      }
     } catch (e: any) {
       message.error(e.message || '调整失败');
     } finally {
@@ -1490,6 +1609,16 @@ export default function WorkbenchPage() {
 
   const currentVolume = currentChapter ? volumes.find((v: any) => v.id === currentChapter.volume_id) : null;
   const currentChapterGate = chapterGate(currentChapter);
+  const detailArc = arcDetail?.arc;
+  const detailVolume = arcDetail?.volume;
+  const detailArcIndex = arcDetail?.arcIndex ?? 0;
+  const detailQuality = arcDetail?.quality || (detailVolume ? arcQualityFor(detailVolume, detailArcIndex) : null);
+  const detailChecks = detailArc ? arcQualityChecks(detailArc, detailArcIndex, detailQuality) : [];
+  const detailStatus = arcQualityStatus(detailQuality, detailChecks);
+  const detailIssues = arcQualityIssues(detailQuality);
+  const detailWarnings = arcQualityWarnings(detailQuality);
+  const detailHasStructuralGaps = arcHasStructuralGaps(detailQuality, detailChecks);
+  const detailArcChapters = detailArc ? chapters.filter((c: any) => c.volume_id === detailVolume?.id && c.arc_name === detailArc.name) : [];
 
   if (loading) return <div style={{ padding: 80, textAlign: 'center' }}><Spin size="large" /></div>;
 
@@ -1614,8 +1743,11 @@ export default function WorkbenchPage() {
                             const arcChs = volChs.filter((c: any) => c.arc_name === arc.name);
                             const arcExpanded = expandedArc === ai;
                             const quality = arcQualityFor(v, ai);
-                            const qualityPassed = quality?.passed !== false;
-                            const qualityScore = quality?.score;
+                            const qualityIssues = arcQualityIssues(quality);
+                            const qualityWarnings = arcQualityWarnings(quality);
+                            const qualityChecks = arcQualityChecks(arc, ai, quality);
+                            const hasStructuralGaps = arcHasStructuralGaps(quality, qualityChecks);
+                            const qualityStatus = arcQualityStatus(quality, qualityChecks);
                             return (
                               <div key={ai} className="arc-block">
                                 <button className={`arc-row ${arcExpanded ? 'active' : ''}`} onClick={() => setExpandedArc(arcExpanded ? null : ai)}>
@@ -1626,7 +1758,7 @@ export default function WorkbenchPage() {
                                     </span>
                                   </span>
                                   <Space size={4}>
-                                    {quality && <Tag color={qualityPassed ? 'green' : 'orange'}>{qualityPassed ? '连续' : '需查'}{typeof qualityScore === 'number' ? ` ${qualityScore}` : ''}</Tag>}
+                                    {quality && <Tag color={qualityStatus.color}>{qualityStatus.label}</Tag>}
                                     <Tag>{arcChs.length || arc.chapter_count || 0}章</Tag>
                                   </Space>
                                 </button>
@@ -1634,21 +1766,47 @@ export default function WorkbenchPage() {
                                 {arcExpanded && (
                                   <div className="chapter-list">
                                     <div className="arc-detail">
-                                      {quality && quality.passed === false && (
+                                      {quality && (
+                                        <div className="arc-quality-panel">
+                                          <div className="arc-quality-head">
+                                            <Space size={6} wrap>
+                                              <Tag color={qualityStatus.color}>{qualityStatus.label}</Tag>
+                                              <Text type="secondary">这是结构连续性分，不是剧情质量分；80 分以上通常可继续展开章节。</Text>
+                                            </Space>
+                                          </div>
+                                          <div className="arc-quality-grid">
+                                            {qualityChecks.map((item) => (
+                                              <div key={item.key} className={`arc-quality-check ${item.failed ? 'bad' : item.warning ? 'warn' : 'ok'}`}>
+                                                <span>{item.failed ? '缺' : item.warning ? '提' : '✓'}</span>
+                                                <div>
+                                                  <Text strong>{item.label}</Text>
+                                                  <Text type="secondary">{item.help}</Text>
+                                                </div>
+                                              </div>
+                                            ))}
+                                          </div>
+                                        </div>
+                                      )}
+                                      {hasStructuralGaps && (
                                         <Alert
                                           type="warning"
                                           showIcon
                                           style={{ marginBottom: 8 }}
-                                          message="弧线连续性需要检查"
+                                          message="结构缺口需要修复"
                                           description={(
                                             <div>
                                               <div style={{ marginBottom: 8 }}>
-                                                {arcQualityIssues(quality).map((x: any, idx: number) => (
+                                                {qualityIssues.map((x: any, idx: number) => (
                                                   <Tag key={idx} color="orange" style={{ marginBottom: 4 }}>
                                                     {x.field ? `${x.field}：` : ''}{x.issue || x.description || '连续性风险'}
                                                   </Tag>
                                                 ))}
-                                                {arcQualityIssues(quality).length === 0 && '这条弧线可能缺少清晰交接、变化台阶或因果链。'}
+                                                {qualityChecks.filter((x: any) => x.failed).map((x: any) => (
+                                                  <Tag key={`missing-${x.key}`} color="orange" style={{ marginBottom: 4 }}>
+                                                    缺少{x.label}
+                                                  </Tag>
+                                                ))}
+                                                {qualityIssues.length === 0 && !qualityChecks.some((x: any) => x.failed) && '这条弧线可能缺少清晰交接、变化台阶或因果链。'}
                                               </div>
                                               <Space size={8} wrap>
                                                 <Button
@@ -1657,7 +1815,7 @@ export default function WorkbenchPage() {
                                                   loading={expandLoading === `${v.id}-revise-${ai}-修复连续性`}
                                                   onClick={(e) => {
                                                     e.stopPropagation();
-                                                    reviseVolumeArc(v, ai, '修复连续性', arcContinuityRepairInstruction(quality, arc));
+                                                    reviseVolumeArc(v, ai, '修复连续性', arcContinuityRepairInstruction(quality, arc, qualityChecks));
                                                   }}
                                                 >
                                                   按连续性修复
@@ -1668,7 +1826,37 @@ export default function WorkbenchPage() {
                                           )}
                                         />
                                       )}
+                                      {quality && !hasStructuralGaps && qualityWarnings.length > 0 && (
+                                        <Alert
+                                          type="info"
+                                          showIcon
+                                          style={{ marginBottom: 8 }}
+                                          message="交接提醒，不阻止展开章节"
+                                          description={(
+                                            <div>
+                                              <div style={{ marginBottom: 8 }}>
+                                                {qualityWarnings.map((x: any, idx: number) => (
+                                                  <Tag key={idx} color="blue" style={{ marginBottom: 4 }}>
+                                                    {x.field ? `${x.field}：` : ''}{x.issue || x.description || '交接提醒'}
+                                                  </Tag>
+                                                ))}
+                                              </div>
+                                              <Button
+                                                size="small"
+                                                loading={expandLoading === `${v.id}-revise-${ai}-优化交接`}
+                                                onClick={(e) => {
+                                                  e.stopPropagation();
+                                                  reviseVolumeArc(v, ai, '优化交接', arcHandoffPolishInstruction(quality, arc));
+                                                }}
+                                              >
+                                                优化交接
+                                              </Button>
+                                            </div>
+                                          )}
+                                        />
+                                      )}
                                       <div className="arc-actionbar">
+                                        <Button size="small" type="link" icon={<FileSearchOutlined />} onClick={() => openArcDetail(v, arc, ai, quality)}>详情</Button>
                                         <Button size="small" type="link" loading={expandLoading === `${v.id}-revise-${ai}-重写`} onClick={() => reviseVolumeArc(v, ai, '重写')}>重写</Button>
                                         <Button size="small" type="link" loading={expandLoading === `${v.id}-revise-${ai}-拉长`} onClick={() => reviseVolumeArc(v, ai, '拉长')}>拉长</Button>
                                         <Button size="small" type="link" loading={expandLoading === `${v.id}-revise-${ai}-压缩`} onClick={() => reviseVolumeArc(v, ai, '压缩')}>压缩</Button>
@@ -2394,6 +2582,160 @@ export default function WorkbenchPage() {
           );
         })()}
       </Modal>
+
+      <Drawer
+        title="弧线详情"
+        open={arcDetailOpen}
+        onClose={() => setArcDetailOpen(false)}
+        width={920}
+        extra={detailArc ? (
+          <Space size={8} wrap>
+            {detailHasStructuralGaps && (
+              <Button
+                size="small"
+                type="primary"
+                loading={expandLoading === `${detailVolume?.id}-revise-${detailArcIndex}-修复连续性`}
+                onClick={() => reviseVolumeArc(detailVolume, detailArcIndex, '修复连续性', arcContinuityRepairInstruction(detailQuality, detailArc, detailChecks))}
+              >
+                修复结构缺口
+              </Button>
+            )}
+            {!detailHasStructuralGaps && detailWarnings.length > 0 && (
+              <Button
+                size="small"
+                loading={expandLoading === `${detailVolume?.id}-revise-${detailArcIndex}-优化交接`}
+                onClick={() => reviseVolumeArc(detailVolume, detailArcIndex, '优化交接', arcHandoffPolishInstruction(detailQuality, detailArc))}
+              >
+                优化交接
+              </Button>
+            )}
+            <Button size="small" loading={expandLoading === `${detailVolume?.id}-revise-${detailArcIndex}-重写`} onClick={() => reviseVolumeArc(detailVolume, detailArcIndex, '重写')}>重写</Button>
+            <Button size="small" loading={expandLoading === `${detailVolume?.id}-revise-${detailArcIndex}-拉长`} onClick={() => reviseVolumeArc(detailVolume, detailArcIndex, '拉长')}>拉长</Button>
+            <Button size="small" loading={expandLoading === `${detailVolume?.id}-revise-${detailArcIndex}-压缩`} onClick={() => reviseVolumeArc(detailVolume, detailArcIndex, '压缩')}>压缩</Button>
+            {!detailArcChapters.length ? (
+              <Button size="small" icon={<ThunderboltOutlined />} onClick={() => openArcChapterExpandModal(detailVolume, detailArcIndex)}>展开章节</Button>
+            ) : (
+              <Button size="small" icon={<ThunderboltOutlined />} onClick={() => { setBatchVolume(detailVolume); setBatchArcIdx(detailArcIndex); setBatchModalOpen(true); }}>批量写</Button>
+            )}
+          </Space>
+        ) : null}
+      >
+        {detailArc ? (
+          <div className="arc-detail-drawer">
+            <div className="arc-detail-hero">
+              <div>
+                <Text type="secondary">{detailVolume?.title || '未命名卷'} · 第{detailArc.chapter_start || '?'}-{detailArc.chapter_end || '?'}章</Text>
+                <Title level={4}>{detailArc.name || `弧线 ${detailArcIndex + 1}`}</Title>
+                <Space size={[6, 6]} wrap>
+                  <Tag color={detailStatus.color}>{detailStatus.label}</Tag>
+                  {detailArc.narrative_function && <Tag color="blue">{detailArc.narrative_function}</Tag>}
+                  {detailArc.emotional_color && <Tag color="purple">{detailArc.emotional_color}</Tag>}
+                  {detailArc.tension_curve && <Tag>{detailArc.tension_curve}</Tag>}
+                  <Tag>{detailArcChapters.length || detailArc.chapter_count || 0}章</Tag>
+                </Space>
+              </div>
+              <Alert
+                type={detailHasStructuralGaps ? 'warning' : detailWarnings.length ? 'info' : 'success'}
+                showIcon
+                message={detailHasStructuralGaps ? '结构缺口需要先修复' : detailWarnings.length ? '交接提醒，不阻止展开章节' : '结构连续性可用'}
+                description="这里的分数是结构连续性分，不是剧情质量分；80 分以上通常可继续展开章节。"
+              />
+            </div>
+
+            <div className="arc-detail-section">
+              <div className="arc-detail-section-title">结构检查</div>
+              <div className="arc-quality-grid arc-quality-grid-wide">
+                {detailChecks.map((item: any) => (
+                  <div key={item.key} className={`arc-quality-check ${item.failed ? 'bad' : item.warning ? 'warn' : 'ok'}`}>
+                    <span>{item.failed ? '缺' : item.warning ? '提' : '✓'}</span>
+                    <div>
+                      <Text strong>{item.label}</Text>
+                      <Text type="secondary">{item.help}</Text>
+                    </div>
+                  </div>
+                ))}
+              </div>
+              {(detailIssues.length > 0 || detailChecks.some((x: any) => x.failed)) && (
+                <div className="arc-detail-tags">
+                  {detailIssues.map((x: any, idx: number) => (
+                    <Tag key={idx} color="orange">{x.field ? `${x.field}：` : ''}{x.issue || x.description || '连续性风险'}</Tag>
+                  ))}
+                  {detailChecks.filter((x: any) => x.failed).map((x: any) => (
+                    <Tag key={`missing-${x.key}`} color="orange">缺少{x.label}</Tag>
+                  ))}
+                </div>
+              )}
+              {detailWarnings.length > 0 && (
+                <div className="arc-detail-tags">
+                  {detailWarnings.map((x: any, idx: number) => (
+                    <Tag key={idx} color="blue">{x.field ? `${x.field}：` : ''}{x.issue || x.description || '交接提醒'}</Tag>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <div className="arc-detail-section">
+              <div className="arc-detail-section-title">弧线内容</div>
+              <Descriptions size="small" bordered column={1}>
+                <Descriptions.Item label="弧线说明">{renderArcValue(detailArc.description)}</Descriptions.Item>
+                <Descriptions.Item label="开局状态">{renderArcValue(detailArc.opening_state)}</Descriptions.Item>
+                <Descriptions.Item label="终点状态">{renderArcValue(detailArc.ending_state)}</Descriptions.Item>
+                <Descriptions.Item label="上承交接">{renderArcValue(detailArc.handoff_from_previous || detailArc.dependence_on_previous)}</Descriptions.Item>
+                <Descriptions.Item label="下启钩子">{renderArcValue(detailArc.handoff_to_next || detailArc.payoff_for_next)}</Descriptions.Item>
+                <Descriptions.Item label="因果链">{renderArcValue(detailArc.continuity_chain)}</Descriptions.Item>
+                <Descriptions.Item label="不可替代">{renderArcValue(detailArc.irreplaceable_value)}</Descriptions.Item>
+                <Descriptions.Item label="主角变化">{renderArcValue(detailArc.protagonist_change)}</Descriptions.Item>
+              </Descriptions>
+            </div>
+
+            <div className="arc-detail-section">
+              <div className="arc-detail-section-title">变化台阶</div>
+              {Array.isArray(detailArc.arc_steps) && detailArc.arc_steps.length > 0 ? (
+                <div className="arc-step-list">
+                  {detailArc.arc_steps.map((step: any, idx: number) => (
+                    <div key={idx} className="arc-step-card">
+                      <div className="arc-step-head">
+                        <Tag color="geekblue">台阶 {idx + 1}</Tag>
+                        <Text strong>{step.step_name || step.name || '未命名台阶'}</Text>
+                      </div>
+                      <Descriptions size="small" column={1}>
+                        <Descriptions.Item label="起点">{renderArcValue(step.starting_state)}</Descriptions.Item>
+                        <Descriptions.Item label="触发">{renderArcValue(step.trigger_event)}</Descriptions.Item>
+                        <Descriptions.Item label="行动">{renderArcValue(step.visible_action)}</Descriptions.Item>
+                        <Descriptions.Item label="阻力">{renderArcValue(step.friction)}</Descriptions.Item>
+                        <Descriptions.Item label="变化">{renderArcValue(step.state_change)}</Descriptions.Item>
+                        <Descriptions.Item label="后果">{renderArcValue(step.consequence)}</Descriptions.Item>
+                        <Descriptions.Item label="带给后文">{renderArcValue(step.carry_forward)}</Descriptions.Item>
+                      </Descriptions>
+                    </div>
+                  ))}
+                </div>
+              ) : <Text type="secondary">暂无变化台阶</Text>}
+            </div>
+
+            <div className="arc-detail-section arc-detail-two-col">
+              <div>
+                <div className="arc-detail-section-title">关键节点</div>
+                {renderArcValue(detailArc.key_milestones)}
+              </div>
+              <div>
+                <div className="arc-detail-section-title">伏笔计划</div>
+                {renderArcValue(detailArc.foreshadowing_plan)}
+              </div>
+              <div>
+                <div className="arc-detail-section-title">角色引入</div>
+                {renderArcValue(detailArc.character_introduction_plan || detailArc.character_focus)}
+              </div>
+              <div>
+                <div className="arc-detail-section-title">势力引入</div>
+                {renderArcValue(detailArc.faction_introduction_plan || detailArc.faction_focus)}
+              </div>
+            </div>
+          </div>
+        ) : (
+          <Empty description="暂无弧线详情" image={Empty.PRESENTED_IMAGE_SIMPLE} />
+        )}
+      </Drawer>
 
       {/* Task Drawer */}
       <Drawer title="AI 任务" open={taskDrawerOpen} onClose={() => setTaskDrawerOpen(false)} width={680}

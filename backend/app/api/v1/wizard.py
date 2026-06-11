@@ -1595,6 +1595,7 @@ async def _format_volume_continuity_context(db: AsyncSession, project_id: str, v
 
 def _score_arc_quality(arcs: list[dict]) -> dict:
     issues: list[dict] = []
+    warnings: list[dict] = []
     for idx, arc in enumerate(arcs or []):
         if not isinstance(arc, dict):
             continue
@@ -1609,22 +1610,36 @@ def _score_arc_quality(arcs: list[dict]) -> dict:
             required.append(("handoff_from_previous", "缺少从上一弧线接来的具体交接物"))
         for key, message in required:
             if not arc.get(key):
-                issues.append({"arc_index": idx, "name": arc.get("name", ""), "issue": message, "field": key})
+                issues.append({"arc_index": idx, "name": arc.get("name", ""), "issue": message, "field": key, "critical": key in {"handoff_from_previous", "handoff_to_next", "arc_steps"}})
         steps = arc.get("arc_steps") or []
         if not isinstance(steps, list) or len(steps) < 4:
-            issues.append({"arc_index": idx, "name": arc.get("name", ""), "issue": "arc_steps 少于4个，弧线容易像摘要", "field": "arc_steps"})
+            issues.append({"arc_index": idx, "name": arc.get("name", ""), "issue": "arc_steps 少于4个，弧线容易像摘要", "field": "arc_steps", "critical": True})
         if idx > 0:
             prev = arcs[idx - 1] if idx - 1 < len(arcs) and isinstance(arcs[idx - 1], dict) else {}
             prev_handoff = prev.get("handoff_to_next") or prev.get("payoff_for_next") or prev.get("ending_state") or ""
             current_handoff = arc.get("handoff_from_previous") or arc.get("dependence_on_previous") or ""
             if prev_handoff and current_handoff and not any(token in current_handoff for token in re.split(r"[，。；、\s]+", prev_handoff) if len(token) >= 2):
-                issues.append({"arc_index": idx, "name": arc.get("name", ""), "issue": "当前弧线接收物和上一弧线交出物语义可能不一致", "field": "handoff_from_previous"})
-    score = max(0, 100 - len(issues) * 8)
+                warnings.append({"arc_index": idx, "name": arc.get("name", ""), "issue": "当前弧线接收物和上一弧线交出物语义可能不一致", "field": "handoff_from_previous", "critical": False})
+    score = max(0, 100 - len(issues) * 10 - len(warnings) * 4)
     return {
         "score": score,
-        "passed": score >= 75 and not any(i.get("field") in {"handoff_from_previous", "handoff_to_next", "arc_steps"} for i in issues),
+        "passed": score >= 75 and not any(i.get("critical") for i in issues),
         "issues": issues[:20],
+        "warnings": warnings[:20],
         "issue_count": len(issues),
+        "warning_count": len(warnings),
+    }
+
+
+def _arc_quality_gate(arc_quality: dict, arc_index: int) -> dict:
+    issues = [i for i in arc_quality.get("issues", []) if i.get("arc_index") == arc_index]
+    warnings = [i for i in arc_quality.get("warnings", []) if i.get("arc_index") == arc_index]
+    score = max(0, 100 - len(issues) * 20 - len(warnings) * 8)
+    return {
+        "score": score,
+        "passed": score >= 75 and not any(i.get("critical") for i in issues),
+        "related_issues": issues,
+        "related_warnings": warnings,
     }
 
 
@@ -2956,11 +2971,7 @@ async def _do_expand_volume_arcs(
         volume.arc_continuity_index = _build_arc_continuity_index(arcs)
         bridge_checks = _build_arc_bridge_checks(arcs)
         for check in bridge_checks:
-            check["quality_gate"] = {
-                "score": arc_quality["score"],
-                "passed": arc_quality["passed"],
-                "related_issues": [i for i in arc_quality["issues"] if i.get("arc_index") == check.get("arc_index")],
-            }
+            check["quality_gate"] = _arc_quality_gate(arc_quality, check.get("arc_index", 0))
         volume.arc_bridge_checks = bridge_checks
         project = (await db.execute(select(Project).where(Project.id == project_id))).scalar_one_or_none()
         if project:
@@ -3050,11 +3061,7 @@ async def _do_revise_volume_arc(project_id: str, volume_id: str, arc_index: int,
         arc_quality = _score_arc_quality(arcs)
         bridge_checks = _build_arc_bridge_checks(arcs)
         for check in bridge_checks:
-            check["quality_gate"] = {
-                "score": arc_quality["score"],
-                "passed": arc_quality["passed"],
-                "related_issues": [i for i in arc_quality["issues"] if i.get("arc_index") == check.get("arc_index")],
-            }
+            check["quality_gate"] = _arc_quality_gate(arc_quality, check.get("arc_index", 0))
         volume.arc_bridge_checks = bridge_checks
         if project:
             notes = project.continuity_upgrade_notes or {}
