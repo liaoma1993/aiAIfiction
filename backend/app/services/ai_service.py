@@ -2116,7 +2116,7 @@ class AIService:
                 pass
         return self._normalize_chinese_punctuation(text)
 
-    async def _ask(self, prompt: str, system: str = SYSTEM_ARCHITECT, max_tokens: int = 128000, **kwargs) -> dict:
+    async def _ask(self, prompt: str, system: str = SYSTEM_ARCHITECT, max_tokens: int | None = 128000, **kwargs) -> dict:
         llm = await get_llm()
         formatted = prompt.format(**kwargs)
         caller = inspect.currentframe().f_back
@@ -2139,7 +2139,7 @@ class AIService:
                             [LLMMessage(role="user", content=repair_prompt)],
                             system=SYSTEM_EDITOR,
                             temperature=0.1,
-                            max_tokens=min(max_tokens, 16384),
+                            max_tokens=min(max_tokens or 16384, 16384),
                         )
                     repaired = self._strip_json_fence(repair_resp.content)
                     try:
@@ -2231,7 +2231,7 @@ class AIService:
         writing_style_guidance: str = "未启用写作风格 Skill，按本卷大纲和通用网文写法拆分。",
         volume_continuity_context: str = "无",
     ) -> list[dict]:
-        return await self._ask_list(EXPAND_VOLUME_ARCS_PROMPT, system=SYSTEM_ARCHITECT, max_tokens=393216,
+        return await self._ask_list(EXPAND_VOLUME_ARCS_PROMPT, system=SYSTEM_ARCHITECT, max_tokens=None,
             title=title, genre=genre,
             volume_title=volume_title, volume_outline=volume_outline,
             characters_summary=characters_summary, factions_summary=factions_summary,

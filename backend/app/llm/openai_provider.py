@@ -18,11 +18,14 @@ class OpenAIProvider(BaseLLMProvider):
         self.provider_name = provider_name
         self.provider_type = provider_type
 
-    async def chat(self, messages: list[LLMMessage], system: str = "", temperature: float = 0.7, max_tokens: int = 4096) -> LLMResponse:
+    async def chat(self, messages: list[LLMMessage], system: str = "", temperature: float = 0.7, max_tokens: int | None = 4096) -> LLMResponse:
         msgs = []
         if system:
             msgs.append({"role": "system", "content": system})
         msgs.extend([{"role": m.role, "content": m.content} for m in messages])
+        payload = {"model": self.model, "messages": msgs, "temperature": temperature}
+        if max_tokens is not None:
+            payload["max_tokens"] = max_tokens
 
         timeout = httpx.Timeout(10.0, connect=10.0, read=LLM_READ_TIMEOUT_SECONDS, write=30.0, pool=5.0)
         started = time.perf_counter()
@@ -32,7 +35,7 @@ class OpenAIProvider(BaseLLMProvider):
                 resp = await client.post(
                     f"{self.base_url}/chat/completions",
                     headers={"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"},
-                    json={"model": self.model, "messages": msgs, "temperature": temperature, "max_tokens": max_tokens},
+                    json=payload,
                 )
             except httpx.TimeoutException as e:
                 await record_llm_call(
@@ -45,7 +48,7 @@ class OpenAIProvider(BaseLLMProvider):
                     duration_ms=int((time.perf_counter() - started) * 1000),
                     temperature=temperature,
                     max_tokens=max_tokens,
-                    request_payload={"messages": msgs},
+                    request_payload=payload,
                 )
                 raise RuntimeError(f"LLM 请求超时（读取超过 {int(LLM_READ_TIMEOUT_SECONDS)} 秒）") from e
             if resp.status_code != 200:
@@ -59,7 +62,7 @@ class OpenAIProvider(BaseLLMProvider):
                     duration_ms=int((time.perf_counter() - started) * 1000),
                     temperature=temperature,
                     max_tokens=max_tokens,
-                    request_payload={"messages": msgs},
+                    request_payload=payload,
                     response_metadata={"status_code": resp.status_code},
                 )
                 raise RuntimeError(f"API 返回 {resp.status_code}: {resp.text[:300]}")
@@ -75,7 +78,7 @@ class OpenAIProvider(BaseLLMProvider):
                     duration_ms=int((time.perf_counter() - started) * 1000),
                     temperature=temperature,
                     max_tokens=max_tokens,
-                    request_payload={"messages": msgs},
+                    request_payload=payload,
                     response_metadata={"raw_error": data.get("error")},
                 )
                 raise RuntimeError(f"LLM error: {data['error']}")
@@ -90,7 +93,7 @@ class OpenAIProvider(BaseLLMProvider):
                     duration_ms=int((time.perf_counter() - started) * 1000),
                     temperature=temperature,
                     max_tokens=max_tokens,
-                    request_payload={"messages": msgs},
+                    request_payload=payload,
                     response_metadata=data,
                 )
                 raise RuntimeError(f"API 返回异常: {json.dumps(data, ensure_ascii=False)[:300]}")
@@ -113,7 +116,7 @@ class OpenAIProvider(BaseLLMProvider):
                 duration_ms=int((time.perf_counter() - started) * 1000),
                 temperature=temperature,
                 max_tokens=max_tokens,
-                request_payload={"messages": msgs},
+                request_payload=payload,
                 response_metadata={"finish_reason": choice.get("finish_reason", ""), "usage": usage, "model": data.get("model", self.model)},
             )
             return LLMResponse(
@@ -126,7 +129,7 @@ class OpenAIProvider(BaseLLMProvider):
                 metadata={"usage": usage},
             )
 
-    async def chat_json(self, messages: list[LLMMessage], system: str = "", temperature: float = 0.5, max_tokens: int = 4096) -> dict:
+    async def chat_json(self, messages: list[LLMMessage], system: str = "", temperature: float = 0.5, max_tokens: int | None = 4096) -> dict:
         resp = await self.chat(messages, system, temperature, max_tokens)
         content = resp.content.strip()
         if content.startswith("```"):

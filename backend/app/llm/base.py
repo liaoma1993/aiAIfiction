@@ -22,9 +22,9 @@ class LLMMessage:
 
 class BaseLLMProvider(ABC):
     @abstractmethod
-    async def chat(self, messages: list[LLMMessage], system: str = "", temperature: float = 0.7, max_tokens: int = 4096) -> LLMResponse:
+    async def chat(self, messages: list[LLMMessage], system: str = "", temperature: float = 0.7, max_tokens: Optional[int] = 4096) -> LLMResponse:
         ...
 
     @abstractmethod
-    async def chat_json(self, messages: list[LLMMessage], system: str = "", temperature: float = 0.5, max_tokens: int = 4096) -> dict:
+    async def chat_json(self, messages: list[LLMMessage], system: str = "", temperature: float = 0.5, max_tokens: Optional[int] = 4096) -> dict:
         ...
