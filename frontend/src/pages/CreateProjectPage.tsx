@@ -17,6 +17,11 @@ const GENRES = [
   '言情', '古言', '现言', '纯爱', '轻小说', '二次元',
   '游戏', '电竞', '体育', '末世', '废土', '无限流', '系统流', '穿越', '重生',
 ];
+
+const TONE_PREFERENCES = [
+  '轻松爽文', '热血燃向', '冷峻悬疑', '压抑现实', '温暖治愈', '黑色幽默',
+  '史诗厚重', '甜宠轻喜', '克制文艺', '紧张高压', '群像权谋', '日常陪伴',
+];
 const PLANNING_DRAFT_KEY = 'aifiction:create-project-planning-draft:v1';
 
 type ChatMessage = {
@@ -56,9 +61,37 @@ const DraftSection = ({ title, children }: { title: string; children: React.Reac
   </>
 );
 
+const renderMetaLine = (label: string, value: any) => {
+  if (value === undefined || value === null || value === '') return null;
+  const text = Array.isArray(value) ? value.join('；') : String(value);
+  return (
+    <Paragraph key={label} style={{ marginBottom: 6, lineHeight: 1.7 }}>
+      <Text type="secondary">{label}：</Text>{text}
+    </Paragraph>
+  );
+};
+
+const renderEventChainItem = (item: any, i: number) => {
+  if (!item || typeof item !== 'object') return <List.Item style={{ padding: '4px 0' }}>{String(item)}</List.Item>;
+  const parts = [
+    item.event && `事件：${item.event}`,
+    item.protagonist_action && `行动：${item.protagonist_action}`,
+    item.obstacle && `阻力：${item.obstacle}`,
+    item.payoff && `反馈：${item.payoff}`,
+    item.carry_forward && `后续：${item.carry_forward}`,
+  ].filter(Boolean);
+  return (
+    <List.Item style={{ padding: '6px 0', alignItems: 'flex-start' }}>
+      <Text type="secondary" style={{ marginRight: 6 }}>{i + 1}.</Text>
+      <span>{parts.join('；')}</span>
+    </List.Item>
+  );
+};
+
 export default function CreateProjectPage() {
   const [chatInput, setChatInput] = useState('');
   const [selectedGenres, setSelectedGenres] = useState<string[]>([]);
+  const [selectedTones, setSelectedTones] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
   const [elapsed, setElapsed] = useState(0);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -85,10 +118,14 @@ export default function CreateProjectPage() {
     if (Array.isArray(saved.messages)) setMessages(saved.messages);
     if (Array.isArray(saved.selected_genres)) setSelectedGenres(saved.selected_genres);
     if (Array.isArray(saved.selectedGenres)) setSelectedGenres(saved.selectedGenres);
+    if (Array.isArray(saved.selected_tones)) setSelectedTones(saved.selected_tones);
+    if (Array.isArray(saved.selectedTones)) setSelectedTones(saved.selectedTones);
     if (typeof saved.chat_input === 'string') setChatInput(saved.chat_input);
     if (typeof saved.chatInput === 'string') setChatInput(saved.chatInput);
     if (saved.current_draft) setDraft(saved.current_draft);
     if (saved.draft) setDraft(saved.draft);
+    const tonePref = saved.current_draft?.user_tone_preferences || saved.draft?.user_tone_preferences;
+    if (typeof tonePref === 'string' && tonePref.trim()) setSelectedTones(tonePref.split(',').map((x: string) => x.trim()).filter(Boolean));
     if (Array.isArray(saved.suggestions)) setSuggestions(saved.suggestions);
     if (Number.isInteger(saved.selected_suggestion_index)) setSelectedSuggestionIndex(saved.selected_suggestion_index);
     if (Number.isInteger(saved.selectedSuggestionIndex)) setSelectedSuggestionIndex(saved.selectedSuggestionIndex);
@@ -110,6 +147,8 @@ export default function CreateProjectPage() {
       || saved.suggestions?.length
       || saved.selected_genres?.length
       || saved.selectedGenres?.length
+      || saved.selected_tones?.length
+      || saved.selectedTones?.length
       || saved.selected_style_skill_id
       || saved.selectedStyleSkillId
     )
@@ -152,6 +191,7 @@ export default function CreateProjectPage() {
     const payload = {
       messages,
       selectedGenres,
+      selectedTones,
       chatInput,
       draft,
       suggestions,
@@ -161,7 +201,7 @@ export default function CreateProjectPage() {
       selectedStyleSkillId,
       updatedAt: Date.now(),
     };
-    const hasDraft = chatInput.trim() || messages.length || draft || suggestions.length || selectedGenres.length || selectedStyleSkillId;
+    const hasDraft = chatInput.trim() || messages.length || draft || suggestions.length || selectedGenres.length || selectedTones.length || selectedStyleSkillId;
     if (hasDraft) {
       localStorage.setItem(PLANNING_DRAFT_KEY, JSON.stringify(payload));
       if (saveTimerRef.current) window.clearTimeout(saveTimerRef.current);
@@ -169,8 +209,9 @@ export default function CreateProjectPage() {
         api.put('/projects/plan-session', {
           messages,
           selected_genres: selectedGenres,
+          selected_tones: selectedTones,
           chat_input: chatInput,
-          current_draft: draft || {},
+          current_draft: { ...(draft || {}), user_tone_preferences: selectedTones.join(',') },
           suggestions,
           selected_suggestion_index: selectedSuggestionIndex,
           next_questions: nextQuestions,
@@ -183,7 +224,7 @@ export default function CreateProjectPage() {
     return () => {
       if (saveTimerRef.current) window.clearTimeout(saveTimerRef.current);
     };
-  }, [messages, selectedGenres, chatInput, draft, suggestions, selectedSuggestionIndex, nextQuestions, detailOptions, selectedStyleSkillId]);
+  }, [messages, selectedGenres, selectedTones, chatInput, draft, suggestions, selectedSuggestionIndex, nextQuestions, detailOptions, selectedStyleSkillId]);
 
   const pollTask = async (taskId: string) => new Promise<any>((resolve, reject) => {
     const startedAt = Date.now();
@@ -219,7 +260,8 @@ export default function CreateProjectPage() {
       const res = await api.post('/projects/plan-chat', {
         messages: nextMessages,
         genres: selectedGenres.join(','),
-        current_draft: draft || {},
+        style_preferences: selectedTones.join(','),
+        current_draft: { ...(draft || {}), user_tone_preferences: selectedTones.join(',') },
         intent,
         style_skill_id: selectedStyleSkillId || null,
       });
@@ -296,6 +338,7 @@ export default function CreateProjectPage() {
     setDetailOptions([]);
     setSelectedSuggestionIndex(0);
     setChatInput('');
+    setSelectedTones([]);
     setSelectedStyleSkillId('');
     localStorage.removeItem(PLANNING_DRAFT_KEY);
     api.delete('/projects/plan-session').catch(() => {});
@@ -331,6 +374,24 @@ export default function CreateProjectPage() {
                   </Col>
                 ))}
               </Row>
+            </div>
+
+            <div style={{ marginBottom: 16 }}>
+              <Text type="secondary">总体风格偏好（可选）：</Text>
+              <Row gutter={[8, 8]} style={{ marginTop: 8 }}>
+                {TONE_PREFERENCES.map((g) => (
+                  <Col key={g}>
+                    <Tag style={{ cursor: 'pointer', userSelect: 'none', padding: '4px 14px', fontSize: 14 }}
+                      color={selectedTones.includes(g) ? 'geekblue' : 'default'}
+                      onClick={() => setSelectedTones(selectedTones.includes(g) ? selectedTones.filter(x => x !== g) : [...selectedTones, g])}>
+                      {g}
+                    </Tag>
+                  </Col>
+                ))}
+              </Row>
+              <Text type="secondary" style={{ display: 'block', marginTop: 6, fontSize: 12 }}>
+                这里决定后续大纲、拆卷和正文的整体语气；题材和风格可以组合，比如玄幻也可以轻松、热血或冷峻。
+              </Text>
             </div>
 
             <div style={{ marginBottom: 16 }}>
@@ -442,6 +503,7 @@ export default function CreateProjectPage() {
                 <Space wrap style={{ marginBottom: 12 }}>
                   {currentDraft.genre && <Tag color="blue">{currentDraft.genre}</Tag>}
                   {currentDraft.length_type && <Tag color="purple">{currentDraft.length_type}</Tag>}
+                  {currentDraft.tone_profile?.tone_label && <Tag color="geekblue">{currentDraft.tone_profile.tone_label}</Tag>}
                   {(currentDraft.tags || []).map((t: string) => <Tag key={t}>{t}</Tag>)}
                   <Tag>{formatTotalWords(currentDraft.total_words)}</Tag>
                 </Space>
@@ -454,6 +516,63 @@ export default function CreateProjectPage() {
                   </Paragraph>
                 )}
                 <Paragraph style={{ whiteSpace: 'pre-wrap', lineHeight: 1.8 }}>{currentDraft.brief || '暂无梗概'}</Paragraph>
+                {currentDraft.tone_profile && (
+                  <DraftSection title="总体风格">
+                    {[
+                      renderMetaLine('风格定位', currentDraft.tone_profile.tone_label),
+                      renderMetaLine('叙事质感', currentDraft.tone_profile.narrative_texture),
+                      renderMetaLine('节奏', currentDraft.tone_profile.pacing),
+                      renderMetaLine('幽默程度', currentDraft.tone_profile.humor_level),
+                      renderMetaLine('情绪温度', currentDraft.tone_profile.emotional_temperature),
+                      renderMetaLine('语言手感', currentDraft.tone_profile.language_style),
+                      renderMetaLine('写作禁忌', currentDraft.tone_profile.taboos),
+                    ].filter(Boolean)}
+                  </DraftSection>
+                )}
+                {currentDraft.type_model && (
+                  <DraftSection title="题材模型">
+                    {[
+                      renderMetaLine('主类型', currentDraft.type_model.primary_genre),
+                      renderMetaLine('读者期待', currentDraft.type_model.reader_expectation),
+                      renderMetaLine('核心奖励', currentDraft.type_model.core_reader_reward),
+                      renderMetaLine('冲突形态', currentDraft.type_model.main_conflict_form),
+                      renderMetaLine('反馈循环', currentDraft.type_model.upgrade_feedback_loop),
+                      renderMetaLine('早期阻力', currentDraft.type_model.early_obstacle_pattern),
+                    ].filter(Boolean)}
+                  </DraftSection>
+                )}
+                {currentDraft.first_volume_engine && (
+                  <DraftSection title="第一卷发动机">
+                    {[
+                      renderMetaLine('第一卷承诺', currentDraft.first_volume_engine.volume_promise),
+                      renderMetaLine('主角第一动作', currentDraft.first_volume_engine.protagonist_first_move),
+                      renderMetaLine('早期可见阻力', currentDraft.first_volume_engine.early_visible_opponent),
+                      renderMetaLine('第一反馈', currentDraft.first_volume_engine.first_reward),
+                      renderMetaLine('第一代价', currentDraft.first_volume_engine.first_cost),
+                      renderMetaLine('卷末钩子', currentDraft.first_volume_engine.volume_hook),
+                    ].filter(Boolean)}
+                  </DraftSection>
+                )}
+                {Array.isArray(currentDraft.early_event_chain) && currentDraft.early_event_chain.length > 0 && (
+                  <DraftSection title="早期事件链">
+                    <List
+                      size="small"
+                      dataSource={currentDraft.early_event_chain.slice(0, 6)}
+                      renderItem={renderEventChainItem}
+                    />
+                  </DraftSection>
+                )}
+                {currentDraft.readability_gate && (
+                  <DraftSection title="可读性闸门">
+                    {currentDraft.readability_gate.passed !== undefined && (
+                      <Tag color={currentDraft.readability_gate.passed ? 'green' : 'orange'}>
+                        {currentDraft.readability_gate.passed ? '已通过' : '需加固'}
+                      </Tag>
+                    )}
+                    {asTextList(currentDraft.readability_gate.risks).map((item, i) => <Tag key={`risk-${i}`} color="orange" style={{ marginBottom: 6 }}>{item}</Tag>)}
+                    {asTextList(currentDraft.readability_gate.fix_strategy).map((item, i) => <Tag key={`fix-${i}`} color="green" style={{ marginBottom: 6 }}>{item}</Tag>)}
+                  </DraftSection>
+                )}
                 {asTextList(currentDraft.boundary_locks).length > 0 && (
                   <DraftSection title="边界锁定">
                     {asTextList(currentDraft.boundary_locks).map((item, i) => <Tag key={i} style={{ marginBottom: 6 }}>{item}</Tag>)}
@@ -520,8 +639,10 @@ export default function CreateProjectPage() {
                         <Text strong>{s.title || `未命名方案`}</Text>
                         {s.genre && <Tag color="blue">{s.genre}</Tag>}
                         {s.length_type && <Tag color="purple">{s.length_type}</Tag>}
+                        {s.tone_profile?.tone_label && <Tag color="geekblue">{s.tone_profile.tone_label}</Tag>}
                       </Space>
                       {s.core_engine && <Paragraph ellipsis={{ rows: 2 }} style={{ marginBottom: 8 }}><Text strong>引擎：</Text>{s.core_engine}</Paragraph>}
+                      {s.reader_promise && <Paragraph ellipsis={{ rows: 2 }} style={{ marginBottom: 8 }}><Text strong>追读：</Text>{s.reader_promise}</Paragraph>}
                       <Paragraph ellipsis={{ rows: 4 }} style={{ marginBottom: 8 }}>{s.brief}</Paragraph>
                       <div>{(s.tags || []).map((t: string) => <Tag key={t}>{t}</Tag>)}</div>
                     </Card>

@@ -25,6 +25,7 @@ class CreateProjectRequest(BaseModel):
 class ProjectPlanChatRequest(BaseModel):
     messages: list[dict]
     genres: str = ""
+    style_preferences: str = ""
     current_draft: dict = {}
     intent: str = "chat"
     style_skill_id: str | None = None
@@ -167,7 +168,10 @@ async def _load_user_style_skill(db: AsyncSession, user_id: str, skill_id: str |
     )).scalar_one_or_none()
 
 
-async def _do_plan_chat(user_id: str, messages: list[dict], genres: str, current_draft: dict, intent: str = "chat", style_skill_id: str | None = None) -> dict:
+async def _do_plan_chat(user_id: str, messages: list[dict], genres: str, current_draft: dict, intent: str = "chat", style_skill_id: str | None = None, style_preferences: str = "") -> dict:
+    if style_preferences:
+        current_draft = {**(current_draft or {}), "user_tone_preferences": style_preferences}
+        genres = f"{genres}\n总体风格偏好：{style_preferences}" if genres else f"总体风格偏好：{style_preferences}"
     style_guidance = ""
     if style_skill_id:
         async with async_session() as db:
@@ -217,7 +221,7 @@ async def _do_plan_chat(user_id: str, messages: list[dict], genres: str, current
 
 @router.post("/plan-chat")
 async def plan_chat(body: ProjectPlanChatRequest, user: User = Depends(get_current_user)):
-    task_id = start_task(_do_plan_chat(user.id, body.messages, body.genres, body.current_draft, body.intent, body.style_skill_id), "project_plan_chat")
+    task_id = start_task(_do_plan_chat(user.id, body.messages, body.genres, body.current_draft, body.intent, body.style_skill_id, body.style_preferences), "project_plan_chat")
     return {"task_id": task_id}
 
 

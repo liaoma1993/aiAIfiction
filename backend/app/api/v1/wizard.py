@@ -252,12 +252,15 @@ async def _do_project_plan_chat(project_id: str, messages: list[dict], genres: s
                 project.story_brief = draft.get("brief") or project.story_brief
                 project.target_total_words = draft.get("total_words") or project.target_total_words
                 tags = draft.get("tags")
+                style = project.writing_style or {}
+                if not isinstance(style, dict):
+                    style = {}
                 if isinstance(tags, list):
-                    style = project.writing_style or {}
-                    if not isinstance(style, dict):
-                        style = {}
                     style["tags"] = tags
-                    project.writing_style = style
+                for key in ["tone_profile", "type_model", "readability_gate", "first_volume_engine", "early_event_chain"]:
+                    if draft.get(key) is not None:
+                        style[key] = draft.get(key)
+                project.writing_style = style
                 await db.commit()
     return data
 
@@ -313,6 +316,66 @@ def _build_wizard_planning_memory(messages: list[dict], selected_draft: dict, su
     }
 
 
+def _draft_meta_from_style(style: dict, key: str) -> dict:
+    direct = style.get(key) if isinstance(style, dict) else None
+    if isinstance(direct, dict) and direct:
+        return direct
+    memory = style.get("wizard_planning_memory") if isinstance(style, dict) else {}
+    selected = memory.get("selected_draft") if isinstance(memory, dict) else {}
+    value = selected.get(key) if isinstance(selected, dict) else None
+    return value if isinstance(value, dict) else {}
+
+
+def _selected_draft_from_project(project: Project) -> dict:
+    style = project.writing_style or {}
+    if not isinstance(style, dict):
+        return {}
+    memory = style.get("wizard_planning_memory") or {}
+    selected = memory.get("selected_draft") if isinstance(memory, dict) else {}
+    return selected if isinstance(selected, dict) else {}
+
+
+def _format_tone_profile(tone_profile: dict, prefix: str = "") -> list[str]:
+    if not isinstance(tone_profile, dict) or not tone_profile:
+        return []
+    lines = []
+    tone_label = tone_profile.get("tone_label")
+    if tone_label:
+        lines.append(f"{prefix}总体风格：{tone_label}")
+    field_labels = [
+        ("narrative_texture", "叙事质感"),
+        ("pacing", "节奏"),
+        ("humor_level", "幽默程度"),
+        ("emotional_temperature", "情绪温度"),
+        ("language_style", "语言手感"),
+    ]
+    parts = [f"{label}：{tone_profile.get(key)}" for key, label in field_labels if tone_profile.get(key)]
+    if parts:
+        lines.append(f"{prefix}风格执行：" + "；".join(parts))
+    taboos = _as_string_list(tone_profile.get("taboos"), 8)
+    if taboos:
+        lines.append(f"{prefix}风格禁忌：" + "；".join(taboos))
+    return lines
+
+
+def _format_type_model(type_model: dict, prefix: str = "") -> list[str]:
+    if not isinstance(type_model, dict) or not type_model:
+        return []
+    field_labels = [
+        ("primary_genre", "主类型模型"),
+        ("reader_expectation", "读者期待"),
+        ("core_reader_reward", "核心读者奖励"),
+        ("main_conflict_form", "主要冲突形态"),
+        ("upgrade_feedback_loop", "升级/反馈循环"),
+        ("early_obstacle_pattern", "早期阻力模式"),
+    ]
+    return [
+        f"{prefix}{label}：{_clip_planning_text(str(type_model.get(key)), 260)}"
+        for key, label in field_labels
+        if type_model.get(key)
+    ]
+
+
 def _format_wizard_planning_memory(project: Project, limit: int = 2400) -> str:
     style = project.writing_style or {}
     memory = style.get("wizard_planning_memory") if isinstance(style, dict) else {}
@@ -328,10 +391,45 @@ def _format_wizard_planning_memory(project: Project, limit: int = 2400) -> str:
             parts.append(f"类型：{selected.get('genre')}")
         if selected.get("length_type"):
             parts.append(f"篇幅类型：{selected.get('length_type')}")
+        parts.extend(_format_tone_profile(selected.get("tone_profile") or {}, ""))
+        parts.extend(_format_type_model(selected.get("type_model") or {}, ""))
         if selected.get("reader_promise"):
             parts.append(f"读者承诺：{selected.get('reader_promise')}")
         if selected.get("core_engine"):
             parts.append(f"核心引擎：{selected.get('core_engine')}")
+        first_volume_engine = selected.get("first_volume_engine") or {}
+        if isinstance(first_volume_engine, dict) and first_volume_engine:
+            engine_parts = []
+            for key, label in [
+                ("volume_promise", "第一卷承诺"),
+                ("protagonist_first_move", "主角第一动作"),
+                ("early_visible_opponent", "早期可见阻力"),
+                ("first_reward", "第一反馈"),
+                ("first_cost", "第一代价"),
+                ("volume_hook", "卷末钩子"),
+            ]:
+                if first_volume_engine.get(key):
+                    engine_parts.append(f"{label}：{first_volume_engine.get(key)}")
+            if engine_parts:
+                parts.append("第一卷发动机：" + "；".join(_clip_planning_text(str(x), 180) for x in engine_parts))
+        early_event_chain = selected.get("early_event_chain") or []
+        if isinstance(early_event_chain, list) and early_event_chain:
+            event_parts = []
+            for item in early_event_chain[:5]:
+                if isinstance(item, dict):
+                    event_parts.append(
+                        " / ".join(str(x) for x in [
+                            item.get("event", ""),
+                            item.get("protagonist_action", ""),
+                            item.get("obstacle", ""),
+                            item.get("payoff", ""),
+                            item.get("carry_forward", ""),
+                        ] if x)
+                    )
+                elif item:
+                    event_parts.append(str(item))
+            if event_parts:
+                parts.append("第一批具体事件链：" + "；".join(_clip_planning_text(x, 220) for x in event_parts))
         boundary_locks = selected.get("boundary_locks") or []
         if boundary_locks:
             parts.append("边界锁定：" + "；".join(str(x) for x in boundary_locks[:8]))
@@ -363,10 +461,9 @@ def _format_wizard_planning_memory(project: Project, limit: int = 2400) -> str:
 
 def _world_rule_defaults_from_project(project: Project) -> dict:
     style = project.writing_style or {}
-    memory = style.get("wizard_planning_memory") if isinstance(style, dict) else {}
-    selected = memory.get("selected_draft") if isinstance(memory, dict) else {}
-    if not isinstance(selected, dict):
-        selected = {}
+    selected = _selected_draft_from_project(project)
+    tone_profile = _draft_meta_from_style(style if isinstance(style, dict) else {}, "tone_profile")
+    type_model = _draft_meta_from_style(style if isinstance(style, dict) else {}, "type_model")
     boundary_locks = _as_string_list(selected.get("boundary_locks"), 8)
     tags = _as_string_list(selected.get("tags"), 8)
     hard_rules = []
@@ -374,10 +471,14 @@ def _world_rule_defaults_from_project(project: Project) -> dict:
         hard_rules.append(f"核心引擎不能偏离：{selected.get('core_engine')}")
     hard_rules.extend(boundary_locks)
     tone_rules = []
+    tone_rules.extend(_format_tone_profile(tone_profile))
     if tags:
         tone_rules.append("文风标签必须保持：" + "、".join(tags))
     if selected.get("reader_promise"):
         tone_rules.append(f"读者承诺必须体现在章节体验里：{selected.get('reader_promise')}")
+    type_lines = _format_type_model(type_model)
+    if type_lines:
+        tone_rules.append("题材模型必须服从：" + "；".join(type_lines[:4]))
     constraints = []
     if selected.get("length_type"):
         constraints.append(f"篇幅规划按{selected.get('length_type')}处理，不能用短篇节奏写长线，也不能把短篇强行注水成长篇。")
@@ -706,6 +807,40 @@ def _format_writing_style_skill(skill: WritingStyleSkill | None, phase: str = "w
     return "\n".join(lines)
 
 
+def _format_project_writing_guidance(project: Project | None, skill: WritingStyleSkill | None, phase: str = "writing") -> str:
+    if not project:
+        return _format_writing_style_skill(skill, phase)
+    style = project.writing_style if isinstance(project.writing_style, dict) else {}
+    selected = _selected_draft_from_project(project)
+    tone_profile = _draft_meta_from_style(style, "tone_profile")
+    type_model = _draft_meta_from_style(style, "type_model")
+    lines = ["【项目总体风格与题材模型】"]
+    tone_lines = _format_tone_profile(tone_profile)
+    type_lines = _format_type_model(type_model)
+    if tone_lines:
+        lines.extend(tone_lines)
+    else:
+        tags = _as_string_list(selected.get("tags"), 8)
+        if tags:
+            lines.append("风格标签：" + "、".join(tags))
+        else:
+            lines.append("总体风格：未单独固定，按项目类型和已有草案保持一致。")
+    if type_lines:
+        lines.extend(type_lines)
+    if selected.get("reader_promise"):
+        lines.append(f"读者承诺：{_clip_style_line(selected.get('reader_promise'), 420)}")
+    if selected.get("core_engine"):
+        lines.append(f"核心引擎：{_clip_style_line(selected.get('core_engine'), 520)}")
+    if selected.get("first_volume_engine") and phase in {"creation", "outline"}:
+        lines.append(f"第一卷发动机：{_clip_style_line(selected.get('first_volume_engine'), 900)}")
+    if selected.get("early_event_chain") and phase in {"creation", "outline"}:
+        lines.append(f"早期事件链：{_clip_style_line(selected.get('early_event_chain'), 1100)}")
+    lines.append("执行优先级：项目总体风格和题材模型优先于共享 Skill；Skill 只能提供写法方法，不能改变本项目的类型承诺、风格气质和核心引擎。")
+    lines.append("【共享写作风格 Skill】")
+    lines.append(_format_writing_style_skill(skill, phase))
+    return "\n".join(lines)
+
+
 async def _active_writing_style_skill(db: AsyncSession, project: Project | None) -> WritingStyleSkill | None:
     if not project:
         return None
@@ -853,12 +988,19 @@ async def apply_story(project_id: str, body: ApplyStoryRequest, user: User = Dep
     project.story_brief = body.brief
     project.target_total_words = body.total_words
     existing_style = project.writing_style if isinstance(project.writing_style, dict) else {}
+    selected_draft = body.selected_draft or {"title": body.title, "genre": body.genre, "brief": body.brief, "tags": body.tags, "total_words": body.total_words}
+    project_meta = {
+        key: selected_draft.get(key)
+        for key in ["tone_profile", "type_model", "readability_gate", "first_volume_engine", "early_event_chain"]
+        if isinstance(selected_draft, dict) and selected_draft.get(key) is not None
+    }
     project.writing_style = {
         **existing_style,
         "tags": body.tags,
+        **project_meta,
         "wizard_planning_memory": _build_wizard_planning_memory(
             body.planning_messages,
-            body.selected_draft or {"title": body.title, "genre": body.genre, "brief": body.brief, "tags": body.tags, "total_words": body.total_words},
+            selected_draft,
             body.planning_suggestions,
         ),
     }
@@ -1927,7 +2069,7 @@ async def _do_write_chapter(project_id: str, chapter_id: str, mode: str = "appen
         chapter_summary = f"{chapter_summary}\n\n【章节连贯性硬约束】\n{_format_chapter_continuity_payload(chapter)}"
         if bridge_context and arc_idx > 0:
             chapter_summary = f"{chapter_summary}\n\n【跨弧线桥接要求】\n{bridge_context}"
-        writing_style_guidance = _format_writing_style_skill(await _active_writing_style_skill(db, project), "writing")
+        writing_style_guidance = _format_project_writing_guidance(project, await _active_writing_style_skill(db, project), "writing")
 
         text, hook, new_characters = await ai.write_chapter(
             project.title, project.genre, _wizard_story_brief(project),
@@ -2507,7 +2649,7 @@ async def _do_batch_write_arc(project_id: str, volume_id: str, arc_index: int, t
 
         write_controls = _merge_writing_controls(project, controls or {"readability_mode": readability_mode})
         write_controls["readability_mode"] = readability_mode or write_controls.get("readability_mode", "easy")
-        writing_style_guidance = _format_writing_style_skill(await _active_writing_style_skill(db, project), "writing")
+        writing_style_guidance = _format_project_writing_guidance(project, await _active_writing_style_skill(db, project), "writing")
         ai = AIService()
         total_words = 0
         done = 0
@@ -2712,7 +2854,7 @@ async def _do_expand_volume_arcs(
             "arc_density": arc_density,
             "style_focus": style_focus,
             "length_control": length_control,
-            "writing_style_guidance": _format_writing_style_skill(await _active_writing_style_skill(db, project), "outline"),
+            "writing_style_guidance": _format_project_writing_guidance(project, await _active_writing_style_skill(db, project), "outline"),
         }
 
     ai = AIService()
@@ -3070,7 +3212,7 @@ async def _do_expand_arc_chapters(project_id: str, volume_id: str, arc_index: in
             "start_chapter_number": start_chapter_number,
             "chars_summary": chars_summary,
             "facs_summary": facs_summary,
-            "writing_style_guidance": _format_writing_style_skill(await _active_writing_style_skill(db, project), "outline"),
+            "writing_style_guidance": _format_project_writing_guidance(project, await _active_writing_style_skill(db, project), "outline"),
         }
 
     ai = AIService()
@@ -3241,7 +3383,7 @@ async def _do_generate_volumes(project_id: str) -> dict:
             "story_brief": _wizard_story_brief(project),
             "core_theme": project.core_theme,
             "target_total_words": project.target_total_words,
-            "writing_style_guidance": _format_writing_style_skill(await _active_writing_style_skill(db, project), "outline"),
+            "writing_style_guidance": _format_project_writing_guidance(project, await _active_writing_style_skill(db, project), "outline"),
         }
 
     ai = AIService()
@@ -3626,7 +3768,7 @@ async def _do_generate_outline_draft(project_id: str) -> dict:
             "story_brief": _wizard_story_brief(project),
             "core_theme": project.core_theme,
             "target_total_words": project.target_total_words,
-            "writing_style_guidance": _format_writing_style_skill(await _active_writing_style_skill(db, project), "outline"),
+            "writing_style_guidance": _format_project_writing_guidance(project, await _active_writing_style_skill(db, project), "outline"),
         }
     ai = AIService()
     return await ai.generate_outline_plan(
