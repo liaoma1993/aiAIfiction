@@ -1743,7 +1743,6 @@ export default function WorkbenchPage() {
                             const arcChs = volChs.filter((c: any) => c.arc_name === arc.name);
                             const arcExpanded = expandedArc === ai;
                             const quality = arcQualityFor(v, ai);
-                            const qualityIssues = arcQualityIssues(quality);
                             const qualityWarnings = arcQualityWarnings(quality);
                             const qualityChecks = arcQualityChecks(arc, ai, quality);
                             const hasStructuralGaps = arcHasStructuralGaps(quality, qualityChecks);
@@ -1766,130 +1765,46 @@ export default function WorkbenchPage() {
                                 {arcExpanded && (
                                   <div className="chapter-list">
                                     <div className="arc-detail">
-                                      {quality && (
-                                        <div className="arc-quality-panel">
-                                          <div className="arc-quality-head">
-                                            <Space size={6} wrap>
-                                              <Tag color={qualityStatus.color}>{qualityStatus.label}</Tag>
-                                              <Text type="secondary">这是结构连续性分，不是剧情质量分；80 分以上通常可继续展开章节。</Text>
-                                            </Space>
-                                          </div>
-                                          <div className="arc-quality-grid">
-                                            {qualityChecks.map((item) => (
-                                              <div key={item.key} className={`arc-quality-check ${item.failed ? 'bad' : item.warning ? 'warn' : 'ok'}`}>
-                                                <span>{item.failed ? '缺' : item.warning ? '提' : '✓'}</span>
-                                                <div>
-                                                  <Text strong>{item.label}</Text>
-                                                  <Text type="secondary">{item.help}</Text>
-                                                </div>
-                                              </div>
-                                            ))}
-                                          </div>
-                                        </div>
-                                      )}
-                                      {hasStructuralGaps && (
-                                        <Alert
-                                          type="warning"
-                                          showIcon
-                                          style={{ marginBottom: 8 }}
-                                          message="结构缺口需要修复"
-                                          description={(
-                                            <div>
-                                              <div style={{ marginBottom: 8 }}>
-                                                {qualityIssues.map((x: any, idx: number) => (
-                                                  <Tag key={idx} color="orange" style={{ marginBottom: 4 }}>
-                                                    {x.field ? `${x.field}：` : ''}{x.issue || x.description || '连续性风险'}
-                                                  </Tag>
-                                                ))}
-                                                {qualityChecks.filter((x: any) => x.failed).map((x: any) => (
-                                                  <Tag key={`missing-${x.key}`} color="orange" style={{ marginBottom: 4 }}>
-                                                    缺少{x.label}
-                                                  </Tag>
-                                                ))}
-                                                {qualityIssues.length === 0 && !qualityChecks.some((x: any) => x.failed) && '这条弧线可能缺少清晰交接、变化台阶或因果链。'}
-                                              </div>
-                                              <Space size={8} wrap>
-                                                <Button
-                                                  size="small"
-                                                  type="primary"
-                                                  loading={expandLoading === `${v.id}-revise-${ai}-修复连续性`}
-                                                  onClick={(e) => {
-                                                    e.stopPropagation();
-                                                    reviseVolumeArc(v, ai, '修复连续性', arcContinuityRepairInstruction(quality, arc, qualityChecks));
-                                                  }}
-                                                >
-                                                  按连续性修复
-                                                </Button>
-                                                <Text type="secondary">修复后会重新计算弧线质量，再决定是否适合展开章节。</Text>
-                                              </Space>
-                                            </div>
-                                          )}
-                                        />
-                                      )}
-                                      {quality && !hasStructuralGaps && qualityWarnings.length > 0 && (
-                                        <Alert
-                                          type="info"
-                                          showIcon
-                                          style={{ marginBottom: 8 }}
-                                          message="交接提醒，不阻止展开章节"
-                                          description={(
-                                            <div>
-                                              <div style={{ marginBottom: 8 }}>
-                                                {qualityWarnings.map((x: any, idx: number) => (
-                                                  <Tag key={idx} color="blue" style={{ marginBottom: 4 }}>
-                                                    {x.field ? `${x.field}：` : ''}{x.issue || x.description || '交接提醒'}
-                                                  </Tag>
-                                                ))}
-                                              </div>
-                                              <Button
-                                                size="small"
-                                                loading={expandLoading === `${v.id}-revise-${ai}-优化交接`}
-                                                onClick={(e) => {
-                                                  e.stopPropagation();
-                                                  reviseVolumeArc(v, ai, '优化交接', arcHandoffPolishInstruction(quality, arc));
-                                                }}
-                                              >
-                                                优化交接
-                                              </Button>
-                                            </div>
-                                          )}
-                                        />
-                                      )}
-                                      <div className="arc-actionbar">
+                                      <div className="arc-compact-head">
+                                        <Space size={[4, 4]} wrap>
+                                          {quality && <Tag color={qualityStatus.color}>{qualityStatus.label}</Tag>}
+                                          {hasStructuralGaps && <Tag color="orange">缺 {qualityChecks.filter((x: any) => x.failed).length} 项</Tag>}
+                                          {!hasStructuralGaps && qualityWarnings.length > 0 && <Tag color="blue">提醒 {qualityWarnings.length} 项</Tag>}
+                                          {arc.narrative_function && <Tag color="blue">{arc.narrative_function}</Tag>}
+                                        </Space>
                                         <Button size="small" type="link" icon={<FileSearchOutlined />} onClick={() => openArcDetail(v, arc, ai, quality)}>详情</Button>
-                                        <Button size="small" type="link" loading={expandLoading === `${v.id}-revise-${ai}-重写`} onClick={() => reviseVolumeArc(v, ai, '重写')}>重写</Button>
-                                        <Button size="small" type="link" loading={expandLoading === `${v.id}-revise-${ai}-拉长`} onClick={() => reviseVolumeArc(v, ai, '拉长')}>拉长</Button>
-                                        <Button size="small" type="link" loading={expandLoading === `${v.id}-revise-${ai}-压缩`} onClick={() => reviseVolumeArc(v, ai, '压缩')}>压缩</Button>
                                       </div>
-                                      <div className="arc-tags">
-                                        {arc.narrative_function && <Tag color="blue">{arc.narrative_function}</Tag>}
-                                        {arc.emotional_color && <Tag color="purple">{arc.emotional_color}</Tag>}
-                                        {arc.tension_curve && <Tag>{arc.tension_curve}</Tag>}
-                                      </div>
-                                      {arc.description && <Paragraph className="arc-desc">{arc.description}</Paragraph>}
-                                      <div className="arc-memory-grid">
-                                        {arc.opening_state && <div><Text strong>开局</Text><span>{arc.opening_state}</span></div>}
-                                        {arc.ending_state && <div><Text strong>终点</Text><span>{arc.ending_state}</span></div>}
-                                        {arc.irreplaceable_value && <div><Text strong>不可替代</Text><span>{arc.irreplaceable_value}</span></div>}
-                                        {arc.protagonist_change && <div><Text strong>主角变化</Text><span>{arc.protagonist_change}</span></div>}
-                                        {arc.dependence_on_previous && <div><Text strong>上承</Text><span>{arc.dependence_on_previous}</span></div>}
-                                        {arc.payoff_for_next && <div><Text strong>下启</Text><span>{arc.payoff_for_next}</span></div>}
-                                      </div>
-                                      {Array.isArray(arc.character_focus) && arc.character_focus.length > 0 && (
-                                        <div className="arc-listline">
-                                          <Text strong>重点角色</Text>
-                                          <Space size={[4, 4]} wrap>{arc.character_focus.map((x: any, i: number) => <Tag key={i}>{typeof x === 'string' ? x : `${x.name || x.character || '角色'}：${x.function || x.role || ''}`}</Tag>)}</Space>
+                                      {hasStructuralGaps ? (
+                                        <div className="arc-compact-actions">
+                                          <Text type="secondary">结构缺口请进详情查看，或直接修复。</Text>
+                                          <Button
+                                            size="small"
+                                            type="primary"
+                                            loading={expandLoading === `${v.id}-revise-${ai}-修复连续性`}
+                                            onClick={(e) => {
+                                              e.stopPropagation();
+                                              reviseVolumeArc(v, ai, '修复连续性', arcContinuityRepairInstruction(quality, arc, qualityChecks));
+                                            }}
+                                          >
+                                            按连续性修复
+                                          </Button>
                                         </div>
-                                      )}
-                                      {Array.isArray(arc.foreshadowing_plan) && arc.foreshadowing_plan.length > 0 && (
-                                        <div className="arc-listline">
-                                          <Text strong>伏笔计划</Text>
-                                          <div className="arc-bullets">
-                                            {arc.foreshadowing_plan.slice(0, 5).map((x: any, i: number) => (
-                                              <span key={i}>{typeof x === 'string' ? x : `${x.name || x.type || '伏笔'}：${x.detail || x.description || x.action || ''}`}</span>
-                                            ))}
-                                          </div>
+                                      ) : qualityWarnings.length > 0 ? (
+                                        <div className="arc-compact-actions">
+                                          <Text type="secondary">有交接提醒，不阻止展开章节。</Text>
+                                          <Button
+                                            size="small"
+                                            loading={expandLoading === `${v.id}-revise-${ai}-优化交接`}
+                                            onClick={(e) => {
+                                              e.stopPropagation();
+                                              reviseVolumeArc(v, ai, '优化交接', arcHandoffPolishInstruction(quality, arc));
+                                            }}
+                                          >
+                                            优化交接
+                                          </Button>
                                         </div>
+                                      ) : (
+                                        <Text type="secondary" className="arc-compact-note">完整弧线内容、变化台阶和伏笔计划已放入详情。</Text>
                                       )}
                                     </div>
                                     {!arcChs.length ? (

@@ -349,10 +349,10 @@
 
 .arc-detail {
   margin: 4px 0 6px 16px;
-  padding: 8px;
+  padding: 7px 8px;
   border: 1px solid #e5ebf3;
   border-radius: 8px;
-  background: #fff;
+  background: #fbfcfe;
 }
 
 .arc-actionbar {
@@ -360,6 +360,32 @@
   justify-content: flex-end;
   gap: 4px;
   margin: -4px 0 4px;
+}
+
+.arc-compact-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.arc-compact-actions {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+  margin-top: 6px;
+}
+
+.arc-compact-actions .ant-typography,
+.arc-compact-note {
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.arc-compact-note {
+  display: block;
+  margin-top: 4px;
 }
 
 .arc-quality-panel {
