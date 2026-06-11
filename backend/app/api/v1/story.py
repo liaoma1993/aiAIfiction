@@ -29,6 +29,151 @@ def _quality_review(checks):
     return _safe_dict(checks.get("quality_review"))
 
 
+def _quality_severity(score: int | float | None = None, severity: str = "") -> str:
+    if severity in {"critical", "high", "medium", "low"}:
+        return severity
+    if score is None:
+        return "medium"
+    if score < 55:
+        return "high"
+    if score < 75:
+        return "medium"
+    return "low"
+
+
+def _score_status(score: int | float, passed: bool = True) -> str:
+    if not passed or score < 60:
+        return "fail"
+    if score < 75:
+        return "warning"
+    return "pass"
+
+
+def _flatten_world_values(value) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, str):
+        return [value] if value.strip() else []
+    if isinstance(value, list):
+        items: list[str] = []
+        for item in value:
+            items.extend(_flatten_world_values(item))
+        return items
+    if isinstance(value, dict):
+        items: list[str] = []
+        for key, item in value.items():
+            nested = _flatten_world_values(item)
+            if nested:
+                items.extend([f"{key}：{x}" for x in nested])
+            elif item not in (None, "", [], {}):
+                items.append(f"{key}：{item}")
+        return items
+    return [str(value)]
+
+
+def _world_rule_score(world, project) -> dict:
+    if not world:
+        return {
+            "score": 0,
+            "passed": False,
+            "issues": [{"field": "world_setting", "issue": "尚未生成世界观规则", "severity": "high"}],
+            "warnings": [],
+        }
+    hard_rules = _safe_list(world.hard_rules)
+    constraints = _safe_list(world.constraints)
+    logic_items = _flatten_world_values(world.world_logic or {})
+    issues: list[dict] = []
+    warnings: list[dict] = []
+    if len(hard_rules) < 4:
+        issues.append({"field": "hard_rules", "issue": "hard_rules 少于4条，世界硬约束不足", "severity": "medium"})
+    if len(constraints) < 3:
+        issues.append({"field": "constraints", "issue": "constraints 少于3条，生成边界不足", "severity": "medium"})
+    if not logic_items:
+        issues.append({"field": "world_logic", "issue": "world_logic 为空，缺少世界运行逻辑", "severity": "high"})
+    combined = [str(x) for x in hard_rules + constraints + logic_items]
+    if project and project.core_theme and not any(project.core_theme in item for item in combined):
+        warnings.append({"field": "core_theme", "issue": "世界规则未显式绑定项目核心主题，后续可能偏题", "severity": "medium"})
+    if not any("代价" in item or "成本" in item for item in combined):
+        warnings.append({"field": "cost_rule", "issue": "缺少能力/资源/制度代价规则，容易出现无成本开挂", "severity": "medium"})
+    if not any("信息" in item or "秘密" in item or "知道" in item for item in combined):
+        warnings.append({"field": "information_boundary", "issue": "缺少信息边界规则，角色可能知道不该知道的事", "severity": "medium"})
+    score = max(0, 100 - len(issues) * 12 - len(warnings) * 6)
+    return {"score": score, "passed": score >= 75 and not any(i.get("severity") == "high" for i in issues), "issues": issues, "warnings": warnings}
+
+
+def _arc_quality_for_volume(arcs: list[dict], arc_bridge_checks: list[dict] | None = None) -> dict:
+    if not arcs:
+        return {"score": 35, "issues": [{"field": "narrative_arcs", "issue": "本卷还没有拆出弧线", "severity": "high"}], "warnings": []}
+    issues: list[dict] = []
+    warnings: list[dict] = []
+    for idx, arc in enumerate(arcs):
+        name = arc.get("name", f"弧线{idx + 1}") if isinstance(arc, dict) else f"弧线{idx + 1}"
+        if not isinstance(arc, dict):
+            issues.append({"arc_index": idx, "arc_name": name, "field": "arc", "issue": "弧线数据格式异常", "severity": "high"})
+            continue
+        if not arc.get("opening_state"):
+            issues.append({"arc_index": idx, "arc_name": name, "field": "opening_state", "issue": "缺少弧线开局状态", "severity": "medium"})
+        if not arc.get("ending_state"):
+            issues.append({"arc_index": idx, "arc_name": name, "field": "ending_state", "issue": "缺少弧线终点状态", "severity": "medium"})
+        if idx > 0 and not (arc.get("handoff_from_previous") or arc.get("dependence_on_previous")):
+            issues.append({"arc_index": idx, "arc_name": name, "field": "handoff_from_previous", "issue": "缺少上承交接", "severity": "high"})
+        if not (arc.get("handoff_to_next") or arc.get("payoff_for_next")):
+            warnings.append({"arc_index": idx, "arc_name": name, "field": "handoff_to_next", "issue": "下启钩子不够明确", "severity": "medium"})
+        if not arc.get("continuity_chain"):
+            issues.append({"arc_index": idx, "arc_name": name, "field": "continuity_chain", "issue": "缺少因果链", "severity": "medium"})
+        if not isinstance(arc.get("arc_steps"), list) or len(arc.get("arc_steps") or []) < 4:
+            issues.append({"arc_index": idx, "arc_name": name, "field": "arc_steps", "issue": "变化台阶少于4个", "severity": "high"})
+    for check in _safe_list(arc_bridge_checks):
+        gate = _safe_dict(check.get("quality_gate") or check.get("bridge_check") or check)
+        for issue in _safe_list(gate.get("related_issues") or gate.get("issues")):
+            if isinstance(issue, dict):
+                issues.append({**issue, "severity": issue.get("severity", "medium")})
+        for warning in _safe_list(gate.get("related_warnings") or gate.get("warnings")):
+            if isinstance(warning, dict):
+                warnings.append({**warning, "severity": warning.get("severity", "medium")})
+    score = max(0, 100 - len(issues) * 6 - len(warnings) * 3)
+    return {"score": score, "issues": issues, "warnings": warnings}
+
+
+def _volume_quality(volume, volume_chapters: list) -> dict:
+    arcs = _safe_list(volume.narrative_arcs)
+    summary_text = "\n".join([x for x in [volume.summary, volume.outline, volume.theme] if x])
+    arc_quality = _arc_quality_for_volume(arcs, _safe_list(volume.arc_bridge_checks))
+    arc_steps_count = sum(len(_safe_list(arc.get("arc_steps"))) for arc in arcs if isinstance(arc, dict))
+    chapter_target = volume.chapter_count or max(0, (volume.chapter_range_end or 0) - (volume.chapter_range_start or 0) + 1)
+    capacity_ratio = min(1, arc_steps_count / max(4, round((chapter_target or 0) / 2))) if chapter_target else (1 if arc_steps_count else 0)
+    has_foreshadowing = any(_safe_list(arc.get("foreshadowing_plan")) for arc in arcs if isinstance(arc, dict))
+    has_character_or_faction = any(
+        _safe_list(arc.get("character_introduction_plan")) or _safe_list(arc.get("character_focus")) or _safe_list(arc.get("faction_introduction_plan")) or _safe_list(arc.get("faction_focus"))
+        for arc in arcs if isinstance(arc, dict)
+    )
+    last_arc = arcs[-1] if arcs and isinstance(arcs[-1], dict) else {}
+    dimensions = [
+        {"key": "volume_goal", "label": "卷目标", "score": 90 if len(summary_text) >= 80 else 74 if len(summary_text) >= 30 else 45, "issue": "卷目标偏虚，需要写清这一卷主角要完成什么。"},
+        {"key": "pressure_upgrade", "label": "压力升级", "score": 86 if len(arcs) >= 3 else 68 if len(arcs) >= 2 else 42, "issue": "压力升级不够清楚，容易变成事件平铺。"},
+        {"key": "arc_chain", "label": "弧线链", "score": arc_quality["score"], "issue": "弧线链存在断点，需要优化前后交接。"},
+        {"key": "protagonist_change", "label": "主角变化", "score": 84 if any(isinstance(arc, dict) and arc.get("protagonist_change") for arc in arcs) else 58, "issue": "主角阶段变化不够明确。"},
+        {"key": "chapter_capacity", "label": "章节承载", "score": 35 if not arcs else round(55 + capacity_ratio * 35), "issue": "变化台阶偏少，展开章节后可能水或散。"},
+        {"key": "foreshadowing", "label": "伏笔安排", "score": 82 if has_foreshadowing else 62, "issue": "伏笔安排偏弱，建议补铺设/推进/回收。"},
+        {"key": "ending_hook", "label": "卷末钩子", "score": 86 if (last_arc.get("handoff_to_next") or last_arc.get("payoff_for_next") or last_arc.get("ending_state")) else 48, "issue": "卷末钩子不清楚，下一卷入口偏弱。"},
+        {"key": "role_faction_usage", "label": "角色势力", "score": 82 if has_character_or_faction else 66, "issue": "角色/势力使用偏弱，容易只停留在设定名词。"},
+    ]
+    score = round(sum(d["score"] for d in dimensions) / len(dimensions))
+    issues = [{"field": d["key"], "issue": d["issue"], "severity": _quality_severity(d["score"])} for d in dimensions if d["score"] < 60]
+    warnings = [{"field": d["key"], "issue": d["issue"], "severity": _quality_severity(d["score"])} for d in dimensions if 60 <= d["score"] < 75]
+    return {
+        "score": score,
+        "passed": score >= 75 and not issues,
+        "dimensions": dimensions,
+        "issues": issues,
+        "warnings": warnings,
+        "arc_quality": arc_quality,
+        "arc_steps_count": arc_steps_count,
+        "chapter_count": len(volume_chapters),
+        "written_chapter_count": len([ch for ch in volume_chapters if (ch.word_count or 0) > 0]),
+    }
+
+
 class CompleteQualityIssueRequest(BaseModel):
     chapter_id: str
     issue_index: int | None = None
@@ -41,7 +186,7 @@ async def _load_story_base(project_id: str, db: AsyncSession):
     from app.models.character import Character
     from app.models.faction import Faction, FactionRelation
     from app.models.volume import Volume
-    from app.models.chapter import Chapter
+    from app.models.chapter import Chapter, GenerationTask
     from app.models.relationship_event import RelationshipEvent
 
     project = (await db.execute(select(Project).where(Project.id == project_id))).scalar_one_or_none()
@@ -57,6 +202,7 @@ async def _load_story_base(project_id: str, db: AsyncSession):
     foreshadowing = (await db.execute(select(ForeshadowingPlan).where(ForeshadowingPlan.project_id == project_id).order_by(ForeshadowingPlan.created_at))).scalars().all()
     events = (await db.execute(select(TimelineEvent).where(TimelineEvent.project_id == project_id).order_by(TimelineEvent.absolute_day, TimelineEvent.created_at))).scalars().all()
     relation_events = (await db.execute(select(RelationshipEvent).where(RelationshipEvent.project_id == project_id).order_by(RelationshipEvent.chapter_number))).scalars().all()
+    tasks = (await db.execute(select(GenerationTask).where(GenerationTask.project_id == project_id).order_by(GenerationTask.created_at.desc()).limit(80))).scalars().all()
 
     return {
         "project": project,
@@ -69,6 +215,7 @@ async def _load_story_base(project_id: str, db: AsyncSession):
         "foreshadowing": foreshadowing,
         "events": events,
         "relation_events": relation_events,
+        "tasks": tasks,
     }
 
 
@@ -425,7 +572,11 @@ async def get_story_landscape(project_id: str, user: User = Depends(get_current_
 @router.get("/quality-dashboard")
 async def get_quality_dashboard(project_id: str, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     data = await _load_story_base(project_id, db)
+    project = data["project"]
+    world = data["world"]
+    volumes = data["volumes"]
     chapters = data["chapters"]
+    tasks = data["tasks"]
     chapter_rows = [_chapter_payload(ch) for ch in chapters]
     scored = [c["quality_score"] for c in chapter_rows if isinstance(c["quality_score"], int)]
     written = [c for c in chapter_rows if c["word_count"] > 0 or c["status"] == "written"]
@@ -480,6 +631,120 @@ async def get_quality_dashboard(project_id: str, user: User = Depends(get_curren
                 "raw_issue": issue,
             })
 
+    volume_chapter_map = {
+        str(volume.id): [ch for ch in chapters if str(ch.volume_id or "") == str(volume.id)]
+        for volume in volumes
+    }
+    world_quality = _world_rule_score(world, project)
+    volume_quality_rows = []
+    arc_quality_rows = []
+    quality_scores = []
+    quality_issues = []
+
+    def add_score(scope: str, scope_id: str, scope_name: str, score_type: str, score: int, passed: bool, dimensions=None):
+        quality_scores.append({
+            "scope": scope,
+            "scope_id": scope_id,
+            "scope_name": scope_name,
+            "score_type": score_type,
+            "score": score,
+            "passed": passed,
+            "status": _score_status(score, passed),
+            "dimensions": dimensions or [],
+        })
+
+    def add_issue(scope: str, scope_id: str, scope_name: str, title: str, description: str, severity: str = "medium", action: str = "", fix_action: str = "", target: dict | None = None):
+        quality_issues.append({
+            "scope": scope,
+            "scope_id": scope_id,
+            "scope_name": scope_name,
+            "title": title,
+            "description": description,
+            "severity": severity,
+            "action": action,
+            "fix_action": fix_action,
+            "target": target or {},
+        })
+
+    add_score("world", str(world.id) if world else "", "世界规则", "世界规则闸门", int(world_quality["score"]), bool(world_quality["passed"]))
+    for item in world_quality["issues"]:
+        add_issue("world", str(world.id) if world else "", "世界规则", item.get("issue", "世界规则缺口"), item.get("issue", ""), item.get("severity", "medium"), "open_world", "strengthen_world_rules")
+    for item in world_quality["warnings"]:
+        add_issue("world", str(world.id) if world else "", "世界规则", item.get("issue", "世界规则提醒"), item.get("issue", ""), item.get("severity", "medium"), "open_world", "strengthen_world_rules")
+
+    outline_stage_count = len(_safe_list(project.writing_style.get("long_term_plan", {}).get("stage_plan") if isinstance(project.writing_style, dict) else []))
+    outline_score = 85 if volumes and outline_stage_count else 72 if volumes else 45
+    add_score("outline", str(project.id), "全书大纲", "大纲结构分", outline_score, outline_score >= 75, [
+        {"key": "volume_count", "label": "分卷数量", "score": 90 if volumes else 40},
+        {"key": "stage_plan", "label": "长线阶段", "score": 88 if outline_stage_count else 65},
+    ])
+    if not volumes:
+        add_issue("outline", str(project.id), "全书大纲", "缺少分卷大纲", "项目还没有可用于后续写作的分卷结构。", "high", "open_outline", "generate_outline")
+    elif not outline_stage_count:
+        add_issue("outline", str(project.id), "全书大纲", "长线阶段未结构化", "项目写作风格中缺少可追踪的长线阶段计划。", "medium", "open_outline", "adjust_outline")
+
+    for volume in volumes:
+        v_chapters = volume_chapter_map.get(str(volume.id), [])
+        vq = _volume_quality(volume, v_chapters)
+        volume_quality_rows.append({
+            "volume_id": str(volume.id),
+            "volume_number": volume.volume_number,
+            "title": volume.title,
+            **vq,
+        })
+        add_score("volume", str(volume.id), f"卷{volume.volume_number} · {volume.title}", "卷级结构分", int(vq["score"]), bool(vq["passed"]), vq.get("dimensions", []))
+        for item in vq.get("issues", []):
+            add_issue("volume", str(volume.id), f"卷{volume.volume_number} · {volume.title}", item.get("issue", "卷结构问题"), item.get("issue", ""), item.get("severity", "medium"), "open_volume_detail", "adjust_volume")
+        for item in vq.get("warnings", []):
+            add_issue("volume", str(volume.id), f"卷{volume.volume_number} · {volume.title}", item.get("issue", "卷结构提醒"), item.get("issue", ""), item.get("severity", "medium"), "open_volume_detail", "adjust_volume")
+
+        arcs = _safe_list(volume.narrative_arcs)
+        arc_quality = vq.get("arc_quality", {})
+        add_score("arc", str(volume.id), f"卷{volume.volume_number}弧线链", "弧线连续性分", int(arc_quality.get("score", 0)), int(arc_quality.get("score", 0)) >= 75)
+        for issue in _safe_list(arc_quality.get("issues")):
+            idx = issue.get("arc_index")
+            arc_name = issue.get("arc_name") or (arcs[idx].get("name") if isinstance(idx, int) and idx < len(arcs) and isinstance(arcs[idx], dict) else "未命名弧线")
+            row = {
+                "volume_id": str(volume.id),
+                "volume_number": volume.volume_number,
+                "volume_title": volume.title,
+                "arc_index": idx,
+                "arc_name": arc_name,
+                "issue": issue.get("issue", ""),
+                "severity": issue.get("severity", "medium"),
+            }
+            arc_quality_rows.append(row)
+            add_issue("arc", str(volume.id), f"卷{volume.volume_number} · {arc_name}", issue.get("issue", "弧线连续性问题"), issue.get("issue", ""), issue.get("severity", "medium"), "open_arc_detail", "repair_arc", {"volume_id": str(volume.id), "arc_index": idx})
+        for warning in _safe_list(arc_quality.get("warnings")):
+            idx = warning.get("arc_index")
+            arc_name = warning.get("arc_name") or (arcs[idx].get("name") if isinstance(idx, int) and idx < len(arcs) and isinstance(arcs[idx], dict) else "未命名弧线")
+            add_issue("arc", str(volume.id), f"卷{volume.volume_number} · {arc_name}", warning.get("issue", "弧线连续性提醒"), warning.get("issue", ""), warning.get("severity", "medium"), "open_arc_detail", "polish_arc_handoff", {"volume_id": str(volume.id), "arc_index": idx})
+
+    for row in issue_rows:
+        add_issue("chapter", row["chapter_id"], f"第{row['chapter_number']}章 · {row['chapter_title']}", row.get("issue", "章节质量问题"), row.get("fix_suggestion") or row.get("issue", ""), row.get("severity") or "medium", "open_chapter", "repair_chapter", {"chapter_id": row["chapter_id"], "issue_index": row.get("issue_index")})
+    for ch in chapters:
+        checks = _safe_dict(ch.continuity_checks)
+        diagnosis = _safe_dict(checks.get("prewrite_diagnosis"))
+        for item in _safe_list(diagnosis.get("blocking_issues")):
+            if isinstance(item, dict):
+                add_issue("chapter", str(ch.id), f"第{ch.chapter_number}章 · {ch.title}", item.get("problem", "写作前置诊断未通过"), item.get("fix", item.get("problem", "")), "high", "open_chapter", "inject_prewrite_fix", {"chapter_id": str(ch.id)})
+    failed_tasks = [task for task in tasks if task.status == "failed"]
+    for task in failed_tasks[:12]:
+        add_issue("task", str(task.id), task.task_type, f"任务失败：{task.task_type}", _short_text(task.error_message or "任务失败", 220), "medium", "open_tasks", "retry_task", {"task_id": str(task.id)})
+
+    severity_order = {"critical": 0, "high": 1, "medium": 2, "low": 3}
+    quality_issues.sort(key=lambda x: (severity_order.get(x.get("severity", "medium"), 2), x.get("scope", ""), x.get("scope_name", "")))
+
+    aggregate_scores = {
+        "overall": round(sum(item["score"] for item in quality_scores) / len(quality_scores)) if quality_scores else 0,
+        "world": int(world_quality["score"]),
+        "outline": outline_score,
+        "volume": round(sum(v["score"] for v in volume_quality_rows) / len(volume_quality_rows)) if volume_quality_rows else 0,
+        "arc": round(sum(v["arc_quality"]["score"] for v in volume_quality_rows) / len(volume_quality_rows)) if volume_quality_rows else 0,
+        "chapter": round((sum(scored) / len(scored)) * 10) if scored else 0,
+        "task": max(0, 100 - len(failed_tasks) * 8),
+    }
+
     written_count = max(1, len(written))
     def _score_from_flags(flag_count: int) -> int:
         return max(0, min(100, round(100 - (flag_count / written_count) * 100)))
@@ -505,7 +770,31 @@ async def get_quality_dashboard(project_id: str, user: User = Depends(get_curren
             "average_quality": round(sum(scored) / len(scored), 1) if scored else None,
             "low_quality_count": len([s for s in scored if s < 7]),
             "issue_count": len(issue_rows),
+            "global_issue_count": len(quality_issues),
+            "high_issue_count": len([i for i in quality_issues if i.get("severity") in {"critical", "high"}]),
+            "failed_task_count": len(failed_tasks),
+            "overall_score": aggregate_scores["overall"],
         },
+        "project": {
+            "id": str(project.id),
+            "title": project.title,
+            "genre": project.genre,
+            "core_theme": project.core_theme,
+        },
+        "aggregate_scores": aggregate_scores,
+        "quality_scores": quality_scores,
+        "quality_issues": quality_issues,
+        "world_quality": world_quality,
+        "volume_quality": volume_quality_rows,
+        "arc_quality_issues": arc_quality_rows,
+        "failed_tasks": [
+            {
+                "id": str(task.id),
+                "task_type": task.task_type,
+                "error_message": task.error_message,
+                "updated_at": task.updated_at.isoformat() if task.updated_at else "",
+            } for task in failed_tasks[:20]
+        ],
         "chapters": chapter_rows,
         "issues": issue_rows,
         "dimensions": [

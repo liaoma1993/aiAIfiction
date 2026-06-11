@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import { Button, Card, Col, message, Progress, Row, Space, Spin, Statistic, Table, Tag, Typography } from 'antd';
-import { AuditOutlined, LeftOutlined, ToolOutlined } from '@ant-design/icons';
+import { Alert, Button, Card, Col, message, Progress, Row, Space, Spin, Statistic, Table, Tabs, Tag, Typography } from 'antd';
+import { AuditOutlined, BarChartOutlined, BranchesOutlined, DatabaseOutlined, ExclamationCircleOutlined, LeftOutlined, ToolOutlined } from '@ant-design/icons';
 import { chapterApi, storyApi } from '@/services/projectApi';
 import api from '@/services/api';
 
@@ -42,12 +42,31 @@ const SEVERITY_LABELS: Record<string, { label: string; color: string }> = {
   轻微: { label: '轻微', color: 'blue' },
 };
 
+const SCOPE_LABELS: Record<string, { label: string; color: string }> = {
+  project: { label: '项目', color: 'purple' },
+  world: { label: '世界观', color: 'cyan' },
+  outline: { label: '大纲', color: 'geekblue' },
+  volume: { label: '卷轴', color: 'blue' },
+  arc: { label: '弧线', color: 'gold' },
+  chapter: { label: '章节', color: 'green' },
+  task: { label: '任务', color: 'red' },
+  model: { label: '模型', color: 'volcano' },
+};
+
 const scoreColor = (score?: number | null) => {
   if (!score) return 'default';
   if (score >= 8) return 'green';
   if (score >= 7) return 'blue';
   if (score >= 6) return 'orange';
   return 'red';
+};
+
+const percentColor = (score?: number | null) => {
+  if (score === null || score === undefined) return '#d9d9d9';
+  if (score >= 85) return '#52c41a';
+  if (score >= 75) return '#1677ff';
+  if (score >= 60) return '#faad14';
+  return '#ff4d4f';
 };
 
 const dimensionLabel = (name: string) => QUALITY_DIMENSION_LABELS[name] || name;
@@ -60,6 +79,11 @@ const renderChapterStatus = (status: string) => {
 const renderSeverity = (severity: string) => {
   if (!severity) return '-';
   const info = SEVERITY_LABELS[severity] || { label: severity, color: 'default' };
+  return <Tag color={info.color}>{info.label}</Tag>;
+};
+
+const renderScope = (scope: string) => {
+  const info = SCOPE_LABELS[scope] || { label: scope || '未知', color: 'default' };
   return <Tag color={info.color}>{info.label}</Tag>;
 };
 
@@ -356,18 +380,120 @@ export default function QualityDashboardPage() {
     );
   };
 
+  const globalIssueActions = (record: any, prefix: string) => {
+    if (record.scope === 'chapter') {
+      const repairRecord = {
+        chapter_id: record.target?.chapter_id || record.scope_id,
+        issue_index: record.target?.issue_index,
+        chapter_number: record.scope_name,
+        chapter_title: record.scope_name,
+        issue: record.title,
+        severity: record.severity,
+        fix_suggestion: record.description,
+        raw_issue: {
+          description: record.title,
+          severity: record.severity,
+          fix_suggestion: record.description,
+        },
+      };
+      return repairActions(repairRecord, prefix);
+    }
+    const route = record.scope === 'world'
+      ? `/projects/${projectId}/world-setting`
+      : record.scope === 'outline'
+        ? `/projects/${projectId}/outline`
+        : record.scope === 'task'
+          ? `/projects/${projectId}`
+          : `/projects/${projectId}`;
+    return (
+      <Space size={4} wrap>
+        <Link to={route}><Button size="small">打开处理</Button></Link>
+        {record.scope === 'volume' && <Link to={`/projects/${projectId}`}><Button size="small" icon={<BranchesOutlined />}>去卷轴</Button></Link>}
+        {record.scope === 'arc' && <Link to={`/projects/${projectId}`}><Button size="small" icon={<BranchesOutlined />}>去弧线</Button></Link>}
+        {record.scope === 'task' && <Button size="small" onClick={() => loadDashboard()}>刷新任务</Button>}
+      </Space>
+    );
+  };
+
   if (!projectId) return null;
   if (loading) return <div style={{ padding: 80, textAlign: 'center' }}><Spin size="large" /></div>;
 
   const summary = data?.summary || {};
+  const aggregate = data?.aggregate_scores || {};
+  const globalIssues = data?.quality_issues || [];
+  const scoreCards = [
+    ['综合质量', aggregate.overall, '项目当前总控质量分'],
+    ['世界规则', aggregate.world, '世界观硬规则、代价和主题绑定'],
+    ['大纲结构', aggregate.outline, '全书长线和分卷结构'],
+    ['卷轴结构', aggregate.volume, '卷目标、压力升级和章节承载'],
+    ['弧线连续', aggregate.arc, '上承下启和变化台阶'],
+    ['章节质量', aggregate.chapter, '正文审计平均质量'],
+    ['任务运行', aggregate.task, '失败任务和运行状态'],
+  ];
+  const topIssues = globalIssues.slice(0, 6);
 
   return (
     <div style={{ padding: 24, maxWidth: 1280, margin: '0 auto' }}>
       <Space style={{ marginBottom: 16 }}>
         <Link to={`/projects/${projectId}`}><Button icon={<LeftOutlined />}>返回工作台</Button></Link>
         <AuditOutlined style={{ color: '#1677ff', fontSize: 20 }} />
-        <Title level={3} style={{ margin: 0 }}>质量仪表盘</Title>
+        <Title level={3} style={{ margin: 0 }}>项目质量总控</Title>
       </Space>
+
+      <Row gutter={[12, 12]} style={{ marginBottom: 16 }}>
+        <Col xs={24} lg={8}>
+          <Card>
+            <Space align="center" size={18}>
+              <Progress type="circle" percent={Number(aggregate.overall || 0)} size={112} strokeColor={percentColor(aggregate.overall)} />
+              <div>
+                <Title level={4} style={{ margin: 0 }}>{data?.project?.title || '当前项目'}</Title>
+                <Text type="secondary">{data?.project?.genre || '未分类'} · {data?.project?.core_theme ? `核心主题：${data.project.core_theme}` : '未设置核心主题'}</Text>
+                <div style={{ marginTop: 10 }}>
+                  <Space wrap>
+                    <Tag color={summary.high_issue_count ? 'red' : 'green'}>高优先级 {summary.high_issue_count || 0}</Tag>
+                    <Tag color={summary.global_issue_count ? 'orange' : 'green'}>问题 {summary.global_issue_count || 0}</Tag>
+                    <Tag color={summary.failed_task_count ? 'red' : 'green'}>失败任务 {summary.failed_task_count || 0}</Tag>
+                  </Space>
+                </div>
+              </div>
+            </Space>
+          </Card>
+        </Col>
+        <Col xs={24} lg={16}>
+          <Row gutter={[8, 8]}>
+            {scoreCards.slice(1).map(([label, value, help]) => (
+              <Col xs={12} md={8} key={String(label)}>
+                <Card size="small">
+                  <Space style={{ width: '100%', justifyContent: 'space-between' }}>
+                    <Text type="secondary">{label}</Text>
+                    <Text strong>{value ?? 0}</Text>
+                  </Space>
+                  <Progress percent={Number(value || 0)} size="small" showInfo={false} strokeColor={percentColor(Number(value || 0))} />
+                  <Text type="secondary" style={{ fontSize: 11 }}>{help}</Text>
+                </Card>
+              </Col>
+            ))}
+          </Row>
+        </Col>
+      </Row>
+
+      {topIssues.length > 0 && (
+        <Card title={<span><ExclamationCircleOutlined /> 优先处理</span>} style={{ marginBottom: 16 }}>
+          <div style={{ display: 'grid', gap: 10 }}>
+            {topIssues.map((issue: any, idx: number) => (
+              <div key={`${issue.scope}-${issue.scope_id}-${idx}`} style={{ display: 'grid', gridTemplateColumns: 'auto 1fr auto', gap: 10, alignItems: 'center', padding: '10px 12px', border: '1px solid #e5ebf3', borderRadius: 8, background: '#fbfcfe' }}>
+                <Space size={4} wrap>{renderSeverity(issue.severity)}{renderScope(issue.scope)}</Space>
+                <div>
+                  <Text strong>{issue.scope_name}</Text>
+                  <div style={{ marginTop: 2 }}><Text>{issue.title}</Text></div>
+                  {issue.description && <div><Text type="secondary" style={{ fontSize: 12 }}>{issue.description}</Text></div>}
+                </div>
+                {globalIssueActions(issue, `top-${idx}`)}
+              </div>
+            ))}
+          </div>
+        </Card>
+      )}
 
       <Row gutter={[12, 12]} style={{ marginBottom: 16 }}>
         <Col xs={12} md={4}><Card><Statistic title="平均质量" value={summary.average_quality ?? '--'} suffix={summary.average_quality ? '/10' : ''} /></Card></Col>
@@ -375,8 +501,69 @@ export default function QualityDashboardPage() {
         <Col xs={12} md={4}><Card><Statistic title="已写章节" value={summary.written_chapter_count || 0} /></Card></Col>
         <Col xs={12} md={4}><Card><Statistic title="总字数" value={summary.total_words || 0} /></Card></Col>
         <Col xs={12} md={4}><Card><Statistic title="平均字数" value={summary.average_words || 0} /></Card></Col>
-        <Col xs={12} md={4}><Card><Statistic title="问题数" value={summary.issue_count || 0} /></Card></Col>
+        <Col xs={12} md={4}><Card><Statistic title="全局问题" value={summary.global_issue_count || summary.issue_count || 0} /></Card></Col>
       </Row>
+
+      <Card style={{ marginBottom: 16 }}>
+        <Tabs
+          items={[
+            {
+              key: 'issues',
+              label: <span><ExclamationCircleOutlined /> 问题队列</span>,
+              children: (
+                <Table
+                  rowKey={(r: any, idx) => `${r.scope}-${r.scope_id}-${idx}`}
+                  dataSource={globalIssues}
+                  pagination={{ pageSize: 10 }}
+                  scroll={{ x: 1180 }}
+                  columns={[
+                    { title: '层级', dataIndex: 'scope', width: 96, filters: Object.entries(SCOPE_LABELS).map(([value, info]) => ({ text: info.label, value })), onFilter: (value, record: any) => record.scope === value, render: renderScope },
+                    { title: '严重度', dataIndex: 'severity', width: 100, render: renderSeverity },
+                    { title: '对象', dataIndex: 'scope_name', width: 190, ellipsis: true },
+                    {
+                      title: '问题',
+                      dataIndex: 'title',
+                      render: (v, record: any) => (
+                        <div style={{ whiteSpace: 'normal', overflowWrap: 'anywhere', lineHeight: 1.65 }}>
+                          <Text strong>{v}</Text>
+                          {record.description && <div><Text type="secondary" style={{ fontSize: 12 }}>{record.description}</Text></div>}
+                        </div>
+                      ),
+                    },
+                    { title: '操作', width: 310, fixed: 'right', render: (_v, record: any, idx) => globalIssueActions(record, `global-${idx}`) },
+                  ]}
+                />
+              ),
+            },
+            {
+              key: 'scores',
+              label: <span><BarChartOutlined /> 评分合并</span>,
+              children: (
+                <Table
+                  rowKey={(r: any, idx) => `${r.scope}-${r.scope_id}-${idx}`}
+                  dataSource={data?.quality_scores || []}
+                  pagination={{ pageSize: 10 }}
+                  scroll={{ x: 980 }}
+                  columns={[
+                    { title: '层级', dataIndex: 'scope', width: 96, render: renderScope },
+                    { title: '对象', dataIndex: 'scope_name', width: 220, ellipsis: true },
+                    { title: '评分类型', dataIndex: 'score_type', width: 140 },
+                    { title: '分数', dataIndex: 'score', width: 160, render: (v: number, record: any) => <Space><Tag color={percentColor(v)}>{v}</Tag><Progress percent={Number(v || 0)} size="small" showInfo={false} style={{ width: 90 }} strokeColor={percentColor(v)} /></Space> },
+                    { title: '状态', dataIndex: 'status', width: 100, render: (v: string) => <Tag color={v === 'pass' ? 'green' : v === 'warning' ? 'orange' : 'red'}>{v === 'pass' ? '通过' : v === 'warning' ? '提醒' : '需修'}</Tag> },
+                    {
+                      title: '维度',
+                      dataIndex: 'dimensions',
+                      render: (dims: any[]) => (
+                        <Space wrap>{(dims || []).slice(0, 8).map((d: any) => <Tag key={d.key || d.label}>{d.label || d.key} {d.score}</Tag>)}</Space>
+                      ),
+                    },
+                  ]}
+                />
+              ),
+            },
+          ]}
+        />
+      </Card>
 
       <Row gutter={[16, 16]} style={{ marginBottom: 16 }}>
         <Col xs={24} lg={8}>

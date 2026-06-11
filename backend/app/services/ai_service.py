@@ -481,13 +481,25 @@ Skill 使用规则：
 - compatibility_notes: 旧小说兼容说明；不得自动重写旧正文、旧摘要、旧关系。
 
 根据卷大纲的复杂度和节奏，你自己判断最合适的弧线数量。每条弧线返回：
+【输出长度硬限制，必须遵守，防止 JSON 被截断】
+- 这是“卷弧线结构拆分”，不是章节细纲、人物小传或势力设定集；只输出足够后续展开章节使用的结构骨架。
+- 如果弧线数量超过4条，所有字段必须更短：description 120-220字，opening_state/ending_state 各80字内，continuity_chain 180字内，irreplaceable_value/protagonist_change 各100字内。
+- 每条弧线 arc_steps 固定4个，除非弧线是卷核心危机才允许5个；不要输出6-7个台阶。
+- character_focus 最多3个；character_introduction_plan 最多2个关键角色；faction_introduction_plan 最多1个关键组织；没有新关键角色/组织时返回空数组。
+- character_lifecycle_updates、faction_lifecycle_updates、arc_review_targets、blueprint_repair_targets 各最多3条，每条60字内。
+- key_milestones 2-3个即可，每个节点用一句话，不要写成对象长文。
+- protagonist_continuity_state 的 opening/ending 每个子字段一句短语即可，不要写段落。
+- foreshadowing_plan 用对象，字段仅包含 setup、advance、payoff，各一句短语。
+- 禁止把每个事件写成完整剧情段落；禁止输出大段心理描写、会议细节、人物背景和完整对白。
+- 最终 JSON 必须完整闭合，宁可少写细节，也不能因为过长导致截断。
+
 - name: 弧线名称（8字内，要有辨识度）
 - arc_type: 弧线类型，必须说明这条弧线主要改变什么
 - narrative_function: 叙事功能——"主线推进"/"角色深化"/"世界观展开"/"伏笔铺设"/"节奏缓冲"/"高潮爆发"
 - closure_level: 开放/半闭合/阶段闭合/完全闭合。普通弧线不要完全闭合
 - must_remain_open: 数组，写本弧线结尾必须保留的未解问题/新后果/关系裂痕/物件状态/外部压力
 - emotional_color: 情感基调（如"压抑中带着希望"、"热血与背叛交织"、"绝望中寻光"）
-- description: 400-600字弧线完整叙事概要，必须写清：主角短期目标、核心对手/阻力、三次以上具体事件升级、每次升级后的即时反馈、弧线起止状态（起点和终点的质变）、与其他弧线的承接关系（为什么不换顺序）。禁止只写情绪变化和主题阐释。
+- description: 120-220字弧线叙事概要，必须写清：主角短期目标、核心对手/阻力、2-3次具体事件升级、即时反馈、起止质变、与前后弧线承接。禁止只写情绪变化和主题阐释。
 - opening_state: 本弧线开局状态，精确到主角处境、核心未解问题、读者已知信息
 - ending_state: 本弧线终点状态，精确到主角处境变化、信息变化、关系变化、未解问题
 - continuity_chain: 本弧线内部的因果链，用“上一状态 -> 触发事件 -> 角色选择 -> 新后果 -> 下一压力”写清连续推进逻辑
@@ -496,22 +508,22 @@ Skill 使用规则：
 - irreplaceable_value: 本弧线不可替代的价值，说明删掉后全卷会缺什么
 - protagonist_change: 主角在本弧线的认知/能力/处境/关系变化
 - protagonist_continuity_state: 对象，包含 opening 和 ending；每项写 body、mind、goal、risk、relationships、resources、knowledge
-- character_focus: 本弧线重点角色，2-5个，写角色名和功能
-- character_introduction_plan: 本弧线关键角色引入计划数组。每项包含 name、role、first_signal、indirect_presence、first_appearance、initial_conflict、trust_progression、cost_of_contact、must_not_do。已有角色也要写“如何承接既有状态”，不要突然变性格。
-- character_lifecycle_updates: 数组，写角色 entry_status 从什么变成什么，以及对应章节/台阶依据
-- faction_introduction_plan: 本弧线关键组织/势力引入计划数组。每项包含 name、narrative_function、first_signal、symbol_or_trace、low_level_contact、rule_pressure、formal_entry_condition、cost_of_contact、must_not_do。
-- faction_lifecycle_updates: 数组，写组织 exposure_stage 从什么变成什么，以及接触代价/规则认知
-- foreshadowing_plan: 本弧线伏笔计划，写清铺设/推进/回收
+- character_focus: 本弧线重点角色，最多3个，写角色名和功能
+- character_introduction_plan: 本弧线关键角色引入计划数组，最多2项。每项包含 name、role、first_signal、first_appearance、initial_conflict、cost_of_contact、must_not_do；已有角色只写如何承接既有状态。
+- character_lifecycle_updates: 数组，最多3条，写角色 entry_status 从什么变成什么。
+- faction_introduction_plan: 本弧线关键组织/势力引入计划数组，最多1项。每项包含 name、narrative_function、first_signal、low_level_contact、rule_pressure、cost_of_contact、must_not_do。
+- faction_lifecycle_updates: 数组，最多3条，写组织 exposure_stage 从什么变成什么。
+- foreshadowing_plan: 对象，包含 setup、advance、payoff 三项，各一句话。
 - bridge_chapter_plan: 对象，包含 needed、bridge_from、bridge_to、must_process、suggested_chapter_count。若不需要桥接，needed=false，但仍说明原因
 - arc_review_targets: 数组，列出后续审查应重点检查的断裂风险
 - blueprint_repair_targets: 数组，列出章节蓝图展开时必须修的潜在问题
 - compatibility_notes: 旧小说兼容说明，强调旧内容不被自动改写
-- arc_steps: 变化台阶，4-7个对象。每个对象必须包含 step_name、starting_state、trigger_event、visible_action、friction、state_change、consequence、carry_forward。它们是弧线台阶，不是章节标题。
+- arc_steps: 变化台阶，固定4个对象；卷核心危机最多5个。每个对象必须包含 step_name、starting_state、trigger_event、visible_action、friction、state_change、consequence、carry_forward。每个字段一句短语，它们是弧线台阶，不是章节标题。
 - chapter_start: 粗略承载起始章号，仅供后续展开参考
 - chapter_end: 粗略承载结束章号，仅供后续展开参考
 - chapter_count: 粗略承载章数，仅供后续展开参考
 - tension_curve: 张力变化描述（如"中→攀升→高→轻微回落→爆发"）
-- key_milestones: 关键节点，3-5个，每个写清该节点的情绪价值、叙事意义和由哪个 arc_steps 台阶触发
+- key_milestones: 关键节点，2-3个，每个用一句话写清情绪价值、叙事意义和由哪个 arc_steps 台阶触发
 - dependence_on_previous: 对前一条弧线的具体依赖（本弧线第1条则为"无"），必须和 handoff_from_previous 一致
 - payoff_for_next: 为本卷后续弧线铺设的钩子（本弧线最后1条则写"本卷收束"），必须和 handoff_to_next 一致
 
@@ -2224,7 +2236,7 @@ class AIService:
         writing_style_guidance: str = "未启用写作风格 Skill，按本卷大纲和通用网文写法拆分。",
         volume_continuity_context: str = "无",
     ) -> list[dict]:
-        return await self._ask_list(EXPAND_VOLUME_ARCS_PROMPT, system=SYSTEM_ARCHITECT, max_tokens=16384,
+        return await self._ask_list(EXPAND_VOLUME_ARCS_PROMPT, system=SYSTEM_ARCHITECT, max_tokens=1280000,
             title=title, genre=genre,
             volume_title=volume_title, volume_outline=volume_outline,
             characters_summary=characters_summary, factions_summary=factions_summary,
