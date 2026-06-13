@@ -34,6 +34,12 @@ function textList(value: any) {
   return String(value);
 }
 
+function compactTagText(value: any, max = 12) {
+  const text = textList(value).trim();
+  if (!text) return '';
+  return text.length > max ? `${text.slice(0, max)}...` : text;
+}
+
 function completeness(faction: any) {
   const fields = ['description', 'headquarters', 'territory', 'core_creed', 'core_conflict_of_interest', 'internal_faction_cracks', 'reputation_and_reality'];
   return fields.filter((key) => String(faction?.[key] || '').trim()).length;
@@ -128,7 +134,7 @@ export default function FactionsPage() {
                     <Text strong className="faction-name">{faction.name}</Text>
                     <span>
                       <Tag color={TYPE_COLORS[label] || 'default'}>{label}</Tag>
-                      {faction.headquarters && <Tag>{faction.headquarters}</Tag>}
+                      {compactTagText(faction.headquarters) && <Tag title={textList(faction.headquarters)}>{compactTagText(faction.headquarters)}</Tag>}
                     </span>
                   </span>
                   <Paragraph className="faction-summary">{faction.core_creed || faction.description || faction.core_conflict_of_interest || '暂无势力描述'}</Paragraph>
@@ -151,8 +157,6 @@ export default function FactionsPage() {
           <div className="faction-drawer">
             <Space wrap>
               <Tag color={TYPE_COLORS[typeLabel(selectedFaction.faction_type)] || 'default'}>{typeLabel(selectedFaction.faction_type)}</Tag>
-              {selectedFaction.headquarters && <Tag>{selectedFaction.headquarters}</Tag>}
-              {selectedFaction.territory && <Tag>{selectedFaction.territory}</Tag>}
             </Space>
             <Title level={4}>{selectedFaction.name}</Title>
             <div className="faction-detail-list">

@@ -6,6 +6,7 @@ from typing import Any
 
 from app.database import async_session
 from app.models.llm_call_log import LLMCallLog
+from app.models.project import Project
 
 
 _llm_context: ContextVar[dict[str, Any]] = ContextVar("llm_call_context", default={})
@@ -52,10 +53,15 @@ async def record_llm_call(
     context = get_llm_call_context()
     try:
         async with async_session() as db:
+            project_id = context.get("project_id") or None
+            project_name = context.get("project_name") or context.get("title") or ""
+            if project_id and not project_name:
+                project = await db.get(Project, project_id)
+                project_name = project.title if project else ""
             db.add(
                 LLMCallLog(
-                    project_id=context.get("project_id") or None,
-                    project_name=_clip(context.get("project_name") or context.get("title") or "", 200),
+                    project_id=project_id,
+                    project_name=_clip(project_name, 200),
                     task_id=_clip(context.get("task_id") or "", 36),
                     function_name=_clip(context.get("function_name") or "", 100),
                     provider_id=_clip(getattr(provider, "provider_id", "") or "", 36),

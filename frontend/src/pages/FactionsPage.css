@@ -119,6 +119,21 @@
   min-width: 0;
 }
 
+.faction-main > span {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  min-width: 0;
+}
+
+.faction-main .ant-tag,
+.faction-drawer .ant-tag {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .faction-name {
   overflow: hidden;
   padding-right: 30px;
@@ -172,6 +187,7 @@
 .faction-detail-list p.ant-typography {
   margin: 6px 0 0;
   color: var(--text-secondary);
+  overflow-wrap: anywhere;
   white-space: pre-wrap;
 }
 

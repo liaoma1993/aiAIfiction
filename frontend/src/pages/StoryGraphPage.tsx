@@ -1,15 +1,17 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import { Button, Drawer, Empty, Input, Segmented, Space, Spin, Tag, Typography } from 'antd';
+import { Button, Drawer, Empty, Input, Segmented, Space, Spin, Tabs, Tag, Typography } from 'antd';
 import {
   ApartmentOutlined,
   BranchesOutlined,
+  EnvironmentOutlined,
   LeftOutlined,
   NodeIndexOutlined,
   SearchOutlined,
   TeamOutlined,
 } from '@ant-design/icons';
 import { storyApi } from '@/services/projectApi';
+import LandscapePage from './LandscapePage';
 import './StoryGraphPage.css';
 
 const { Title, Text, Paragraph } = Typography;
@@ -70,9 +72,19 @@ export default function StoryGraphPage() {
         <Link to={`/projects/${projectId}`}><Button icon={<LeftOutlined />}>返回工作台</Button></Link>
         <div className="story-graph-titleblock">
           <Title level={3}>叙事图谱</Title>
-          <Text type="secondary">查看角色、组织、伏笔和关系边，快速定位叙事连接。</Text>
+          <Text type="secondary">统一查看关系网络、世界设定、卷章地图和事件线。</Text>
         </div>
       </header>
+
+      <Tabs
+        className="story-graph-tabs"
+        defaultActiveKey="graph"
+        items={[
+          {
+            key: 'graph',
+            label: <span><NodeIndexOutlined /> 关系图谱</span>,
+            children: (
+              <>
 
       <section className="story-graph-stats">
         {(['全部', '角色', '组织', '伏笔'] as const).map((name) => {
@@ -235,6 +247,16 @@ export default function StoryGraphPage() {
           </div>
         )}
       </Drawer>
+              </>
+            ),
+          },
+          {
+            key: 'landscape',
+            label: <span><EnvironmentOutlined /> 小说景观</span>,
+            children: <LandscapePage embedded />,
+          },
+        ]}
+      />
     </div>
   );
 }

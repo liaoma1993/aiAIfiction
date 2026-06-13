@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Alert, Button, Card, Descriptions, Drawer, Empty, Input, Select, Space, Statistic, Table, Tag, Typography, Row, Col, message } from 'antd';
-import { ArrowLeftOutlined, ReloadOutlined, SearchOutlined } from '@ant-design/icons';
+import { ArrowLeftOutlined, CopyOutlined, ReloadOutlined, SearchOutlined } from '@ant-design/icons';
 import api from '@/services/api';
 
 const { Title, Text, Paragraph } = Typography;
@@ -39,6 +39,8 @@ const functionLabel: Record<string, string> = {
   split_chapter: '拆分章节',
   split_chapter_metadata: '拆分章节元数据',
   test_provider: '测试模型',
+  _ask_list: '结构列表生成',
+  '_ask_list.json_repair': '结构列表生成 JSON 修复',
 };
 
 const fmt = (value: any) => {
@@ -48,8 +50,64 @@ const fmt = (value: any) => {
   return date.toLocaleString();
 };
 
-const JsonText = ({ title, value }: { title: string; value: any }) => (
-  <Card size="small" title={title}>
+const projectLabel = (record: any) => {
+  if (record?.project_name) return record.project_name;
+  if (record?.project_id) return record.project_id;
+  if (record?.function_name === 'chat_project_plan') return <Text type="secondary">项目创建前</Text>;
+  return <Text type="secondary">未绑定</Text>;
+};
+
+const functionDisplay = (name?: string) => {
+  if (!name) return '未知';
+  if (functionLabel[name]) return functionLabel[name];
+  if (name.endsWith('.json_repair')) {
+    const base = name.replace(/\.json_repair$/, '');
+    return `${functionLabel[base] || base} JSON 修复`;
+  }
+  return name.startsWith('_') ? `内部调用：${name}` : name;
+};
+
+const stringifyValue = (value: any) => (typeof value === 'string' ? value : JSON.stringify(value || {}, null, 2));
+
+const copyToClipboard = async (value: any, title = '内容') => {
+  const text = stringifyValue(value);
+  try {
+    await navigator.clipboard.writeText(text);
+    message.success(`${title}已复制`);
+  } catch {
+    const textarea = document.createElement('textarea');
+    textarea.value = text;
+    textarea.setAttribute('readonly', 'true');
+    textarea.style.position = 'fixed';
+    textarea.style.left = '-9999px';
+    document.body.appendChild(textarea);
+    textarea.select();
+    const ok = document.execCommand('copy');
+    document.body.removeChild(textarea);
+    if (ok) {
+      message.success(`${title}已复制`);
+    } else {
+      message.error('复制失败，请手动选择文本复制');
+    }
+  }
+};
+
+const JsonText = ({ title, value }: { title: string; value: any }) => {
+  const text = stringifyValue(value);
+  return (
+  <Card
+    size="small"
+    title={title}
+    extra={
+      <Button
+        size="small"
+        icon={<CopyOutlined />}
+        onClick={() => copyToClipboard(value, title)}
+      >
+        复制
+      </Button>
+    }
+  >
     <pre style={{
       maxHeight: 360,
       overflow: 'auto',
@@ -63,10 +121,11 @@ const JsonText = ({ title, value }: { title: string; value: any }) => (
       fontSize: 12,
       lineHeight: 1.6,
     }}>
-      {typeof value === 'string' ? value : JSON.stringify(value || {}, null, 2)}
+      {text}
     </pre>
   </Card>
-);
+  );
+};
 
 export default function LLMCallLogsPage() {
   const navigate = useNavigate();
@@ -165,7 +224,7 @@ export default function LLMCallLogsPage() {
         type="info"
         showIcon
         style={{ marginBottom: 12 }}
-        message="记录从本功能上线后的新调用开始产生；历史调用不会反向补录。"
+        message="模型调用会自动绑定项目上下文；项目创建前的策划对话会显示为“项目创建前”。"
       />
 
       <Card style={{ marginBottom: 12 }}>
@@ -246,13 +305,13 @@ export default function LLMCallLogsPage() {
               dataIndex: 'project_name',
               width: 180,
               ellipsis: true,
-              render: (v: string) => v || <Text type="secondary">未绑定</Text>,
+              render: (_v: string, record: any) => projectLabel(record),
             },
             {
               title: '功能',
               dataIndex: 'function_name',
               width: 170,
-              render: (v: string) => <Tag>{functionLabel[v] || v || '未知'}</Tag>,
+              render: (v: string) => <Tag>{functionDisplay(v)}</Tag>,
             },
             {
               title: '模型',
@@ -320,8 +379,8 @@ export default function LLMCallLogsPage() {
         {detail ? (
           <Space direction="vertical" size={12} style={{ width: '100%' }}>
             <Descriptions bordered size="small" column={2}>
-              <Descriptions.Item label="项目">{detail.project_name || '未绑定'}</Descriptions.Item>
-              <Descriptions.Item label="功能">{functionLabel[detail.function_name] || detail.function_name || '-'}</Descriptions.Item>
+              <Descriptions.Item label="项目">{projectLabel(detail)}</Descriptions.Item>
+              <Descriptions.Item label="功能">{functionDisplay(detail.function_name)}</Descriptions.Item>
               <Descriptions.Item label="模型">{detail.model_name || '-'}</Descriptions.Item>
               <Descriptions.Item label="供应商">{detail.provider_name || detail.provider_type || '-'}</Descriptions.Item>
               <Descriptions.Item label="状态">

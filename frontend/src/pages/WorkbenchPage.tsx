@@ -41,7 +41,9 @@ const TASK_LABELS: Record<string, string> = {
   suggest_stories: '构思故事方案', generate_world: '生成世界观', generate_characters: '生成角色势力',
   generate_outline: '生成全书大纲', expand_vol: '展开卷', expand_volume_arcs: '展开卷弧线',
   expand_arc_chapters: '展开弧线章节', write_chapter: '写作章节', audit_chapter: '审计章节',
-  review_arc: '评审弧线', batch_write_arc: '批量写作', extract_state: '提取记忆',
+  review_arc: '评审弧线', review_volume: '评审卷轴合理性', review_arc_structure: '弧线结构评审',
+  review_chapter_blueprints: '章节蓝图评审', review_project_structure: '项目结构评审',
+  batch_write_arc: '批量写作', extract_state: '提取记忆',
   revise_chapter: '修订章节', generate_world_draft: '世界观草稿', generate_characters_draft: '角色草稿',
   repair_from_review: '按评审修复', split_chapter: '智能拆分章节', adjust_outline: 'AI调整大纲',
   adjust_outline_chat: '卷轴调整对话', revise_volume_arc: '调整弧线',
@@ -62,8 +64,11 @@ const DEFAULT_WRITING_CONTROLS = {
   punctuation_style: 'standard',
   chapter_template: 'standard',
   early_grip_mode: 'auto',
-  auto_quality_check: true,
-  auto_light_fix: true,
+  write_flow_mode: 'stable_draft',
+  auto_quality_check: false,
+  auto_light_fix: false,
+  async_quality_check: false,
+  async_state_extract: true,
 };
 const DEFAULT_ARC_EXPAND_CFG = {
   arc_strategy: '长篇连载型',
@@ -133,6 +138,46 @@ const arcValueText = (value: any) => {
   return value.description || value.summary || value.detail || value.name || JSON.stringify(value, null, 2);
 };
 
+const ARC_FIELD_LABELS: Record<string, string> = {
+  event: '事件',
+  emotional_value: '情绪价值',
+  narrative_significance: '叙事意义',
+  step_trigger: '触发台阶',
+  consequence: '后果',
+  setup: '铺设',
+  advance: '推进',
+  payoff: '回收',
+  name: '名称',
+  role: '功能',
+  first_signal: '预热信号',
+  indirect_presence: '间接影响',
+  first_appearance: '正式登场',
+  initial_conflict: '初始冲突',
+  trust_progression: '关系台阶',
+  cost_of_contact: '接触代价',
+  must_not_do: '禁忌',
+  narrative_function: '叙事功能',
+  symbol_or_trace: '标志/痕迹',
+  low_level_contact: '外围接触',
+  rule_pressure: '规则压力',
+  formal_entry_condition: '正式入场条件',
+};
+
+const renderObjectFields = (value: any) => {
+  const entries = Object.entries(value || {}).filter(([, v]) => v !== null && v !== undefined && v !== '' && !(Array.isArray(v) && v.length === 0));
+  if (!entries.length) return <Text type="secondary">未填写</Text>;
+  return (
+    <div className="arc-object-fields">
+      {entries.map(([key, val]) => (
+        <div key={key} className="arc-object-field">
+          <Text strong>{ARC_FIELD_LABELS[key] || key}</Text>
+          <span>{Array.isArray(val) ? val.map(arcValueText).join('；') : arcValueText(val)}</span>
+        </div>
+      ))}
+    </div>
+  );
+};
+
 const renderArcValue = (value: any, emptyText = '未填写') => {
   if (value === null || value === undefined || value === '' || (Array.isArray(value) && value.length === 0)) {
     return <Text type="secondary">{emptyText}</Text>;
@@ -146,7 +191,70 @@ const renderArcValue = (value: any, emptyText = '未填写') => {
       </div>
     );
   }
+  if (typeof value === 'object') {
+    return renderObjectFields(value);
+  }
   return <Paragraph className="arc-detail-text">{arcValueText(value)}</Paragraph>;
+};
+
+const renderKeyMilestones = (value: any) => {
+  if (!Array.isArray(value) || value.length === 0) return <Text type="secondary">未填写</Text>;
+  return (
+    <div className="arc-detail-list">
+      {value.map((item: any, idx: number) => {
+        if (typeof item === 'string') return <div key={idx} className="arc-detail-list-item">{item}</div>;
+        return (
+          <div key={idx} className="arc-milestone-card">
+            <div className="arc-milestone-head">
+              <Tag color="blue">节点 {idx + 1}</Tag>
+              <Text strong>{item.event || item.name || item.stage || `关键节点 ${idx + 1}`}</Text>
+            </div>
+            {item.emotional_value && <Paragraph><Text strong>情绪价值：</Text>{item.emotional_value}</Paragraph>}
+            {item.narrative_significance && <Paragraph><Text strong>叙事意义：</Text>{item.narrative_significance}</Paragraph>}
+            <Space size={[6, 6]} wrap>
+              {item.step_trigger && <Tag>{item.step_trigger}</Tag>}
+              {item.consequence && <Tag color="orange">{item.consequence}</Tag>}
+            </Space>
+          </div>
+        );
+      })}
+    </div>
+  );
+};
+
+const renderForeshadowingPlan = (value: any) => {
+  if (!value || (Array.isArray(value) && value.length === 0)) return <Text type="secondary">未填写</Text>;
+  if (Array.isArray(value)) {
+    return (
+      <div className="arc-foreshadowing-list">
+        {value.map((item: any, idx: number) => (
+          <div key={idx} className="arc-foreshadowing-card">
+            <div className="arc-foreshadowing-card-title">伏笔 {idx + 1}</div>
+            {renderForeshadowingPlan(item)}
+          </div>
+        ))}
+      </div>
+    );
+  }
+  if (typeof value !== 'object') return renderArcValue(value);
+  const rows = [
+    ['setup', '铺设', 'blue'],
+    ['advance', '推进', 'gold'],
+    ['payoff', '回收', 'green'],
+  ];
+  return (
+    <div className="arc-foreshadowing-plan">
+      {rows.map(([key, label, color]) => value[key] ? (
+        <div key={key} className="arc-foreshadowing-step">
+          <Tag color={color}>{label}</Tag>
+          <span>{arcValueText(value[key])}</span>
+        </div>
+      ) : null)}
+      {Object.keys(value).some((key) => !rows.some(([known]) => known === key)) && renderObjectFields(
+        Object.fromEntries(Object.entries(value).filter(([key]) => !rows.some(([known]) => known === key))),
+      )}
+    </div>
+  );
 };
 
 const RawJsonBlock = ({ title, data }: { title: string; data: any }) => (
@@ -168,6 +276,7 @@ const RawJsonBlock = ({ title, data }: { title: string; data: any }) => (
 const ReviewTaskResult = ({ result }: { result: any }) => {
   const score = Number(result?.overall_score || 0);
   const issueCount = REVIEW_ISSUE_GROUPS.reduce((sum, group) => sum + ((result?.[group.key] || []).length), 0);
+  const volumeReview = result?.volume_structure_review;
   return (
     <div className="task-report">
       <div className="task-report-hero">
@@ -184,6 +293,48 @@ const ReviewTaskResult = ({ result }: { result: any }) => {
           <strong>{issueCount}</strong>
         </div>
       </div>
+
+      {volumeReview && (
+        <Card size="small" title="卷轴合理性评审" className="task-report-card">
+          <Descriptions size="small" column={1} bordered>
+            <Descriptions.Item label="结构分">{volumeReview.structure_score ?? '-'}/10</Descriptions.Item>
+            <Descriptions.Item label="弧线拆解">{volumeReview.arc_breakdown_score ?? '-'}/10</Descriptions.Item>
+            <Descriptions.Item label="大纲承接">{volumeReview.outline_alignment_score ?? '-'}/10</Descriptions.Item>
+            <Descriptions.Item label="结论">{volumeReview.summary || '未返回结构评审总结'}</Descriptions.Item>
+          </Descriptions>
+          {Array.isArray(volumeReview.arc_breakdown_review) && volumeReview.arc_breakdown_review.length > 0 && (
+            <div className="task-issue-list" style={{ marginTop: 12 }}>
+              {volumeReview.arc_breakdown_review.map((arc: any, idx: number) => (
+                <div key={idx} className={`task-issue-card ${arc.is_reasonable === false ? 'orange' : ''}`}>
+                  <div className="task-issue-head">
+                    <Tag>弧线 {Number(arc.arc_index ?? idx) + 1}</Tag>
+                    <Text strong>{arc.arc_name || '未命名弧线'}</Text>
+                    <Tag color={arc.is_reasonable === false ? 'orange' : 'green'}>{arc.score ?? '-'}/10</Tag>
+                  </div>
+                  <Paragraph>{arc.problem || '拆解基本合理'}</Paragraph>
+                  {arc.fix_suggestion && <Paragraph className="task-issue-fix"><Text strong>建议：</Text>{arc.fix_suggestion}</Paragraph>}
+                </div>
+              ))}
+            </div>
+          )}
+          {Array.isArray(volumeReview.outline_repairs) && volumeReview.outline_repairs.length > 0 && (
+            <div style={{ marginTop: 12 }}>
+              <Text strong>建议修复任务</Text>
+              <div className="task-issue-list" style={{ marginTop: 8 }}>
+                {volumeReview.outline_repairs.map((repair: any, idx: number) => (
+                  <div key={idx} className="task-issue-card">
+                    <div className="task-issue-head">
+                      <Tag>{repair.target || '卷轴'}</Tag>
+                    </div>
+                    <Paragraph>{repair.repair_task || repair.reason || '未返回修复任务'}</Paragraph>
+                    {repair.reason && <Paragraph className="task-issue-fix"><Text strong>原因：</Text>{repair.reason}</Paragraph>}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </Card>
+      )}
 
       {Array.isArray(result?.dimensions) && result.dimensions.length > 0 && (
         <Card size="small" title="维度评分" className="task-report-card">
@@ -314,6 +465,277 @@ const AuditTaskResult = ({ result }: { result: any }) => (
   </div>
 );
 
+const STATE_FIELD_LABELS: Record<string, string> = {
+  facts: '新增事实',
+  character_changes: '人物状态变化',
+  relationship_changes: '关系变化',
+  object_states: '物件/资源状态',
+  foreshadowing_updates: '伏笔更新',
+  faction_changes: '势力变化',
+  timeline_events: '时间线事件',
+  resolved_hooks: '已回应钩子',
+  deferred_hooks: '延后钩子',
+  external_pressures: '外部压力',
+  next_must_follow: '下一章必须承接',
+  opening_requirements_for_next: '下章开场要求',
+  causality_links: '因果链',
+  indispensability_check: '不可替代检查',
+  hook_assessment: '章末钩子评估',
+  voice_continuity_notes: '角色声音连续性',
+  information_reveal_notes: '信息揭露控制',
+  name: '名称',
+  change: '变化',
+  current_state: '当前状态',
+  body: '身体',
+  emotion: '情绪',
+  relationship: '关系',
+  knowledge: '认知',
+  resources: '资源',
+  pair: '关系对象',
+  before: '此前',
+  after: '此后',
+  evidence: '证据',
+  holder: '持有人/位置',
+  state: '状态',
+  importance: '后续影响',
+  status: '状态',
+  detail: '说明',
+  time_point: '时间点',
+  description: '事件',
+  event_type: '类型',
+  is_major: '重大事件',
+  cause: '原因/选择',
+  effect: '后果',
+  chapter_from: '起点章节',
+  chapter_to: '指向章节',
+  if_deleted_what_breaks: '删掉会断裂',
+  state_delta_required: '需要状态增量',
+  state_delta_actual: '实际状态增量',
+  state_delta_insufficient: '状态增量不足',
+  hook_type: '钩子类型',
+  hook_strength: '钩子强度',
+  changes_next_opening_pressure: '改变下章开场压力',
+  passed: '通过',
+  issue: '问题',
+  over_revealed: '过度揭露',
+  next_reveal_allowed: '后续可揭露',
+  must_not_reveal: '暂不能揭露',
+};
+
+const STATE_SECTION_META: Record<string, { title: string; color?: string }> = {
+  facts: { title: '新增事实', color: 'blue' },
+  character_changes: { title: '人物状态变化', color: 'purple' },
+  relationship_changes: { title: '关系变化', color: 'magenta' },
+  object_states: { title: '物件/资源状态', color: 'gold' },
+  foreshadowing_updates: { title: '伏笔更新', color: 'cyan' },
+  faction_changes: { title: '势力变化', color: 'volcano' },
+  timeline_events: { title: '时间线事件', color: 'green' },
+  resolved_hooks: { title: '已回应钩子', color: 'green' },
+  deferred_hooks: { title: '延后钩子', color: 'orange' },
+  external_pressures: { title: '外部压力', color: 'red' },
+  next_must_follow: { title: '下一章必须承接', color: 'red' },
+  opening_requirements_for_next: { title: '下章开场要求', color: 'orange' },
+  causality_links: { title: '因果链', color: 'blue' },
+  indispensability_check: { title: '不可替代检查', color: 'geekblue' },
+  hook_assessment: { title: '章末钩子评估', color: 'lime' },
+  voice_continuity_notes: { title: '角色声音连续性', color: 'purple' },
+  information_reveal_notes: { title: '信息揭露控制', color: 'cyan' },
+};
+
+const isFilledStateValue = (value: any) => {
+  if (value === null || value === undefined || value === '') return false;
+  if (Array.isArray(value)) return value.length > 0;
+  if (typeof value === 'object') return Object.values(value).some(isFilledStateValue);
+  return true;
+};
+
+const stateValueText = (value: any): string => {
+  if (value === null || value === undefined || value === '') return '';
+  if (typeof value === 'string') return value;
+  if (typeof value === 'number') return String(value);
+  if (typeof value === 'boolean') return value ? '是' : '否';
+  if (Array.isArray(value)) return value.map(stateValueText).filter(Boolean).join('；');
+  if (typeof value === 'object') {
+    return Object.entries(value)
+      .filter(([, val]) => isFilledStateValue(val))
+      .map(([key, val]) => `${STATE_FIELD_LABELS[key] || key}：${stateValueText(val)}`)
+      .join('；');
+  }
+  return String(value);
+};
+
+const stateItemTitle = (item: any, idx: number) => {
+  if (typeof item !== 'object' || !item) return `条目 ${idx + 1}`;
+  return item.name || item.pair || item.time_point || item.cause || item.hook_type || item.dimension || `条目 ${idx + 1}`;
+};
+
+const renderStateObjectFields = (item: any) => {
+  const entries = Object.entries(item || {}).filter(([, value]) => isFilledStateValue(value));
+  if (!entries.length) return <Text type="secondary">暂无内容</Text>;
+  return (
+    <div className="state-memory-fields">
+      {entries.map(([key, value]) => (
+        <div key={key} className="state-memory-field">
+          <Text strong>{STATE_FIELD_LABELS[key] || key}</Text>
+          <span>{stateValueText(value)}</span>
+        </div>
+      ))}
+    </div>
+  );
+};
+
+const renderStateSection = (key: string, value: any) => {
+  if (!isFilledStateValue(value)) return null;
+  const meta = STATE_SECTION_META[key] || { title: STATE_FIELD_LABELS[key] || key };
+  const values = Array.isArray(value) ? value : [value];
+  return (
+    <Card key={key} size="small" title={meta.title} className="task-report-card state-memory-card">
+      <div className="state-memory-list">
+        {values.map((item: any, idx: number) => (
+          <div key={idx} className="state-memory-item">
+            <div className="state-memory-item-head">
+              <Tag color={meta.color || 'default'}>{Array.isArray(value) ? idx + 1 : meta.title}</Tag>
+              {typeof item === 'object' && item ? <Text strong>{stateItemTitle(item, idx)}</Text> : null}
+            </div>
+            {typeof item === 'object' && item ? renderStateObjectFields(item) : <Paragraph>{stateValueText(item)}</Paragraph>}
+          </div>
+        ))}
+      </div>
+    </Card>
+  );
+};
+
+const ExtractStateTaskResult = ({ result }: { result: any }) => {
+  const orderedKeys = [
+    'facts',
+    'character_changes',
+    'relationship_changes',
+    'object_states',
+    'foreshadowing_updates',
+    'faction_changes',
+    'timeline_events',
+    'resolved_hooks',
+    'deferred_hooks',
+    'external_pressures',
+    'next_must_follow',
+    'opening_requirements_for_next',
+    'causality_links',
+    'indispensability_check',
+    'hook_assessment',
+    'voice_continuity_notes',
+    'information_reveal_notes',
+  ];
+  const count = (key: string) => {
+    const value = result?.[key];
+    if (Array.isArray(value)) return value.length;
+    return isFilledStateValue(value) ? 1 : 0;
+  };
+  const totalItems = orderedKeys.reduce((sum, key) => sum + count(key), 0);
+  const nextPressureCount = count('next_must_follow') + count('opening_requirements_for_next') + count('external_pressures');
+  const applied = result?.applied || result?.apply_changes || result?.saved;
+  return (
+    <div className="task-report">
+      <div className="task-report-hero compact state-memory-hero">
+        <div>
+          <div className="task-report-score">{totalItems || '-'}</div>
+          <Text type="secondary">记忆条目</Text>
+        </div>
+        <div className="task-report-summary">
+          <Text strong>长期记忆快照</Text>
+          <Paragraph>
+            已按后续写作需要整理本章状态变化。重点看“下一章必须承接”和“下章开场要求”，这些会影响下一章是否无缝衔接。
+          </Paragraph>
+          <Space size={[6, 6]} wrap>
+            <Tag color={applied ? 'green' : 'default'}>{applied ? '已写入章节记忆' : '提取结果预览'}</Tag>
+            <Tag color="blue">人物 {count('character_changes')}</Tag>
+            <Tag color="magenta">关系 {count('relationship_changes')}</Tag>
+            <Tag color="red">承接压力 {nextPressureCount}</Tag>
+          </Space>
+        </div>
+      </div>
+      <div className="state-memory-grid">
+        {orderedKeys.map((key) => renderStateSection(key, result?.[key]))}
+      </div>
+    </div>
+  );
+};
+
+const ChapterBlueprintTaskResult = ({ result }: { result: any }) => {
+  const chapters = Array.isArray(result?.chapters) ? result.chapters : [];
+  if (!chapters.length) return <GenericTaskResult result={result} />;
+  return (
+    <div className="task-report">
+      <div className="task-report-hero compact">
+        <div>
+          <div className="task-report-score">{result?.chapter_count || chapters.length}</div>
+          <Text type="secondary">章节蓝图</Text>
+        </div>
+        <div className="task-report-summary">
+          <Text strong>展开弧线章节预览</Text>
+          <Paragraph>
+            这里展示本次 AI 生成的章节目录和蓝图摘要。重点检查章节数量、首尾承接、每章短目标、状态变化和章末钩子。
+          </Paragraph>
+          <Space size={[6, 6]} wrap>
+            <Tag color="blue">AI 任务结果预览</Tag>
+            <Tag>{chapters.length} 章</Tag>
+          </Space>
+        </div>
+      </div>
+      <div className="task-chapter-preview-list">
+        {chapters.map((ch: any, idx: number) => (
+          <Card
+            key={`${ch.chapter_number || idx}-${ch.title || idx}`}
+            size="small"
+            className="task-report-card task-chapter-preview-card"
+            title={
+              <Space size={6} wrap>
+                <Tag color={ch.is_key_chapter ? 'red' : 'blue'}>第{ch.chapter_number || idx + 1}章</Tag>
+                <Text strong>{ch.title || '未命名章节'}</Text>
+                {ch.chapter_function && <Tag>{ch.chapter_function}</Tag>}
+                {ch.tension_level !== undefined && <Tag color="orange">张力 {ch.tension_level}</Tag>}
+              </Space>
+            }
+          >
+            {ch.summary && <Paragraph className="task-chapter-summary">{ch.summary}</Paragraph>}
+            <Descriptions size="small" column={1} bordered>
+              {ch.connects_from && <Descriptions.Item label="上承">{ch.connects_from}</Descriptions.Item>}
+              {ch.connects_to && <Descriptions.Item label="下启">{ch.connects_to}</Descriptions.Item>}
+              {Array.isArray(ch.arc_step_refs) && ch.arc_step_refs.length > 0 && (
+                <Descriptions.Item label="弧线台阶">
+                  <Space size={[4, 4]} wrap>{ch.arc_step_refs.map((x: any, i: number) => <Tag key={i}>{stateValueText(x)}</Tag>)}</Space>
+                </Descriptions.Item>
+              )}
+              {Array.isArray(ch.key_events) && ch.key_events.length > 0 && (
+                <Descriptions.Item label="关键事件">{renderStringList(ch.key_events)}</Descriptions.Item>
+              )}
+              {Array.isArray(ch.minor_events) && ch.minor_events.length > 0 && (
+                <Descriptions.Item label="小事件/伏笔">{renderStringList(ch.minor_events)}</Descriptions.Item>
+              )}
+              {Array.isArray(ch.continuity_to_next) && ch.continuity_to_next.length > 0 && (
+                <Descriptions.Item label="下章承接">{renderStringList(ch.continuity_to_next)}</Descriptions.Item>
+              )}
+            </Descriptions>
+            {Array.isArray(ch.scene_beats) && ch.scene_beats.length > 0 && (
+              <div className="task-scene-beats">
+                <Text strong>场景序列</Text>
+                <div className="task-scene-beat-list">
+                  {ch.scene_beats.map((scene: any, sceneIdx: number) => (
+                    <div key={sceneIdx} className="task-scene-beat">
+                      <Tag>{scene.scene || sceneIdx + 1}</Tag>
+                      <span>{stateValueText(scene)}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </Card>
+        ))}
+      </div>
+      <RawJsonBlock title="原始章节蓝图数据" data={result} />
+    </div>
+  );
+};
+
 const GenericTaskResult = ({ result }: { result: any }) => {
   if (typeof result === 'string') return <Alert type="success" showIcon message={result} />;
   const arcIssues = Array.isArray(result?.arc_quality?.issues) ? result.arc_quality.issues : [];
@@ -387,6 +809,8 @@ const TaskResultView = ({ task }: { task: any }) => {
   if (type === 'review_arc' || type === 'review_volume' || type === 'review_project_structure') return <ReviewTaskResult result={result} />;
   if (type === 'repair_from_review') return <RepairTaskResult result={result} />;
   if (type === 'audit_chapter') return <AuditTaskResult result={result} />;
+  if (type === 'extract_state') return <ExtractStateTaskResult result={result} />;
+  if (type === 'expand_arc_chapters') return <ChapterBlueprintTaskResult result={result} />;
   return <GenericTaskResult result={result} />;
 };
 
@@ -660,6 +1084,18 @@ const arcQualityWarnings = (quality: any) => (
       : []
 );
 
+const isHandoffWarning = (item: any) => {
+  const field = String(item?.field || '');
+  const text = `${item?.issue || ''}${item?.description || ''}`;
+  return field.includes('handoff') || text.includes('交接') || text.includes('接收物') || text.includes('交出物');
+};
+
+const isGranularityWarning = (item: any) => {
+  const field = String(item?.field || '');
+  const text = `${item?.issue || ''}${item?.description || ''}`;
+  return field === 'description' || field === 'chapter_count' || text.includes('颗粒度') || text.includes('阶段大包') || text.includes('同级弧线');
+};
+
 const arcContinuityRepairInstruction = (quality: any, arc: any, checks: any[] = []) => {
   const issues = arcQualityIssues(quality).map((item: any) => item.issue || item.description || '').filter(Boolean);
   const missing = checks
@@ -672,14 +1108,17 @@ const arcContinuityRepairInstruction = (quality: any, arc: any, checks: any[] = 
     '请只修复这条弧线的连续性结构，不要改变本卷主线目标、章节范围和弧线核心功能。',
     `当前质量问题：${issueText}`,
     '必须补齐或重写：handoff_from_previous、handoff_to_next、opening_state、ending_state、continuity_chain、arc_steps。',
-    'arc_steps 必须有 4-7 个变化台阶，每个台阶写清 starting_state、trigger_event、visible_action、friction、state_change、consequence、carry_forward。',
+    'arc_steps 通常有 3-5 个变化台阶，复杂高潮弧线可 5-7 个；每个台阶写清 starting_state、trigger_event、visible_action、friction、state_change、consequence、carry_forward。',
     '交接物必须具体到可写进正文的东西，例如物件、伤势、承诺、误会、秘密、债务、追兵、时间限制或一句话。',
     `当前弧线：${arc?.name || ''}`,
   ].join('\n');
 };
 
 const arcHandoffPolishInstruction = (quality: any, arc: any) => {
-  const warnings = arcQualityWarnings(quality).map((item: any) => item.issue || item.description || '').filter(Boolean);
+  const warnings = arcQualityWarnings(quality)
+    .filter(isHandoffWarning)
+    .map((item: any) => item.issue || item.description || '')
+    .filter(Boolean);
   return [
     '请只优化这条弧线与前后弧线的交接表达，不要改变弧线名称、章节范围、核心事件、主角阶段目标和结局。',
     `当前提醒：${warnings.join('；') || '交接语义需要更清晰。'}`,
@@ -965,7 +1404,7 @@ export default function WorkbenchPage() {
   const [expandMode, setExpandMode] = useState<'arc' | 'chapters'>('arc');
   const [expandArcIdx, setExpandArcIdx] = useState(0);
   const [arcExpandCfg, setArcExpandCfg] = useState(DEFAULT_ARC_EXPAND_CFG);
-  const [expandCfg, setExpandCfg] = useState({ pacing: 'medium', event_density: 'medium', expansion_scale: 'standard' });
+  const [expandCfg, setExpandCfg] = useState({ pacing: 'medium', event_density: 'high', expansion_scale: 'long' });
   const [expandLoading, setExpandLoading] = useState<string | null>(null);
   const [adjustModalOpen, setAdjustModalOpen] = useState(false);
   const [adjustVol, setAdjustVol] = useState<any>(null);
@@ -1006,6 +1445,11 @@ export default function WorkbenchPage() {
   const [impactModalOpen, setImpactModalOpen] = useState(false);
   const [impactLoading, setImpactLoading] = useState(false);
   const [impactData, setImpactData] = useState<any>(null);
+  const [versionModalOpen, setVersionModalOpen] = useState(false);
+  const [chapterVersions, setChapterVersions] = useState<any[]>([]);
+  const [versionLoading, setVersionLoading] = useState(false);
+  const [versionActionLoading, setVersionActionLoading] = useState<string | null>(null);
+  const [versionPreview, setVersionPreview] = useState<any>(null);
 
   const loadAll = () => {
     if (!projectId) return;
@@ -1092,6 +1536,64 @@ export default function WorkbenchPage() {
       setSaveState('error');
       message.error('章节保存失败');
     }
+  };
+
+  const loadChapterVersions = async (chapterId = currentChapter?.id) => {
+    if (!projectId || !chapterId) return;
+    setVersionLoading(true);
+    try {
+      const versions = await chapterApi.versions(projectId, chapterId);
+      setChapterVersions(Array.isArray(versions) ? versions : []);
+    } catch (e: any) {
+      message.error(e?.response?.data?.detail || e.message || '版本列表加载失败');
+      setChapterVersions([]);
+    } finally {
+      setVersionLoading(false);
+    }
+  };
+
+  const openVersionModal = async () => {
+    if (!projectId || !currentChapter) return;
+    if (content !== (currentChapter.content || '')) await saveContent();
+    setVersionModalOpen(true);
+    loadChapterVersions(currentChapter.id);
+  };
+
+  const createChapterSnapshot = async () => {
+    if (!projectId || !currentChapter) return;
+    setVersionActionLoading('snapshot');
+    try {
+      if (content !== (currentChapter.content || '')) await saveContent();
+      await chapterApi.snapshot(projectId, currentChapter.id);
+      message.success('已创建章节快照');
+      await loadChapterVersions(currentChapter.id);
+    } catch (e: any) {
+      message.error(e?.response?.data?.detail || e.message || '创建快照失败');
+    } finally {
+      setVersionActionLoading(null);
+    }
+  };
+
+  const restoreChapterVersion = async (version: any) => {
+    if (!projectId || !currentChapter || !version?.id) return;
+    setVersionActionLoading(version.id);
+    try {
+      const restored = await chapterApi.restoreVersion(projectId, currentChapter.id, version.id);
+      setCurrentChapter((prev: any) => prev?.id === restored.id ? { ...prev, ...restored } : restored);
+      setContent(restored.content || '');
+      setChapters((prev: any[]) => prev.map((ch: any) => ch.id === restored.id ? { ...ch, ...restored } : ch));
+      setSaveState('saved');
+      message.success(`已恢复到版本 ${version.version_number || ''}`);
+      await loadChapterVersions(restored.id);
+    } catch (e: any) {
+      message.error(e?.response?.data?.detail || e.message || '恢复版本失败');
+    } finally {
+      setVersionActionLoading(null);
+    }
+  };
+
+  const openVersionPreview = (version: any) => {
+    setVersionPreview(version);
   };
 
   const pollTask = async (taskId: string, maxRetries = 60, key = 'task') => {
@@ -1405,7 +1907,7 @@ export default function WorkbenchPage() {
     try {
       const res = await api.post(`/projects/${projectId}/wizard/repair-from-review/${targetVolumeId}`, {
         review_result: targetReview,
-        review_scope: targetScopeName ? `弧线「${targetScopeName}」` : '',
+        review_scope: targetScopeName ? `${reviewScope?.arcIndex !== null && reviewScope?.arcIndex !== undefined ? '弧线' : '卷轴'}「${targetScopeName}」` : '',
         apply: true,
         reaudit: false,
       });
@@ -1430,7 +1932,17 @@ export default function WorkbenchPage() {
     setExpandLoading(`${vol.id}-batch-${arcIdx}`);
     try {
       const selectedMode = READABILITY_OPTIONS.find((item) => item.value === mode)?.label || '通俗易懂';
-      const body: any = { arc_index: arcIdx, readability_mode: mode };
+      const body: any = {
+        arc_index: arcIdx,
+        readability_mode: mode,
+        controls: {
+          write_flow_mode: 'stable_draft',
+          auto_quality_check: false,
+          auto_light_fix: false,
+          async_quality_check: false,
+          async_state_extract: true,
+        },
+      };
       if (chapterIds?.length) body.chapter_ids = chapterIds;
       const res = await api.post(`/projects/${projectId}/wizard/batch-write-arc/${vol.id}`, body);
       message.loading({ content: `后端批量任务已提交，模式：${selectedMode}…`, key: 'batch', duration: 0 });
@@ -1515,7 +2027,7 @@ export default function WorkbenchPage() {
     setReviewing(true);
     try {
       const res = await api.post(`/projects/${projectId}/wizard/review-volume/${vol.id}`);
-      message.loading({ content: 'AI 正在评审整卷…', key: 'review', duration: 0 });
+      message.loading({ content: 'AI 正在评审卷轴合理性与章节承载…', key: 'review', duration: 0 });
       const result = await pollTask(res.data.task_id, 180, 'review');
       setReviewResult(result);
       setReviewScope({ volumeId: vol.id, arcIndex: null, name: vol.title || `卷${vol.volume_number}` });
@@ -1583,7 +2095,7 @@ export default function WorkbenchPage() {
     setExpandVol(vol);
     setExpandArcIdx(arcIndex);
     setExpandMode('chapters');
-    setExpandCfg({ pacing: 'medium', event_density: 'medium', expansion_scale: 'standard' });
+    setExpandCfg({ pacing: 'medium', event_density: 'high', expansion_scale: 'long' });
     setExpandModalOpen(true);
   };
   const doExpand = async () => {
@@ -1785,6 +2297,9 @@ export default function WorkbenchPage() {
   const detailStatus = arcQualityStatus(detailQuality, detailChecks);
   const detailIssues = arcQualityIssues(detailQuality);
   const detailWarnings = arcQualityWarnings(detailQuality);
+  const detailHandoffWarnings = detailWarnings.filter(isHandoffWarning);
+  const detailGranularityWarnings = detailWarnings.filter(isGranularityWarning);
+  const detailOtherWarnings = detailWarnings.filter((item: any) => !isHandoffWarning(item) && !isGranularityWarning(item));
   const detailHasStructuralGaps = arcHasStructuralGaps(detailQuality, detailChecks);
   const detailArcChapters = detailArc ? chapters.filter((c: any) => c.volume_id === detailVolume?.id && c.arc_name === detailArc.name) : [];
   const activeVolumeDetail = volumeDetail ? (volumes.find((v: any) => v.id === volumeDetail.id) || volumeDetail) : null;
@@ -1808,16 +2323,13 @@ export default function WorkbenchPage() {
         </div>
         <nav className="workbench-nav">
           <Button size="small" icon={<EditOutlined />} onClick={openProjectInfo}>项目信息</Button>
-          <Link to={`/projects/${projectId}/characters`}><Button size="small" icon={<TeamOutlined />}>角色</Button></Link>
-          <Link to={`/projects/${projectId}/factions`}><Button size="small" icon={<ApartmentOutlined />}>势力</Button></Link>
+          <Link to={`/projects/${projectId}/characters`}><Button size="small" icon={<TeamOutlined />}>角色势力</Button></Link>
           <Link to={`/projects/${projectId}/world-setting`}><Button size="small" icon={<EnvironmentOutlined />}>世界观</Button></Link>
           <Link to={`/projects/${projectId}/outline`}><Button size="small" icon={<BookOutlined />}>大纲</Button></Link>
           <Link to={`/projects/${projectId}/narrative-graph`}><Button size="small" icon={<BranchesOutlined />}>故事线</Button></Link>
           <Link to={`/projects/${projectId}/memory-center`}><Button size="small" icon={<DatabaseOutlined />}>记忆中枢</Button></Link>
           <Link to={`/projects/${projectId}/story-graph`}><Button size="small" icon={<NodeIndexOutlined />}>叙事图谱</Button></Link>
-          <Link to={`/projects/${projectId}/landscape`}><Button size="small" icon={<EnvironmentOutlined />}>小说景观</Button></Link>
           <Link to={`/projects/${projectId}/quality-dashboard`}><Button size="small" icon={<BarChartOutlined />}>质量</Button></Link>
-          <Button size="small" icon={<FileSearchOutlined />} onClick={() => openSystemDrawer('health')}>系统诊断</Button>
           <Button size="small" icon={<DownloadOutlined />} onClick={openExportModal}>导出</Button>
           <Badge count={tasks.filter(t => t.status === 'running').length} size="small">
             <Button size="small" onClick={() => { refreshTasks(); setTaskDrawerOpen(true); }}>任务</Button>
@@ -1914,6 +2426,8 @@ export default function WorkbenchPage() {
                             const arcExpanded = expandedArc === ai;
                             const quality = arcQualityFor(v, ai);
                             const qualityWarnings = arcQualityWarnings(quality);
+                            const handoffWarnings = qualityWarnings.filter(isHandoffWarning);
+                            const granularityWarnings = qualityWarnings.filter(isGranularityWarning);
                             const qualityChecks = arcQualityChecks(arc, ai, quality);
                             const hasStructuralGaps = arcHasStructuralGaps(quality, qualityChecks);
                             const qualityStatus = arcQualityStatus(quality, qualityChecks);
@@ -1939,7 +2453,8 @@ export default function WorkbenchPage() {
                                         <Space size={[4, 4]} wrap>
                                           {quality && <Tag color={qualityStatus.color}>{qualityStatus.label}</Tag>}
                                           {hasStructuralGaps && <Tag color="orange">缺 {qualityChecks.filter((x: any) => x.failed).length} 项</Tag>}
-                                          {!hasStructuralGaps && qualityWarnings.length > 0 && <Tag color="blue">提醒 {qualityWarnings.length} 项</Tag>}
+                                          {!hasStructuralGaps && handoffWarnings.length > 0 && <Tag color="blue">交接 {handoffWarnings.length} 项</Tag>}
+                                          {!hasStructuralGaps && granularityWarnings.length > 0 && <Tag color="purple">颗粒度 {granularityWarnings.length} 项</Tag>}
                                           {arc.narrative_function && <Tag color="blue">{arc.narrative_function}</Tag>}
                                         </Space>
                                         <Button size="small" type="link" icon={<FileSearchOutlined />} onClick={() => openArcDetail(v, arc, ai, quality)}>详情</Button>
@@ -1959,7 +2474,7 @@ export default function WorkbenchPage() {
                                             按连续性修复
                                           </Button>
                                         </div>
-                                      ) : qualityWarnings.length > 0 ? (
+                                      ) : handoffWarnings.length > 0 ? (
                                         <div className="arc-compact-actions">
                                           <Text type="secondary">有交接提醒，不阻止展开章节。</Text>
                                           <Button
@@ -1972,6 +2487,10 @@ export default function WorkbenchPage() {
                                           >
                                             优化交接
                                           </Button>
+                                        </div>
+                                      ) : granularityWarnings.length > 0 ? (
+                                        <div className="arc-compact-actions">
+                                          <Text type="secondary">有颗粒度提醒，不阻止展开章节；需要重拆时进详情查看。</Text>
                                         </div>
                                       ) : (
                                         <Text type="secondary" className="arc-compact-note">完整弧线内容、变化台阶和伏笔计划已放入详情。</Text>
@@ -2090,7 +2609,7 @@ export default function WorkbenchPage() {
                     <Button size="small" icon={<ScissorOutlined />} loading={splittingChapter} disabled={content.length < 5400}>智能拆分</Button>
                   </Popconfirm>
                   <Button size="small" icon={<AuditOutlined />} onClick={auditChapter} loading={auditing}>{auditResult ? '查看' : '审计'}</Button>
-                  {!isFullscreen && <Button size="small" icon={<HistoryOutlined />}>版本</Button>}
+                  {!isFullscreen && <Button size="small" icon={<HistoryOutlined />} onClick={openVersionModal}>版本</Button>}
                   {!isFullscreen && <Button size="small" icon={<BranchesOutlined />}>记忆</Button>}
                   {!isFullscreen && currentVolume && <Button size="small" onClick={() => createChapter(currentVolume, (currentChapter?.chapter_number || 0) + 1)}>补章</Button>}
                   {!isFullscreen && <Button size="small" onClick={() => setRightPanelOpen(!rightPanelOpen)}>{rightPanelOpen ? '收起参考' : '打开参考'}</Button>}
@@ -2461,7 +2980,7 @@ export default function WorkbenchPage() {
       </Modal>
 
       {/* Review Modal */}
-      <Modal title="📋 评审报告" open={reviewModalOpen} onCancel={() => setReviewModalOpen(false)} footer={null} width={640}>
+      <Modal title="评审报告" open={reviewModalOpen} onCancel={() => setReviewModalOpen(false)} footer={null} width={760}>
         {reviewResult && (
           <div style={{ maxHeight: '60vh', overflow: 'auto' }}>
             <div style={{ textAlign: 'center', marginBottom: 16 }}>
@@ -2481,6 +3000,31 @@ export default function WorkbenchPage() {
             >
               按评审报告自动修复
             </Button>
+            {reviewResult.volume_structure_review && (
+              <Card size="small" title="卷轴合理性" style={{ marginBottom: 12 }}>
+                <Descriptions size="small" column={1} bordered>
+                  <Descriptions.Item label="结构分">{reviewResult.volume_structure_review.structure_score ?? '-'}/10</Descriptions.Item>
+                  <Descriptions.Item label="弧线拆解">{reviewResult.volume_structure_review.arc_breakdown_score ?? '-'}/10</Descriptions.Item>
+                  <Descriptions.Item label="大纲承接">{reviewResult.volume_structure_review.outline_alignment_score ?? '-'}/10</Descriptions.Item>
+                  <Descriptions.Item label="结论">{reviewResult.volume_structure_review.summary || '未返回结构评审总结'}</Descriptions.Item>
+                </Descriptions>
+                {Array.isArray(reviewResult.volume_structure_review.arc_breakdown_review) && reviewResult.volume_structure_review.arc_breakdown_review.length > 0 && (
+                  <div style={{ display: 'grid', gap: 8, marginTop: 12 }}>
+                    {reviewResult.volume_structure_review.arc_breakdown_review.map((arc: any, idx: number) => (
+                      <div key={idx} style={{ padding: 10, border: '1px solid #eef2f7', borderRadius: 8, background: '#f8fafc' }}>
+                        <Space wrap>
+                          <Tag>弧线 {Number(arc.arc_index ?? idx) + 1}</Tag>
+                          <Text strong>{arc.arc_name || '未命名弧线'}</Text>
+                          <Tag color={arc.is_reasonable === false ? 'orange' : 'green'}>{arc.score ?? '-'}/10</Tag>
+                        </Space>
+                        <Paragraph style={{ margin: '6px 0 0' }}>{arc.problem || '拆解基本合理'}</Paragraph>
+                        {arc.fix_suggestion && <Paragraph style={{ margin: '4px 0 0', color: '#8a5a00' }}><Text strong>建议：</Text>{arc.fix_suggestion}</Paragraph>}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </Card>
+            )}
             {reviewResult.dimensions?.map((d: any, i: number) => (
               <div key={i} style={{ padding: '6px 10px', marginBottom: 4, background: '#fafafa', borderRadius: 6, display: 'flex', justifyContent: 'space-between' }}>
                 <Text style={{ fontSize: 12 }}>{d.name}</Text>
@@ -2575,6 +3119,13 @@ export default function WorkbenchPage() {
           </Col>
           <Col xs={24} md={12}>
             <Text type="secondary">质量链路</Text>
+            <Alert
+              type="info"
+              showIcon
+              style={{ marginTop: 6, marginBottom: 8 }}
+              message="推荐：先稳定成稿，再到质量大盘按章节组处理问题。"
+              description="批量写弧线默认不会自动审修，避免写完一章就被局部修复改坏。"
+            />
             <Radio.Group
               value={writingControlsDraft.auto_light_fix ? 'fix' : writingControlsDraft.auto_quality_check ? 'audit' : 'off'}
               style={{ display: 'block', marginTop: 6 }}
@@ -2582,14 +3133,16 @@ export default function WorkbenchPage() {
                 const value = e.target.value;
                 setWritingControlsDraft((p: any) => ({
                   ...p,
+                  write_flow_mode: value === 'fix' ? 'quality' : 'stable_draft',
                   auto_quality_check: value !== 'off',
                   auto_light_fix: value === 'fix',
+                  async_quality_check: value === 'audit',
                 }));
               }}
             >
-              <Radio value="fix">审稿并轻修</Radio>
-              <Radio value="audit">只审稿</Radio>
-              <Radio value="off">关闭</Radio>
+              <Radio value="off">稳定草稿（推荐）</Radio>
+              <Radio value="audit">写后只审稿</Radio>
+              <Radio value="fix">审稿并轻修（谨慎）</Radio>
             </Radio.Group>
           </Col>
         </Row>
@@ -2692,7 +3245,7 @@ export default function WorkbenchPage() {
               调整本卷
             </Button>
             <Button size="small" icon={<ReloadOutlined />} loading={expandLoading === activeVolumeDetail.id} onClick={() => openExpandModal(activeVolumeDetail)}>重拆弧线</Button>
-            <Button size="small" icon={<AuditOutlined />} loading={reviewing} onClick={() => reviewVolume(activeVolumeDetail)}>评审整卷</Button>
+            <Button size="small" icon={<AuditOutlined />} loading={reviewing} onClick={() => reviewVolume(activeVolumeDetail)}>评审卷轴合理性</Button>
             <Button size="small" icon={<FileSearchOutlined />} onClick={() => openVolumeContext(activeVolumeDetail)}>上下文</Button>
           </Space>
         ) : null}
@@ -2837,7 +3390,7 @@ export default function WorkbenchPage() {
                 修复结构缺口
               </Button>
             )}
-            {!detailHasStructuralGaps && detailWarnings.length > 0 && (
+            {!detailHasStructuralGaps && detailHandoffWarnings.length > 0 && (
               <Button
                 size="small"
                 loading={expandLoading === `${detailVolume?.id}-revise-${detailArcIndex}-优化交接`}
@@ -2876,7 +3429,7 @@ export default function WorkbenchPage() {
               className="arc-detail-status-alert"
               type={detailHasStructuralGaps ? 'warning' : detailWarnings.length ? 'info' : 'success'}
               showIcon
-              message={detailHasStructuralGaps ? '结构缺口需要先修复' : detailWarnings.length ? '交接提醒，不阻止展开章节' : '结构连续性可用'}
+              message={detailHasStructuralGaps ? '结构缺口需要先修复' : detailHandoffWarnings.length ? '交接提醒，不阻止展开章节' : detailGranularityWarnings.length ? '颗粒度提醒，不阻止展开章节' : detailWarnings.length ? '结构提醒，不阻止展开章节' : '结构连续性可用'}
               description="这里的分数是结构连续性分，不是剧情质量分；80 分以上通常可继续展开章节。"
             />
 
@@ -2903,10 +3456,24 @@ export default function WorkbenchPage() {
                   ))}
                 </div>
               )}
-              {detailWarnings.length > 0 && (
+              {detailHandoffWarnings.length > 0 && (
                 <div className="arc-detail-tags">
-                  {detailWarnings.map((x: any, idx: number) => (
+                  {detailHandoffWarnings.map((x: any, idx: number) => (
                     <Tag key={idx} color="blue">{x.field ? `${x.field}：` : ''}{x.issue || x.description || '交接提醒'}</Tag>
+                  ))}
+                </div>
+              )}
+              {detailGranularityWarnings.length > 0 && (
+                <div className="arc-detail-tags">
+                  {detailGranularityWarnings.map((x: any, idx: number) => (
+                    <Tag key={idx} color="purple">{x.field ? `${x.field}：` : ''}{x.issue || x.description || '颗粒度提醒'}</Tag>
+                  ))}
+                </div>
+              )}
+              {detailOtherWarnings.length > 0 && (
+                <div className="arc-detail-tags">
+                  {detailOtherWarnings.map((x: any, idx: number) => (
+                    <Tag key={idx} color="geekblue">{x.field ? `${x.field}：` : ''}{x.issue || x.description || '结构提醒'}</Tag>
                   ))}
                 </div>
               )}
@@ -2954,11 +3521,11 @@ export default function WorkbenchPage() {
             <div className="arc-detail-section arc-detail-two-col">
               <div>
                 <div className="arc-detail-section-title">关键节点</div>
-                {renderArcValue(detailArc.key_milestones)}
+                {renderKeyMilestones(detailArc.key_milestones)}
               </div>
               <div>
                 <div className="arc-detail-section-title">伏笔计划</div>
-                {renderArcValue(detailArc.foreshadowing_plan)}
+                {renderForeshadowingPlan(detailArc.foreshadowing_plan)}
               </div>
               <div>
                 <div className="arc-detail-section-title">角色引入</div>
@@ -3244,6 +3811,168 @@ export default function WorkbenchPage() {
             style={{ marginTop: 8 }}
           />
         </div>
+      </Modal>
+
+      <Modal
+        title={currentChapter ? `第${currentChapter.chapter_number}章《${currentChapter.title || '未命名'}》版本` : '章节版本'}
+        open={versionModalOpen}
+        onCancel={() => setVersionModalOpen(false)}
+        footer={null}
+        width={920}
+      >
+        <Alert
+          type="info"
+          showIcon
+          style={{ marginBottom: 12 }}
+          message="章节修订、重写和恢复前会保存版本备份"
+          description="如果某次 AI 修复把章节改坏，可以在这里恢复到修复前版本。恢复前系统也会自动保存当前正文，方便再回退。"
+        />
+        <Space style={{ marginBottom: 12 }} wrap>
+          <Button
+            icon={<ReloadOutlined />}
+            onClick={() => loadChapterVersions()}
+            loading={versionLoading}
+          >
+            刷新版本
+          </Button>
+          <Button
+            type="primary"
+            icon={<HistoryOutlined />}
+            onClick={createChapterSnapshot}
+            loading={versionActionLoading === 'snapshot'}
+          >
+            保存当前快照
+          </Button>
+        </Space>
+        <Table
+          rowKey="id"
+          size="small"
+          loading={versionLoading}
+          dataSource={chapterVersions}
+          pagination={{ pageSize: 8 }}
+          locale={{ emptyText: '暂无版本备份' }}
+          columns={[
+            {
+              title: '版本',
+              dataIndex: 'version_number',
+              width: 80,
+              render: (v) => <Tag color="blue">v{v}</Tag>,
+            },
+            {
+              title: '来源',
+              dataIndex: 'source',
+              width: 130,
+              render: (v) => {
+                const labelMap: Record<string, string> = {
+                  manual: '手动快照',
+                  ai_revise: 'AI修订前',
+                  restore_backup: '恢复前备份',
+                };
+                return labelMap[v] || v || '未标记';
+              },
+            },
+            {
+              title: '备注',
+              dataIndex: 'note',
+              ellipsis: true,
+              render: (v) => v || <Text type="secondary">无备注</Text>,
+            },
+            {
+              title: '字数',
+              dataIndex: 'word_count',
+              width: 100,
+              render: (v, record: any) => v || String(record.content || '').length || 0,
+            },
+            {
+              title: '时间',
+              dataIndex: 'created_at',
+              width: 180,
+              render: (v) => v ? new Date(v).toLocaleString() : '-',
+            },
+            {
+              title: '操作',
+              width: 170,
+              fixed: 'right',
+              render: (_v, record: any) => (
+                <Space size={6}>
+                  <Button
+                    size="small"
+                    icon={<EyeOutlined />}
+                    onClick={() => openVersionPreview(record)}
+                  >
+                    查看
+                  </Button>
+                  <Popconfirm
+                    title={`恢复到版本 v${record.version_number}？`}
+                    description="恢复会覆盖当前章节正文，系统会先自动保存当前正文为恢复前备份。"
+                    okText="恢复"
+                    cancelText="取消"
+                    onConfirm={() => restoreChapterVersion(record)}
+                  >
+                    <Button
+                      size="small"
+                      type="primary"
+                      loading={versionActionLoading === record.id}
+                      disabled={!!versionActionLoading}
+                    >
+                      恢复
+                    </Button>
+                  </Popconfirm>
+                </Space>
+              ),
+            },
+          ]}
+        />
+      </Modal>
+
+      <Modal
+        title={versionPreview ? `查看版本 v${versionPreview.version_number}` : '查看版本'}
+        open={!!versionPreview}
+        onCancel={() => setVersionPreview(null)}
+        footer={versionPreview ? (
+          <Space>
+            <Button onClick={() => setVersionPreview(null)}>关闭</Button>
+            <Popconfirm
+              title={`恢复到版本 v${versionPreview.version_number}？`}
+              description="恢复会覆盖当前章节正文，系统会先自动保存当前正文为恢复前备份。"
+              okText="恢复"
+              cancelText="取消"
+              onConfirm={() => restoreChapterVersion(versionPreview)}
+            >
+              <Button type="primary" loading={versionActionLoading === versionPreview.id}>恢复这个版本</Button>
+            </Popconfirm>
+          </Space>
+        ) : null}
+        width={980}
+      >
+        {versionPreview && (
+          <div>
+            <Descriptions size="small" bordered column={2} style={{ marginBottom: 12 }}>
+              <Descriptions.Item label="版本">v{versionPreview.version_number}</Descriptions.Item>
+              <Descriptions.Item label="字数">{versionPreview.word_count || String(versionPreview.content || '').length || 0}</Descriptions.Item>
+              <Descriptions.Item label="来源">{versionPreview.source || '未标记'}</Descriptions.Item>
+              <Descriptions.Item label="时间">{versionPreview.created_at ? new Date(versionPreview.created_at).toLocaleString() : '-'}</Descriptions.Item>
+              <Descriptions.Item label="备注" span={2}>{versionPreview.note || '无备注'}</Descriptions.Item>
+            </Descriptions>
+            <div style={{ marginBottom: 8 }}>
+              <Text type="secondary">
+                当前正文约 {content.length} 字，所选版本约 {versionPreview.word_count || String(versionPreview.content || '').length || 0} 字。请确认正文内容后再恢复。
+              </Text>
+            </div>
+            <Input.TextArea
+              value={versionPreview.content || ''}
+              readOnly
+              autoSize={{ minRows: 18, maxRows: 28 }}
+              style={{
+                fontSize: 14,
+                lineHeight: 1.9,
+                whiteSpace: 'pre-wrap',
+                background: '#fbfcfe',
+                fontFamily: "'Noto Serif SC', 'Songti SC', serif",
+              }}
+            />
+          </div>
+        )}
       </Modal>
     </div>
   );

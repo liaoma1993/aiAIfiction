@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import { Button, Drawer, Empty, Spin, Tag, Typography } from 'antd';
+import { Button, Drawer, Empty, Segmented, Spin, Tag, Typography } from 'antd';
 import { BookOutlined, LeftOutlined, MenuOutlined, RightOutlined } from '@ant-design/icons';
 import { chapterApi, projectApi, volumeApi } from '@/services/projectApi';
 import './NovelPreviewPage.css';
@@ -16,6 +16,7 @@ export default function NovelPreviewPage() {
   const [loading, setLoading] = useState(true);
   const [currentChapterId, setCurrentChapterId] = useState<string>('');
   const [directoryOpen, setDirectoryOpen] = useState(false);
+  const [paragraphDensity, setParagraphDensity] = useState<'compact' | 'comfortable' | 'loose'>('compact');
   const readerArticleRef = useRef<HTMLElement | null>(null);
   const readerPanelRef = useRef<HTMLElement | null>(null);
 
@@ -129,7 +130,8 @@ export default function NovelPreviewPage() {
   const totalWords = chapters.reduce((sum, ch) => sum + (ch.word_count || (ch.content || '').length || 0), 0);
   const contentParagraphs = String(currentChapter?.content || '')
     .replace(/\r\n/g, '\n')
-    .split(/\n{2,}/)
+    .replace(/\n{3,}/g, '\n\n')
+    .split(/\n\s*\n/)
     .map((part) => part.trim())
     .filter(Boolean);
 
@@ -159,6 +161,17 @@ export default function NovelPreviewPage() {
           </div>
         </div>
         <div className="preview-header-actions">
+          <Segmented
+            className="preview-density-control"
+            size="small"
+            value={paragraphDensity}
+            onChange={(value) => setParagraphDensity(value as 'compact' | 'comfortable' | 'loose')}
+            options={[
+              { label: '紧凑', value: 'compact' },
+              { label: '舒适', value: 'comfortable' },
+              { label: '宽松', value: 'loose' },
+            ]}
+          />
           <Button className="preview-mobile-menu" icon={<MenuOutlined />} onClick={() => setDirectoryOpen(true)}>
             目录
           </Button>
@@ -220,6 +233,7 @@ export default function NovelPreviewPage() {
                 <div className="reader-meta">
                   <Tag color="green">卷{currentVolume?.volume_number || '--'}</Tag>
                   <Tag>{currentChapter.chapter_number} 章</Tag>
+                  <Tag>{currentChapter.word_count || String(currentChapter.content || '').length || 0} 字</Tag>
                 </div>
                 <div className="reader-nav">
                   <Button
@@ -240,17 +254,17 @@ export default function NovelPreviewPage() {
                 </div>
               </div>
 
-              <article key={currentChapter.id} className="reader-article" ref={readerArticleRef}>
+              <article key={currentChapter.id} className={`reader-article density-${paragraphDensity}`} ref={readerArticleRef}>
                 <div className="reader-heading">
                   <div className="reader-chapter-label">
-                    第{currentChapter.chapter_number}章
+                    {currentVolume?.title ? `卷${currentVolume?.volume_number || '--'} · ${currentVolume.title}` : `第${currentChapter.chapter_number}章`}
                   </div>
                   <Title level={2} style={{ margin: 0 }}>
                     {currentChapter.title || '未命名章节'}
                   </Title>
                   {currentChapter.summary ? (
                     <details className="reader-blueprint">
-                      <summary>章节蓝图</summary>
+                      <summary>查看章节蓝图</summary>
                       <div>{currentChapter.summary}</div>
                     </details>
                   ) : (

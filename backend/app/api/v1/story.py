@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
+from sqlalchemy.orm.attributes import flag_modified
 from pydantic import BaseModel
 from app.database import get_db
 from app.models.user import User
@@ -19,6 +20,49 @@ def _safe_dict(value):
     return value if isinstance(value, dict) else {}
 
 
+def _safe_number(value, default: float = 0) -> float:
+    if isinstance(value, bool):
+        return float(int(value))
+    if isinstance(value, (int, float)):
+        return float(value)
+    if value is None:
+        return default
+    text = str(value).strip()
+    if not text:
+        return default
+    label_scores = {
+        "无": 0,
+        "很低": 1,
+        "低": 2,
+        "偏低": 3,
+        "中低": 4,
+        "中": 5,
+        "中等": 5,
+        "中强": 6,
+        "较强": 7,
+        "较高": 7,
+        "高": 8,
+        "很高": 9,
+        "极高": 10,
+        "强": 8,
+        "弱": 2,
+    }
+    if text in label_scores:
+        return float(label_scores[text])
+    try:
+        return float(text)
+    except ValueError:
+        return default
+
+
+def _safe_int(value, default: int = 0) -> int:
+    return int(round(_safe_number(value, default)))
+
+
+def _safe_score(value, default: int = 0) -> int:
+    return max(0, min(100, _safe_int(value, default)))
+
+
 def _short_text(value: str | None, limit: int = 160) -> str:
     text = (value or "").strip()
     return text if len(text) <= limit else f"{text[:limit]}..."
@@ -27,6 +71,67 @@ def _short_text(value: str | None, limit: int = 160) -> str:
 def _quality_review(checks):
     checks = _safe_dict(checks)
     return _safe_dict(checks.get("quality_review"))
+
+
+def _review_score(review: dict, fallback=None):
+    score = review.get("overall_score", fallback)
+    if score is None:
+        return fallback
+    score = _safe_int(score)
+    issues = _safe_list(review.get("issues"))
+    severities = {
+        str(issue.get("severity", "")).strip().lower()
+        for issue in issues
+        if isinstance(issue, dict)
+    }
+    if severities & {"critical", "致命"}:
+        return min(score, 6)
+    if severities & {"high", "严重"}:
+        return min(score, 7)
+    return score
+
+
+def _normalized_review_scores(review: dict, fallback_score=None) -> dict:
+    scores = {}
+    for key, value in _safe_dict(review.get("scores")).items():
+        if value is not None and str(value).strip() != "":
+            scores[key] = _safe_int(value)
+    top_level_map = {
+        "continuity": "continuity_score",
+        "readability": "readability_score",
+    }
+    for dim_key, review_key in top_level_map.items():
+        if dim_key not in scores and review.get(review_key) is not None:
+            scores[dim_key] = _safe_int(review.get(review_key))
+    if not scores and fallback_score is not None:
+        score = _safe_int(fallback_score)
+        scores = {
+            "continuity": score,
+            "readability": score,
+            "hook": score,
+            "character_consistency": score,
+            "information_reveal": score,
+        }
+    return scores
+
+
+def _normalized_review_issues(review: dict, chapter_score=None) -> list:
+    issues = _safe_list(review.get("issues"))
+    if issues:
+        return issues
+    score = _safe_int(chapter_score if chapter_score is not None else review.get("overall_score"), 0)
+    if score and score < 7:
+        return [{
+            "issue_type": "low_score_without_locator",
+            "severity": "high" if score <= 5 else "medium",
+            "dimension": "章节综合质量",
+            "target_text": "",
+            "fix_mode": "context",
+            "description": f"章节审稿总分只有 {score}/10，但模型未返回具体问题，需重新审稿或人工定位低分原因。",
+            "fix_suggestion": "建议重新执行章节审计，重点检查开场承接、角色行为逻辑、状态增量、钩子强度和信息揭露节奏。",
+            "repair_task": "重新审计本章并补齐具体问题后再做定点修复。",
+        }]
+    return []
 
 
 def _quality_severity(score: int | float | None = None, severity: str = "") -> str:
@@ -262,8 +367,9 @@ def _faction_payload(f):
 
 def _chapter_payload(ch):
     review = _quality_review(ch.continuity_checks)
-    scores = _safe_dict(review.get("scores"))
-    issues = _safe_list(review.get("issues"))
+    review_score = _review_score(review, ch.quality_score)
+    scores = _normalized_review_scores(review, review_score)
+    issues = _normalized_review_issues(review, review_score)
     return {
         "id": str(ch.id),
         "chapter_number": ch.chapter_number,
@@ -279,10 +385,11 @@ def _chapter_payload(ch):
         "minor_events": _safe_list(ch.minor_events),
         "causality_links": _safe_list(ch.causality_links),
         "foreshadowing_tasks": _safe_list(ch.foreshadowing_tasks),
-        "quality_score": ch.quality_score,
+        "quality_score": review_score,
         "tension_actual": ch.tension_actual,
         "quality_review": {
-            "overall_score": review.get("overall_score", ch.quality_score),
+            "overall_score": review_score,
+            "passed": review.get("passed"),
             "scores": scores,
             "issues": issues,
             "suggestions": _safe_list(review.get("suggestions")),
@@ -578,7 +685,7 @@ async def get_quality_dashboard(project_id: str, user: User = Depends(get_curren
     chapters = data["chapters"]
     tasks = data["tasks"]
     chapter_rows = [_chapter_payload(ch) for ch in chapters]
-    scored = [c["quality_score"] for c in chapter_rows if isinstance(c["quality_score"], int)]
+    scored = [_safe_int(c["quality_score"]) for c in chapter_rows if c.get("quality_score") is not None]
     written = [c for c in chapter_rows if c["word_count"] > 0 or c["status"] == "written"]
 
     issue_rows = []
@@ -607,7 +714,7 @@ async def get_quality_dashboard(project_id: str, user: User = Depends(get_curren
             if state_validation and not state_validation.get("passed", True):
                 longform_flags["missing_state_validation"] += 1
             hook_design = _safe_dict(blueprint.get("hook_design") or checks.get("hook_design"))
-            if hook_design and int(hook_design.get("hook_strength") or 0) < 3:
+            if hook_design and _safe_int(hook_design.get("hook_strength"), 0) < 3:
                 longform_flags["weak_hook"] += 1
             indispensability = _safe_dict(blueprint.get("indispensability_check") or checks.get("indispensability_check"))
             if indispensability and not _safe_list(indispensability.get("if_deleted_what_breaks")):
@@ -642,14 +749,15 @@ async def get_quality_dashboard(project_id: str, user: User = Depends(get_curren
     quality_issues = []
 
     def add_score(scope: str, scope_id: str, scope_name: str, score_type: str, score: int, passed: bool, dimensions=None):
+        normalized_score = _safe_score(score)
         quality_scores.append({
             "scope": scope,
             "scope_id": scope_id,
             "scope_name": scope_name,
             "score_type": score_type,
-            "score": score,
+            "score": normalized_score,
             "passed": passed,
-            "status": _score_status(score, passed),
+            "status": _score_status(normalized_score, passed),
             "dimensions": dimensions or [],
         })
 
@@ -666,7 +774,7 @@ async def get_quality_dashboard(project_id: str, user: User = Depends(get_curren
             "target": target or {},
         })
 
-    add_score("world", str(world.id) if world else "", "世界规则", "世界规则闸门", int(world_quality["score"]), bool(world_quality["passed"]))
+    add_score("world", str(world.id) if world else "", "世界规则", "世界规则闸门", _safe_score(world_quality.get("score")), bool(world_quality.get("passed")))
     for item in world_quality["issues"]:
         add_issue("world", str(world.id) if world else "", "世界规则", item.get("issue", "世界规则缺口"), item.get("issue", ""), item.get("severity", "medium"), "open_world", "strengthen_world_rules")
     for item in world_quality["warnings"]:
@@ -692,7 +800,7 @@ async def get_quality_dashboard(project_id: str, user: User = Depends(get_curren
             "title": volume.title,
             **vq,
         })
-        add_score("volume", str(volume.id), f"卷{volume.volume_number} · {volume.title}", "卷级结构分", int(vq["score"]), bool(vq["passed"]), vq.get("dimensions", []))
+        add_score("volume", str(volume.id), f"卷{volume.volume_number} · {volume.title}", "卷级结构分", _safe_score(vq.get("score")), bool(vq.get("passed")), vq.get("dimensions", []))
         for item in vq.get("issues", []):
             add_issue("volume", str(volume.id), f"卷{volume.volume_number} · {volume.title}", item.get("issue", "卷结构问题"), item.get("issue", ""), item.get("severity", "medium"), "open_volume_detail", "adjust_volume")
         for item in vq.get("warnings", []):
@@ -700,7 +808,8 @@ async def get_quality_dashboard(project_id: str, user: User = Depends(get_curren
 
         arcs = _safe_list(volume.narrative_arcs)
         arc_quality = vq.get("arc_quality", {})
-        add_score("arc", str(volume.id), f"卷{volume.volume_number}弧线链", "弧线连续性分", int(arc_quality.get("score", 0)), int(arc_quality.get("score", 0)) >= 75)
+        arc_score = _safe_score(arc_quality.get("score", 0))
+        add_score("arc", str(volume.id), f"卷{volume.volume_number}弧线链", "弧线连续性分", arc_score, arc_score >= 75)
         for issue in _safe_list(arc_quality.get("issues")):
             idx = issue.get("arc_index")
             arc_name = issue.get("arc_name") or (arcs[idx].get("name") if isinstance(idx, int) and idx < len(arcs) and isinstance(arcs[idx], dict) else "未命名弧线")
@@ -737,10 +846,10 @@ async def get_quality_dashboard(project_id: str, user: User = Depends(get_curren
 
     aggregate_scores = {
         "overall": round(sum(item["score"] for item in quality_scores) / len(quality_scores)) if quality_scores else 0,
-        "world": int(world_quality["score"]),
+        "world": _safe_score(world_quality.get("score")),
         "outline": outline_score,
-        "volume": round(sum(v["score"] for v in volume_quality_rows) / len(volume_quality_rows)) if volume_quality_rows else 0,
-        "arc": round(sum(v["arc_quality"]["score"] for v in volume_quality_rows) / len(volume_quality_rows)) if volume_quality_rows else 0,
+        "volume": round(sum(_safe_score(v.get("score")) for v in volume_quality_rows) / len(volume_quality_rows)) if volume_quality_rows else 0,
+        "arc": round(sum(_safe_score(_safe_dict(v.get("arc_quality")).get("score")) for v in volume_quality_rows) / len(volume_quality_rows)) if volume_quality_rows else 0,
         "chapter": round((sum(scored) / len(scored)) * 10) if scored else 0,
         "task": max(0, 100 - len(failed_tasks) * 8),
     }
@@ -857,6 +966,7 @@ async def complete_quality_issue(
     checks["quality_review"] = review
     checks["quality_resolved_issues"] = resolved[-100:]
     chapter.continuity_checks = checks
+    flag_modified(chapter, "continuity_checks")
     await db.commit()
     return {"ok": True, "remaining": len(issues)}
 

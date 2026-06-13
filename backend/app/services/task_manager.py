@@ -9,6 +9,7 @@ from sqlalchemy.exc import IntegrityError, OperationalError
 
 from app.database import async_session
 from app.models.chapter import GenerationTask
+from app.services.llm_call_logger import llm_call_context
 
 _tasks: dict[str, dict] = {}
 INTERRUPTED_BY_RESTART = "服务重启，后台任务已中断，请重新发起"
@@ -254,7 +255,8 @@ def start_task(coro: Coroutine, task_type: str = "ai", project_id: str | None = 
     async def _runner():
         try:
             await _persist_create_with_retry(task_id, task_type, project_id, meta or {})
-            result = await asyncio.wait_for(coro, timeout=timeout)
+            with llm_call_context(project_id=project_id or "", task_id=task_id, function_name=task_type):
+                result = await asyncio.wait_for(coro, timeout=timeout)
             _tasks[task_id]["status"] = "completed"
             _tasks[task_id]["result"] = result
             await _persist_update_with_retry(task_id, status="completed", progress=1, result=result)

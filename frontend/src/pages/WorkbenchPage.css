@@ -606,6 +606,100 @@
   word-break: break-word;
 }
 
+.arc-object-fields {
+  display: grid;
+  gap: 8px;
+}
+
+.arc-object-field {
+  display: grid;
+  grid-template-columns: 86px minmax(0, 1fr);
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid #e7edf5;
+  border-radius: 6px;
+  background: #fbfcfe;
+  color: #4f5f73;
+  line-height: 1.65;
+}
+
+.arc-object-field span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.arc-milestone-card {
+  display: grid;
+  gap: 6px;
+  padding: 10px 12px;
+  border: 1px solid #dbeafe;
+  border-radius: 8px;
+  background: #f8fbff;
+}
+
+.arc-milestone-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.arc-milestone-head .ant-typography {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.arc-milestone-card p.ant-typography {
+  margin: 0;
+  color: #4f5f73;
+  line-height: 1.65;
+  overflow-wrap: anywhere;
+}
+
+.arc-foreshadowing-plan {
+  display: grid;
+  gap: 8px;
+}
+
+.arc-foreshadowing-list {
+  display: grid;
+  gap: 10px;
+}
+
+.arc-foreshadowing-card {
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid #dbeafe;
+  border-radius: 8px;
+  background: #f8fbff;
+}
+
+.arc-foreshadowing-card-title {
+  color: #1d4ed8;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.arc-foreshadowing-step {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 8px;
+  align-items: start;
+  padding: 9px 10px;
+  border: 1px solid #e7edf5;
+  border-radius: 8px;
+  background: #fbfcfe;
+  color: #4f5f73;
+  line-height: 1.65;
+}
+
+.arc-foreshadowing-step span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
 .arc-step-list {
   display: grid;
   gap: 10px;
@@ -1092,6 +1186,60 @@
   border-radius: 8px;
 }
 
+.task-chapter-preview-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.task-chapter-preview-card .ant-card-head-title {
+  white-space: normal;
+  overflow: visible;
+}
+
+.task-chapter-preview-card .ant-descriptions-item-content {
+  line-height: 1.65;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.task-chapter-summary {
+  margin-bottom: 12px;
+  color: #334155;
+  line-height: 1.7;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.task-scene-beats {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.task-scene-beat-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.task-scene-beat {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 8px;
+  align-items: start;
+  padding: 8px 10px;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  background: #f8fafc;
+}
+
+.task-scene-beat span {
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+
 .task-dimension-grid,
 .task-issue-list,
 .task-detail-list {
@@ -1168,6 +1316,69 @@
   font-size: 12px;
 }
 
+.state-memory-hero {
+  align-items: flex-start;
+}
+
+.state-memory-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.state-memory-card {
+  min-width: 0;
+}
+
+.state-memory-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.state-memory-item {
+  min-width: 0;
+  padding: 10px 12px;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  background: #fff;
+}
+
+.state-memory-item-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-bottom: 6px;
+}
+
+.state-memory-item .ant-typography {
+  margin-bottom: 0;
+  line-height: 1.65;
+  overflow-wrap: anywhere;
+}
+
+.state-memory-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.state-memory-field {
+  display: grid;
+  grid-template-columns: 86px minmax(0, 1fr);
+  gap: 8px;
+  align-items: start;
+  color: #334155;
+  font-size: 13px;
+  line-height: 1.65;
+}
+
+.state-memory-field > span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
 .task-detail-list-item {
   padding: 8px 10px;
   border-radius: 6px;
@@ -1202,6 +1413,17 @@
   line-height: 1.6;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+}
+
+@media (max-width: 900px) {
+  .state-memory-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .state-memory-field {
+    grid-template-columns: 1fr;
+    gap: 2px;
+  }
 }
 
 .system-drawer-content {

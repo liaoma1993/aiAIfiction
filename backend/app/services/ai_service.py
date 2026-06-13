@@ -22,6 +22,11 @@ SYSTEM_WRITER = "你是一位成熟的类型小说家，擅长场景写作、对
 
 SYSTEM_EDITOR = "你是一位资深文学编辑，眼光毒辣，擅长发现叙事断裂、逻辑矛盾、角色崩塌和节奏失衡。你会毫不留情地指出问题，同时给出精准的修改建议。始终用中文回复。回复必须是合法的 JSON。"
 
+SYSTEM_CHAPTER_BLUEPRINT = (
+    "你是长篇类型小说章节蓝图策划师。只输出一条可执行章节方案，维护前后连续性、章节追读和状态增量。"
+    "回复必须是合法 JSON 数组，不要解释文字，不要 Markdown。"
+)
+
 PROMPT_VERSION = "2026-06-continuity-v2"
 
 JSON_REPAIR_PROMPT = """
@@ -387,17 +392,20 @@ EXPAND_VOLUME_ARCS_PROMPT = """
 你是小说叙事架构师。根据卷内容和用户指定的展开策略，拆分为几条故事弧线。
 
 【重要定义：拆弧线不是拆章节】
-- 弧线 = 某个对象的连续变化过程，对象可以是主线目标、人物心理、人物关系、秘密揭露、反派压力、资源状态、权力格局、身体伤势或身份风险。
+- 弧线 = 卷轴下面的同级事件链，围绕一个主要变化对象完成一次连续变化。主要对象可以是主角短期目标、人物关系、外部压力、资源状态、身份处境、秘密信息、组织接触、项目推进或情绪承诺。
 - 章节 = 承载弧线变化的叙事容器。拆弧线时不要把结果写成“第几章发生什么”的章节格子。
 - 本任务只拆“变化逻辑”和“因果接力”。章节目录会在后续步骤中生成。
 - 可以给出 chapter_start/chapter_end/chapter_count 作为粗略承载范围，供界面和后续展开参考，但它们不是弧线本体，不能替代 arc_steps。
 
 【弧线定位硬规则】
-- 弧线不是 7-8 章一个小故事，也不是一段闭合副本；弧线是长篇小说里的“连续变化阶段”。
+- 弧线不是一整段卷轴阶段的大包，也不是单章小场景。它是卷轴下面的中等颗粒事件链。
+- 一个卷轴应由多条同级弧线共同承担厚度，不允许把“下村、走访、立项、关系破冰、验收、举报、晋升”等多个连续任务塞进一条弧线。
+- 每条弧线只允许一个主要变化对象；可以有副线，但副线只能服务主对象，不能抢走弧线中心。
+- 如果一条弧线同时跨越多个地点/职位/项目阶段，或同时解决关系、产业、调查、晋升、伏笔等多个对象，说明颗粒度过粗，必须拆成多条同级弧线。
 - 弧线可以结束一个阶段目标，但不能清空角色状态、组织关系、身体伤势、物件状态、秘密、债务、误会和外部压力。
 - 本卷弧线之间使用“起承转交”，不是“起承转合”：结尾必须把未解决问题、新后果、关系变化、物件状态、敌人动作、时间限制或新选择交给下一弧线。
 - 下一弧线必须由上一弧线后果逼出来，不能突然换地图、换目标、换组织、换主角行动方式。
-- 弧线长度由变化台阶数量、角色/组织引入成本、冲突复杂度和后果余波决定，不允许平均分配，不允许默认每条 7-8 章。
+- 弧线长度由变化台阶数量、角色/组织引入成本、冲突复杂度和后果余波决定，不允许平均分配，但单条弧线不应靠拉长来替代更细拆分。
 
 书名《{title}》，类型{genre}
 本卷名：{volume_title}
@@ -437,21 +445,31 @@ Skill 使用规则：
 - 群像展开型：每条弧线要明确哪个角色/组织获得戏份和变化，避免只有主角单线。
 
 密度解释：
-- 少量弧线：3-4条，边界大，推进快。
-- 标准弧线：4-6条，兼顾推进和铺垫。
-- 丰富弧线：6-8条，适合长篇连载、群像、赛事、升级流。
-- 超细拆分：8条以上，适合复杂卷、多线并行或需要精细铺垫的长篇。
+- 少量弧线：5-7条，适合短卷或事件较集中，但仍要避免阶段大包。
+- 标准弧线：7-10条，适合多数长篇卷轴，兼顾推进和铺垫。
+- 丰富弧线：10-14条，适合群像、升级流、赛事、副本、官场/职场多环节推进。
+- 超细拆分：14条以上，适合复杂卷、多线并行或需要精细铺垫的长篇。宁可多条同级弧线，也不要一条弧线吞掉半卷内容。
 
 核心原则——弧线不是平均切蛋糕：
 - 每条弧线必须有不可替代的叙事功能，如果两条弧线可以互换位置就没区分好
 - 弧线之间的边界是"质变点"——角色处境或信息状态发生了不可逆的变化
-- 弧线长度取决于该段情节需要的叙事空间，不要强求均匀：轻弧线可 3-5 章，标准弧线 6-10 章，重弧线 10-18 章，卷核心弧线可 18 章以上
+- 单条弧线章节承载参考：桥接/余波 2-4 章；轻事件 4-6 章；普通事件 6-10 章；重要事件 10-16 章；卷核心高潮 16-24 章。
+- 如果一条弧线估算超过 24 章，优先拆成多条同级弧线；不要新增“子弧线”，也不要把一条弧线写成阶段大包。
+- chapter_count 是后续章节蓝图的承载估算，不是为了凑厚度而随手填的大数字。卷轴厚度应由多条同级弧线累积。
+- 弧线名称必须能看出具体事件链，例如“下村受冷”“村情摸底”“茶山试种”“两姓破冰”“茶苗验收”；禁止只用“黄泥破冰”“县域腾飞”这种覆盖多任务的大标题。
 - 每条弧线必须写清“如果删掉这一段，全卷会缺什么”，避免水剧情
 - 每条弧线必须有明确的开局状态、终点状态和给下一弧线留下的承接条件
-- 每条弧线必须拆成 4-7 个“变化台阶”。台阶之间必须是因果递进，不允许只是程度递增。
+- 每条弧线必须拆成 3-5 个“变化台阶”；复杂高潮弧线可 5-7 个。台阶之间必须是因果递进，不允许只是程度递增。
+- 如果 arc_steps 每个台阶本身都像一条完整小弧线，说明当前弧线过粗，必须拆成多条同级弧线。
 - 错误台阶：怀疑 → 更怀疑 → 非常怀疑 → 崩溃。
 - 正确台阶：看到矛盾证词 → 开始怀疑；亲眼发现换证物 → 怀疑加深；发现换证物是为了保护她 → 怀疑转为动摇；对方仍拒绝解释 → 动摇变成新的防备。
 - 如果某条弧线删掉后前后弧线仍可顺畅连接，说明这条弧线的因果接力失败，需要重拆。
+
+【颗粒度反例】
+- 错误：黄泥破冰 = 下村任职 + 两个月走访 + 茶山立项 + 返乡青年 + 赵李和解 + 合作社成立 + 茶苗成活 + 县农业局关注 + 收购商伏笔。
+- 正确：把上面拆成同级弧线：下村受冷、村情摸底、茶山试种、两姓破冰、茶苗验收。
+- 错误：调查清白与破格提拔 = 匿名举报 + 纪委进驻 + 台账自证 + 联名信 + 王德厚调离 + 副镇长任命。
+- 正确：可拆为举报落地、台账自证、群众联名、破格提拔等同级弧线，视卷轴节奏决定是否合并相邻轻弧线。
 
 网文弧线要求——不要写成深奥场景小说：
 - 弧线必须是事件链，不是情绪散文。写清“目标 -> 阻力 -> 主角行动 -> 结果 -> 更大麻烦”。
@@ -490,6 +508,8 @@ Skill 使用规则：
 
 - name: 弧线名称（8字内，要有辨识度）
 - arc_type: 弧线类型，必须说明这条弧线主要改变什么
+- main_change_object: 本弧线唯一主要变化对象，如“秦诚的基层位置”“黄泥岗村真实结构”“废弃茶山资源”“赵李两姓关系”“匿名举报压力”
+- core_change: 一句话写清从什么状态变成什么状态，例如“从被村民冷处理的外来支书，变成愿意被开门说话的新支书”
 - narrative_function: 叙事功能——"主线推进"/"角色深化"/"世界观展开"/"伏笔铺设"/"节奏缓冲"/"高潮爆发"
 - closure_level: 开放/半闭合/阶段闭合/完全闭合。普通弧线不要完全闭合
 - must_remain_open: 数组，写本弧线结尾必须保留的未解问题/新后果/关系裂痕/物件状态/外部压力
@@ -550,23 +570,34 @@ REVISE_VOLUME_ARC_PROMPT = """
 - 如果是“压缩”，删掉可省略过渡，把弧线收束到核心冲突、关键转折和必要余波。
 - 如果是“修复连续性”，优先补齐缺失或不合格字段：opening_state、ending_state、continuity_chain、handoff_from_previous、handoff_to_next、irreplaceable_value、arc_steps；不要大改弧线名称、章节范围、核心事件和全卷功能，除非这些内容本身导致无法承接。
 - 如果是“优化交接”，只优化前后弧线交接表达和 continuity_chain，让上一弧线交出的具体物件/压力/承诺/秘密被本弧线明确接住，并把本弧线的新后果交给下一弧线；不要改变核心事件、章节范围和弧线功能。
+- 修复单条弧线时禁止把相邻弧线的任务合并进来。当前弧线只围绕一个主要变化对象修复；如果发现当前弧线过粗，只在 arc_review_targets / blueprint_repair_targets 中写“建议拆成同级弧线”，不要在本次输出里新增层级。
 - 按网文追读改写：必须有短期目标、具体对手/阻力、事件升级、阶段反馈和章末承接。不要把弧线写成“主角看见某种现象后心态变化”的文学说明。
 - 当前弧线不是独立小故事，必须按“起承转交”处理：接上一弧线具体后果，推进本阶段质变，再把具体压力交给下一弧线。
+- 当前弧线也不是一整段卷轴阶段的大包；不得同时承担下村、走访、立项、关系破冰、验收、举报、晋升等多个连续任务。
 - 关键角色/组织必须有入场坡度：先信号、痕迹、外围接触或规则压力，再正式登场和关系绑定。不能突然出现就给答案、救场或深度信任主角。
-- 必须输出 4-7 个 arc_steps。相邻台阶之间必须是“触发事件 -> 角色选择 -> 后果 -> 下一压力”的因果递进，禁止只写情绪程度递增。
+- 必须输出 3-5 个 arc_steps；复杂高潮弧线可 5-7 个。相邻台阶之间必须是“触发事件 -> 角色选择 -> 后果 -> 下一压力”的因果递进，禁止只写情绪程度递增。
 - 必须输出 handoff_from_previous 和 handoff_to_next，且要落到可写进正文的具体事物：物件、伤势、承诺、误会、秘密、债务、追兵、时间限制或一句话。
 - 少用抽象词：理想主义、制度表演、信念地基、时代洪流、灰色秩序。必须落到具体事：谁卡了流程、哪份材料有问题、哪场会被怼、谁当众甩锅、主角怎么破局。
 - 必须输出中文字段。
+- 输出必须完整闭合。不要把 must_remain_open、arc_review_targets、blueprint_repair_targets 写成长段作文；每项控制在 80 字以内，最多 3-4 项。
+- description 可以保留完整弧线逻辑，但不要重复 opening_state、ending_state、arc_steps 已经表达过的内容。
+- character_introduction_plan、faction_introduction_plan 只写本弧线真正承担功能的关键对象；已有角色/组织只写承接状态，不要扩写小传或百科。
+- 如果内容过长，优先压缩背景解释、修辞和重复因果，不能省略 JSON 结尾、arc_steps、handoff_from_previous、handoff_to_next。
+- chapter_count 必须按单条同级弧线承载估算：桥接/余波 2-4；轻事件 4-6；普通事件 6-10；重要事件 10-16；卷核心高潮 16-24。
+- 如果当前弧线需要超过 24 章才能写清，说明它颗粒度过粗；本次只返回当前弧线的最核心部分，并在 arc_review_targets 中提示应拆成多条同级弧线。
+- 卷轴总厚度由多条同级弧线共同承担，不要用一条弧线硬撑 30 章。
 
 返回 JSON 对象，字段：
 {{
   "name": "8字内弧线名",
   "arc_type": "主线目标变化/关系变化/信息揭露/组织接触/反派压力/资源状态/身份风险/余波过渡/卷核心危机",
+  "main_change_object": "本弧线唯一主要变化对象",
+  "core_change": "从什么状态变成什么状态",
   "narrative_function": "主线推进/角色深化/世界观展开/伏笔铺设/节奏缓冲/高潮爆发",
   "closure_level": "开放/半闭合/阶段闭合/完全闭合",
   "must_remain_open": ["必须保留到后文的问题或压力"],
   "emotional_color": "情感基调",
-  "description": "400-600字弧线完整叙事概要，必须包含目标、阻力、事件升级、即时反馈和弧线终点",
+  "description": "250-420字弧线完整叙事概要，必须包含目标、阻力、事件升级、即时反馈和弧线终点；只写本弧线，不吞并相邻弧线",
   "opening_state": "本弧线开局状态",
   "ending_state": "本弧线终点状态",
   "continuity_chain": "上一状态 -> 触发事件 -> 角色选择 -> 新后果 -> 下一压力",
@@ -612,168 +643,99 @@ REVISE_VOLUME_ARC_PROMPT = """
 """
 
 EXPAND_ARC_CHAPTERS_PROMPT = """
-你是小说叙事策划师。把一条弧线展开为连续流畅的章节目录。
+把一条弧线展开为连续章节蓝图。只做目录/任务单，不写正文。
 
 书名《{title}》，类型{genre}
-本卷名：{volume_title}
-本卷大纲（仅供参考）：{volume_outline}
+卷：{volume_title}
+卷纲：{volume_outline}
 
-核心任务：展开 → {arc_name}
-弧线叙事功能：{narrative_function}
-弧线情感基调：{emotional_color}
-弧线概要：{arc_description}
-弧线内部因果链：
-{continuity_chain}
-
-弧线变化台阶（章节必须承载这些台阶，不是机械一章一个台阶）：
-{arc_steps}
-
-张力曲线：{tension_curve}
+【弧线输入】
+名称：{arc_name}
+类型/功能/基调：{arc_type} / {narrative_function} / {emotional_color}
+概要：{arc_description}
+因果链：{continuity_chain}
+台阶：{arc_steps}
+张力：{tension_curve}
 关键节点：{key_milestones}
-弧线类型：{arc_type}
-闭合程度：{closure_level}
-必须留给后文的问题/压力：
-{must_remain_open}
-桥接章计划：
-{bridge_chapter_plan}
-主角连续状态：
-{protagonist_continuity_state}
-角色生命周期更新：
-{character_lifecycle_updates}
-组织生命周期更新：
-{faction_lifecycle_updates}
-章节蓝图修复重点：
-{blueprint_repair_targets}
+闭合：{closure_level}
+保留问题：{must_remain_open}
+桥接：{bridge_chapter_plan}
+主角状态：{protagonist_continuity_state}
+角色变化：{character_lifecycle_updates}
+组织变化：{faction_lifecycle_updates}
+修复重点：{blueprint_repair_targets}
 
-上一条弧线的结尾状态（本弧线第1章从这里开始）：
-{previous_arc_ending}
+【前后交接】
+上一弧线结尾：{previous_arc_ending}
+上一弧线最后章节钩子：{previous_arc_last_hook}
+上一依赖：{dependence_on_previous}
+接收物/压力：{handoff_from_previous}
+后续钩子：{payoff_for_next}
+交给下一弧线：{handoff_to_next}
 
-对前一条弧线的依赖：{dependence_on_previous}
-从上一弧线接来的具体交接物/状态：{handoff_from_previous}
-为本卷后续弧线铺设的钩子需求：{payoff_for_next}
-交给下一弧线的具体钩子/压力：{handoff_to_next}
-
+【素材】
 角色：{characters_summary}
 势力：{factions_summary}
+风格：{writing_style_guidance}
+节奏：{pacing}；事件密度：{event_density}；展开：{expansion_scale}（{expansion_desc}）；章数提示：{chapter_range_guidance}
 
-【写作风格 Skill】
-{writing_style_guidance}
+【章节数规则】
+- 先判断本弧线档位：桥接/余波 2-4章；轻事件 4-6章；普通事件 6-10章；重要事件 10-16章；卷核心高潮 16-24章。
+- “章数提示”优先级高于上述通用档位；除桥接/余波外，不要主动取下限。标准展开取建议区间中位，长展开/细写取中高位。
+- 章数由弧线责任决定：主线变化、角色刻画、关系推进、规则展示、对手反制、情绪兑现、伏笔推进、前后交接。
+- arc_steps 是骨架，不是上限；允许非台阶章节，但每章必须有角色/关系/信息/资源/规则/情绪/伏笔/余波中的至少一种增量。
+- 单条弧线不要吞并下一弧线主体；若内容需要超过24章，说明弧线过粗，只展开当前主对象，把其他内容留给后续同级弧线。
 
-Skill 使用规则：
-- 用它指导章节开场、场景组织、人物刻画、情绪与关系推进、信息控制、章末钩子和细节选择。
-- Skill 只决定章节蓝图的写法组织方式，不改变弧线核心事件和已写事实。
-- 禁止复刻 Skill 来源样本的原句、桥段、人物名、地名、组织名和专有设定。
+【张力规则】
+- tension_level 不是文学气氛分，而是读者翻页压力。普通推进章通常 5-7，关键冲突/反转/钩子章应为 8-10。
+- 不允许整条弧线长期停在 3-5；每 2-3 章至少出现一次压力升级、误判、反制、期限、利益损失、关系裂痕或新证据。
+- 张力曲线要有“起压 -> 加压 -> 反制/失衡 -> 阶段兑现 -> 新钩子”，不能每章都是平稳推进。
+- 每章必须给一个可感知的外部压力，不要只写观察、思考、铺垫或温和对话。
 
-节奏：{pacing}  事件密度：{event_density}
-展开长度：{expansion_scale}
-长度策略：{expansion_desc}
-内部章数区间：{chapter_range_guidance}
+【连续性规则】
+- 第1章必须接住 previous_arc_ending、previous_arc_last_hook 与 handoff_from_previous；如果上一弧线最后章节钩子存在，首章 summary、connects_from、continuity_from_previous 或 opening_requirements 中必须明确回应。
+- 最后一章必须把 handoff_to_next / payoff_for_next 落成具体可接的结尾状态。
+- 每章形成：上章后果 -> 本章短目标 -> 阻力/选择 -> 即时反馈 -> 下章压力。
+- 新关键角色/组织不能空降：正式登场前要有传闻、痕迹、外围接触、规则压力或接触代价。
+- 时间跳跃必须说明跳过期间造成的状态变化或代价。
+- 只按 genre 自动适配事务节点，不要套某一固定题材模板。
 
-章节数量判断准则——不要吝啬章节，宁可多不要少：
+【输出控制】
+- 不要输出正文、对白长段、审稿说明、人物百科、制度百科、完整伏笔长表。
+- 单章总字数尽量 250-450 中文字；summary 80-140 字；connects_from/connects_to 各 60 字以内。
+- key_events 最多3项；minor_events 最多2项；scene_beats 最多3项。
+- character_voice_constraints 最多2人；information_reveal_plan 最多2项；没有就返回空对象或空数组。
+- 不做字段裁剪：如果确有必要可完整填写字段，但优先短句、具体动作、具体后果，避免解释性长文。
 
-节奏对章数的直接影响：
-- 缓慢/生活流：每章聚焦1-2个场景，重在氛围渲染、心理描写、日常细节。弧线概要中每200字内容至少分配1章。
-- 适中：每章2-3个场景，日常与事件交替。弧线概要中每250字内容至少分配1章。
-- 紧凑：每章3-5个场景，快速推进。弧线概要中每350字内容至少分配1章。
+【每章 JSON 字段】
+{{
+  "chapter_number": 1,
+  "title": "10字内章节名",
+  "summary": "开场状态；本章短目标；核心阻力；2-3个场景顺序；即时反馈；章末钩子。",
+  "chapter_function": "承接余波/短目标推进/关系试探/信息揭露/组织预热/正式冲突/反转打脸/桥接过渡/高潮爆发/章末钩子强化",
+  "arc_step_refs": ["台阶名"],
+  "connects_from": "承接上一章/上一弧线的具体状态",
+  "connects_to": "交给下一章的具体压力或钩子",
+  "continuity_from_previous": ["继承后果1", "继承后果2"],
+  "state_delta": {{"body":[],"relationship":[],"information":[],"resource":[],"external_pressure":[],"open_hooks":[]}},
+  "continuity_to_next": ["后果1", "后果2"],
+  "entry_gate_checks": {{}},
+  "indispensability_check": {{"if_deleted_what_breaks":"删掉会断什么","state_delta_required":"需要产生什么增量","state_delta_actual":"实际增量"}},
+  "opening_requirements": ["开场300字必须接住的状态1", "状态2"],
+  "hook_design": {{"hook_type":"物件/消息/敲门/发现/选择/压力","hook_strength":4,"must_change_next_opening_pressure":"如何改变下一章开场压力"}},
+  "character_voice_constraints": {{}},
+  "information_reveal_plan": [],
+  "repair_priority_hint": "L1句子/L2段落/L3场景补丁/L4蓝图修复/L5弧线修复",
+  "key_events": ["事件1", "事件2"],
+  "minor_events": ["小事件或伏笔"],
+  "characters_in_chapter": ["角色名"],
+  "tension_level": 6,
+  "narrative_line": "主线",
+  "is_key_chapter": false,
+  "scene_count": 2
+}}
 
-弧线复杂度对章数的影响：
-- 如果弧线涉及3层以上冲突演变，至少需要相应层数×3章来充分展开
-- 如果弧线涉及角色身份重构/价值观转变，至少需要2-3章来展现转变过程
-- 如果弧线有新的重要角色登场，需要至少1章来建立读者对该角色的认知
-- 每个关键节点至少用1-2章展开，节点之间的过渡也需要章节
-- 情绪曲线中的每个拐点（如"压抑→突破→狂喜→冷静→孤勇"有4个拐点），至少用1章来呈现
-
-章数底线：
-- 轻弧线可 3-5 章，用于过渡、余波、小目标、小调查。
-- 标准弧线通常 6-10 章，用于阶段目标、局部冲突、关系推进。
-- 重弧线通常 10-18 章，用于重要组织登场、主线转折、人物关系质变、大型副本或身份变化。
-- 卷核心弧线可 18 章以上，用于一卷主危机、主战役、核心秘密揭露或重大阵营变化。
-- 如果按上述准则计算出的章数超过10章，那就用10+章；不要为了凑整数压缩内容，也不要默认每条弧线都是7-8章。
-
-根据上述准则和“展开长度”，你自己判断最合适的章节数量。不要机械等于原弧线的 chapter_count；原弧线章数只是粗略估计。给出具体章数时，在内心确认：每章是否只承载了单次情感转变？每层的冲突演变是否有足够空间？读者能否在没有足够铺垫的情况下接受角色转变？
-- 短展开：保留核心转折，压缩过渡和支线，但不能跳过因果。
-- 标准展开：完整呈现弧线起承转交，关键节点有铺垫和余波，结尾要把新压力交给下一弧线。
-- 长展开：增加误判、反复、支线压力、人物关系推进和阶段性小高潮。
-- 细写展开：拆开每个关键节点，让事件前置铺垫、现场执行、后果余震都有独立章节空间。
-
-弧线台阶承载规则：
-- 章节不是重新拆弧线，而是把 arc_steps 编织成可读章节。
-- 每章必须声明自己承载哪些 arc_steps，允许一个台阶拆成多章，也允许一章承载半个台阶或两个轻台阶。
-- 相邻章节必须形成“上章后果 -> 本章行动 -> 本章新后果 -> 下章压力”的接力。
-- 本弧线第1章必须先接 handoff_from_previous / previous_arc_ending，再进入本弧线新事件。
-- 本弧线最后1章必须把 handoff_to_next / payoff_for_next 落成具体可接的结尾状态。
-- 任何时间跳跃都必须在 summary 中交代跳过期间的代价或变化，不能用“三日后”硬切。
-- 如果 bridge_chapter_plan.needed 为 true，必须在本弧线开头或前一弧线结尾安排桥接功能章，处理余波、伤势、关系反应、组织预热和新目标形成；桥接章不是水章，必须产生状态增量。
-- 如果 closure_level 不是“完全闭合”，最后一章必须明确 must_remain_open 中哪些问题仍留到后文，并把它们写入 continuity_to_next。
-- protagonist_continuity_state 必须进入章节开场和结尾状态，不能让主角身体、心理、目标、风险、关系、资源、认知清零。
-
-角色/组织登场硬闸：
-- 新关键角色正式登场前，必须至少安排一个 first_signal 或 indirect_presence：传闻、物件、痕迹、别人反应、误导、留下的后果都可以。
-- 新关键组织正式登场前，必须至少安排 symbol_or_trace、low_level_contact 或 rule_pressure 之一：标志、规矩、外围成员、办事门槛、交换代价都可以。
-- 如果某角色/组织没有预热，本章只能把它当低功能临时配角，不能让其掌握核心秘密、解决主线困境、直接改变阵营格局或立刻和主角深度绑定。
-- 章节 summary 中涉及关键角色/组织第一次正式登场时，必须写清：主角为什么现在不得不接触、接触代价是什么、初始冲突是什么、对方不能立刻给出什么。
-- 主角行动方式必须承接前文状态。上一弧线谨慎/受伤/欠债/不信任，本弧线不能无台阶地变成主动牺牲、完全信任或突然参与大局。
-
-网文拆章硬规则——优先“追读”，不要写成深奥场景小说：
-- 每章先确定一个读者能立刻看懂的短目标：主角要办成什么、躲开什么、证明什么、占到什么便宜。
-- 每章必须有外部阻力：有人拦、制度卡、信息差、误会、期限、利益冲突或当场翻车。不要只写主角“感受变化”。
-- 每章必须有即时反馈：小胜、小亏、打脸、反转、笑点、尴尬、获得线索、关系推进至少一种。
-- 世界观和制度设定只能通过“办事过程中的麻烦和结果”露出，不要用象征、映射、长段说明去解释。
-- 少写“理想主义摇晃、信念地基、制度表演”等抽象词；改成具体事件：谁说了什么、哪份材料被改、哪个章盖不上、谁被当场难住。
-- 章节标题要像网文章节标题，直接、有悬念、有事件感，不要过度文艺。
-- 前20万字不要慢热。每3章至少出现一次明显升级：更大的麻烦、更硬的对手、更直接的利益损失或更强的期待。
-- 禁止把 summary 写成意象赏析、主题阐释、文学评论。summary 是给写正文用的任务单。
-
-首章特别要求——如果是全书第1章，summary 的 ②场景序列 中必须包含一个"开篇场景"，写明：
-- 开篇第一句话的建议方向（优先悬念/冲突/反常结果，不要意境感开场）
-- 开篇需要自然嵌入的世界观信息（门派/社会/力量体系的基本轮廓）
-- 主角的出场方式——通过动作而非介绍，让读者通过他在做什么来认识他
-
-每章返回，summary 字段升级为"场景蓝图"而非简单梗概：
-- chapter_number: 章号
-- title: 章节名（10字内，有吸引力）
-- summary: 220-320字章节任务单，结构化包含：
-  ① 开场状态（时间/地点/在场角色/情绪基调）
-  ② 本章短目标（主角这一章具体要办成什么）
-  ③ 核心冲突（谁阻止/什么规则卡住/误会或期限是什么）
-  ④ 场景序列（2-4个场景，每个写清：地点→在场角色→冲突动作→结果）
-  ⑤ 即时反馈（爽点/笑点/打脸/小胜/小亏/线索落地/关系推进）
-  ⑥ 章末钩子（具体到一句话、一个物件、一条消息、一次敲门、一个新麻烦）
-- chapter_function: 本章功能类型，取“承接余波/短目标推进/关系试探/信息揭露/组织预热/正式冲突/反转打脸/桥接过渡/高潮爆发/章末钩子强化”等之一
-- arc_step_refs: 本章承载的弧线台阶名列表
-- connects_from: 上一章结尾的状态（本弧线第1章则承接上一条弧线的结尾），精确到角色状态和未解问题
-- connects_to: 本章结尾状态，为下一章埋钩子，精确到角色状态和新悬疑
-- continuity_from_previous: 本章必须继承的上章后果，至少2条，落到伤势/关系/物件/秘密/压力/情绪余波
-- state_delta: 本章造成的状态变化，分身体、关系、信息、资源、外部压力、未解钩子
-- continuity_to_next: 下一章必须继承的后果，至少2条，必须具体可写
-- entry_gate_checks: 本章新角色/新组织登场检查。包含 new_characters、new_factions、prior_signals、contact_cost、blocked_sudden_functions。若无新登场，返回空数组/空字符串，但不能省略字段
-- indispensability_check: 章节不可替代性检查，包含 if_deleted_what_breaks、state_delta_required、state_delta_actual
-- opening_requirements: 正文开场前300字必须接住的具体状态，至少2条
-- hook_design: 章末钩子设计，包含 hook_type、hook_strength、must_change_next_opening_pressure
-- character_voice_constraints: 本章出场角色声音约束，包含 must_sound_like、must_not_sound_like、knowledge_boundary
-- information_reveal_plan: 信息揭露节奏表，包含 reader_knows、protagonist_knows、other_characters_know、next_reveal_allowed、must_not_reveal
-- repair_priority_hint: 如果本章生成后出问题，优先使用 L1句子/L2段落/L3场景补丁/L4蓝图修复/L5弧线修复 哪一级
-- key_events: 核心事件列表（2-4个）
-- minor_events: 小事件/日常/伏笔铺垫（2-3个）
-- characters_in_chapter: 出场角色名列表
-- tension_level: 1-10张力值
-- narrative_line: "主线"/"副线A"/"副线B"
-- is_key_chapter: 是否为转折章节
-- scene_count: 场景数
-
-核心规则——章节连贯性：
-1. 每章从上一章结尾状态开始，本弧线第1章必须从「上一条弧线的结尾状态」切入
-2. 角色行为要有因果链：上一章的决策→下一章的后果，不能从天而降
-3. 情绪要有延续：上一章的情绪高点不能突然归零，高潮后要有余震
-4. 每一章的结尾必须留下悬念或推力——读者必须有理由翻页
-5. 章节之间有明确的"所以……然后呢？"逻辑链
-6. 场景切换要有锚定——每次换场景，用一句感官描述（声音/气味/光线）让读者立刻知道到了哪里
-7. 如果删除任意一章后前后仍能顺接，说明该章缺少不可替代的状态变化，必须补 state_delta 或重拆章节功能
-8. 关键角色/组织登场必须通过 entry_gate_checks 自检；检查不通过时，先改章节蓝图，不能让正文阶段硬塞
-9. 每章必须通过 indispensability_check：如果删掉本章前后仍能顺接，则必须补状态增量或改章节功能
-10. 每章必须有 hook_design，章末钩子不能是抽象危机
-
-返回 JSON 数组，不要其他文字。
+返回 JSON 数组，不要任何额外文字。
 """
 
 CHAPTER_PREWRITE_DIAGNOSIS_PROMPT = """
@@ -1006,6 +968,10 @@ CHAPTER_AUDIT_PROMPT = """
 输出限制：
 - 必须返回完整合法 JSON，不要 Markdown，不要代码块。
 - 所有文本值必须用中文。
+- 允许 issues 返回空数组。不要为了显得严格而凑满 5 条；没有阻断阅读、连续性、角色逻辑或状态继承的问题时，必须 passed=true 且 issues=[]。
+- issues 只放“必须修复，否则读者会卡住/剧情会断/人物会崩/后续状态会错”的问题。普通润色建议、轻微文风优化、可有可无的细节补强，不得放入 issues，可放入 suggestions。
+- 修复后的复审尤其要判断“当前问题是否已经解决”，不要每次换一批轻微建议继续判失败。
+- 如果 overall_score >= 8 且没有 critical/high 问题，应判定 passed=true；低风险建议不要阻止通过。
 - reader_confusions 最多 3 条，每条不超过 60 字。
 - issues 最多 5 条，description 和 fix_suggestion 各不超过 90 字。
 - 每条 issue 必须尽量给出 target_text：从本章正文中截取可精确定位的原文短句/短语，优先 6-40 字。没有可定位原文才返回空字符串。
@@ -1025,6 +991,7 @@ CHAPTER_AUDIT_PROMPT = """
   "issues": [
     {{"severity":"critical/high/low","dimension":"1.场景连续性","target_text":"正文中可精确定位的原文短句","fix_mode":"sentence/paragraph/context","description":"具体问题描述，引用原文证据","fix_suggestion":"具体修改建议，包括可替换的写法","repair_task":"可执行修复任务，例如：重写本章前800字，从上章血指印开始，继承左肩伤和追兵临近"}}
   ],
+  "suggestions": ["不影响通过的轻微优化建议"],
   "highlights": ["写得好的地方"],
   "suggested_rewrite": "如有需要，提供3-5句关键段落的修改示例",
   "must_carry_forward": ["审计后确认下一章必须继承的状态"]
@@ -1235,6 +1202,81 @@ REVIEW_CHAPTERS_PROMPT = """
 }}
 """
 
+REVIEW_VOLUME_STRUCTURE_PROMPT = """
+你是资深长篇类型小说结构评审主编。请评审“卷轴规划本身是否合理”，重点不是文笔，而是本卷是否能作为长篇连载中的一个有效叙事阶段。
+
+书名《{title}》，类型{genre}
+全书梗概：{brief}
+
+项目总体大纲/分卷上下文：
+{project_outline}
+
+角色档案：
+{characters_summary}
+
+势力格局：
+{factions_summary}
+
+本次评审对象：
+{volume_payload}
+
+评审重点：
+1. 大纲承接：本卷目标是否承接全书主线、上一卷后果和下一卷压力；是否偏离项目核心主题/读者承诺。
+2. 卷轴合理性：本卷是否有明确阶段目标、压力升级、阶段质变、卷末钩子，而不是一组松散事件。
+3. 弧线颗粒度：弧线是否是卷轴下的同级事件链，而不是阶段大包；是否一条弧线吞并了多个地点、职位、项目阶段或多个主要变化对象。
+4. 弧线拆解合理性：弧线数量是否匹配章节体量；每条弧线功能是否不可替代；弧线边界是否是质变点，不是平均切章。
+5. 弧线连续性：上一弧线交出物、下一弧线接收物、因果链、状态继承是否清楚。
+6. 章节承载：现有章节/规划章节是否足以承载弧线台阶；是否存在台阶过少导致注水，或台阶过多导致赶场。
+7. 角色势力使用：关键角色/势力是否承担行动功能、阻力功能或关系变化，而不是只作为设定名词。
+8. 伏笔回收：本卷是否安排伏笔铺设、推进、阶段回收；是否有只播不收或突然回收。
+9. 网文追读：本卷是否有阶段爽点/痛点、即时反馈、反转、钩子和升级空间。
+10. 类型适配：评审必须尊重题材差异，不要用都市逻辑评玄幻，也不要用严肃文学标准压网文爽点。
+11. 修复可执行性：每条问题都要写清应该改卷概要、卷大纲、哪条弧线、哪类章节承载或哪处交接。
+
+弧线颗粒度硬判定：
+- 一条弧线只应围绕一个主要变化对象：主角目标、人物关系、外部压力、资源状态、身份处境、秘密信息、组织接触、项目推进或情绪承诺。
+- 如果一条弧线同时包含“下村/走访/立项/试种/合作社/验收/举报/调查/提拔/晋升”等多个任务节点，通常过粗，应建议拆成多条同级弧线。
+- 如果一条弧线 chapter_count 超过24，通常过粗；不要建议新增子弧线，而是建议拆成多条同级弧线。
+- 如果弧线名称像“黄泥破冰”“县域腾飞”这类覆盖多个任务的大标题，应建议改为更具体的同级弧线名，如“下村受冷”“村情摸底”“茶山试种”“两姓破冰”“茶苗验收”。
+- 不要提出“子弧线”层级，系统层级固定为：大纲 -> 卷轴 -> 弧线 -> 章节。
+
+请明确回答“卷轴拆解是否合理”。不要泛泛说“加强铺垫”。不要建议固定卷数、固定弧线数或固定章节数，除非当前规划明显无法承载。
+
+返回合法 JSON：
+{{
+  "overall_score": 1-10,
+  "structure_score": 1-10,
+  "arc_breakdown_score": 1-10,
+  "outline_alignment_score": 1-10,
+  "passed": true,
+  "summary": "200字以内，总结本卷规划是否可用、最大风险是什么",
+  "dimensions": [
+    {{"name":"大纲承接","score":8,"comment":"具体分析"}},
+    {{"name":"卷轴合理性","score":8,"comment":"具体分析"}},
+    {{"name":"弧线颗粒度","score":8,"comment":"是否有阶段大包或一条弧线吞并多个同级事件链"}},
+    {{"name":"弧线拆解","score":8,"comment":"具体分析"}},
+    {{"name":"弧线连续","score":8,"comment":"具体分析"}},
+    {{"name":"章节承载","score":8,"comment":"具体分析"}},
+    {{"name":"角色势力","score":8,"comment":"具体分析"}},
+    {{"name":"伏笔回收","score":8,"comment":"具体分析"}},
+    {{"name":"追读节奏","score":8,"comment":"具体分析"}}
+  ],
+  "critical_issues": [
+    {{"dimension":"弧线拆解","target":"弧线名或卷字段","severity":"致命","description":"问题","fix_suggestion":"可执行修复建议"}}
+  ],
+  "high_issues": [],
+  "low_issues": [],
+  "arc_breakdown_review": [
+    {{"arc_index":0,"arc_name":"弧线名","score":8,"is_reasonable":true,"problem":"主要问题或无","fix_suggestion":"如何补强"}}
+  ],
+  "outline_repairs": [
+    {{"target":"卷概要/卷大纲/弧线2/章节承载","repair_task":"具体修复任务","reason":"为什么必须修"}}
+  ],
+  "strengths": ["结构优点"],
+  "writing_tips": ["后续展开章节时的注意事项"]
+}}
+"""
+
 REVIEW_REPAIR_PLAN_PROMPT = """
 你是小说连续性修复主编。请把评审报告转成可执行的逐章修复计划。
 
@@ -1359,6 +1401,7 @@ CHAPTER_REVISION_PROMPT = """
 - 标点必须规范：中文正文统一用中文标点；对白用中文引号；省略号只用“……”；破折号只用“——”；不要堆叠“！！！/？？？”；不要用逗号把整段拖成一句。
 - 处理模式说明：
   - quality_light_fix：只做轻量质量修复，修标点、断句、难懂句、AI味、衔接不清，不改变核心剧情。
+  - quality_group_fix：按同一章的问题组做整章连续性修复，重点修复开场承接、上一章钩子回应、人物已知信息倒退、章末状态冲突；必须保留原章节容量，只能补桥接、改反应、补必要过渡和局部重排，不能压缩成摘要。
   - make_easy：改得更易懂，拆长句、补清动作主体、降低信息密度、让因果更直接。
   - dialogue_natural：对白更自然，去掉说明书问答，让角色说话更短、更有潜台词、更符合语言指纹。
   - punctuation_fix：只修标点和断句，不改剧情和措辞风格。
@@ -1373,12 +1416,18 @@ CHAPTER_REVISION_PROMPT = """
 - 如果存在评审修复约束，必须逐条落实；生死、身份、阵营、时间线矛盾必须优先修，不允许用梦境、幻觉、替身、失忆等廉价解释糊弄过去。
 - 修复优先级：能 L1 句子替换不做 L2；能 L2 段落重写不做 L3；需要 L4 蓝图修复或 L5 弧线修复时，不要假装局部润色能解决，必须在 change_notes 里说明结构层风险。
 - 修复跨章节问题时，本章开头要能接住上章结尾，本章结尾要给下章留下稳定状态。
+- 上章/上承只用于理解连续性，禁止把上一章已发生的完整场景、对话、动作照搬进本章；需要承接时只能写时间过渡、物件在身、人物反应、后果落地或一句短回忆。
 - 不要提前揭露伏笔，不要随意新增核心设定。
 - 如果是续写，只输出新增正文。
 - 如果是重写/润色/修复/扩写/缩写，输出处理后的正文或片段。
 - 文字要自然、连贯、有画面感，避免解释腔。
+- 结构标记硬规则：如果原章节存在 [HOOK]、[NEW_CHARACTERS] 或评审修复约束里提供了 original_hook，修复后必须保留章末钩子；不能删除、吞并或改成抽象总结。
+- 字数硬规则：quality_light_fix、quality_group_fix、de_ai、punctuation_fix、dialogue_natural、make_easy 只能轻修或保容量修复，修复后字数不得明显少于原文；如果评审修复约束里给出 min_output_chars，输出正文长度必须达到该最低值；不要把场景压成梗概，不要删除对话、动作、阻力、章末钩子。
+- 整章修复硬规则：除 audit_full_rewrite / strengthen_readthrough 明确需要重写外，禁止大幅重排章节，禁止合并场景，禁止把章节缩短成 2000 字左右的摘要。
+- 如果处理模式是 quality_group_fix：必须逐条解决用户给出的本章问题清单；修复跨章断裂时，在本章开头补清时间、地点、人物关系、上一章交出物和主角心理反应；修复已知信息倒退时，把“第一次震动”改成“确认/应验/压力落地”；修复章末钩子冲突时，要么让正文抵达该钩子，要么在 change_notes 说明状态快照应调整。输出必须是完整章节正文，不能只输出修改片段或概要。
+- 如果处理模式是 quality_group_fix 且问题涉及“上一章钩子未承接”：不要重演上一章钩子场景，不要再次写上一章人物如何递出文件/说出原话；应从本章当前时间点写“主角已经带着该文件/秘密/压力醒来或进入下一场景”，用感官锚点和短心理反应承接。
 - 如果处理模式是 strengthen_readthrough：优先让第一屏有事件、人物动作或异常结果；删除拖慢追读的说明段；把设定改成事件中的代价/反馈；让主角至少做一次主动选择；结尾必须是具体可视钩子，不要抽象悬念。
-- 如果处理模式是 audit_full_rewrite：输出完整重写后的本章正文。必须显式解决审计报告中的严重问题；对物品突然出现、动机缺铺垫、关系跳跃、因果断裂等问题，要在合理位置补前置铺垫和可见动作；语言保持通俗易懂，不要写成评审说明。
+- 如果处理模式是 audit_full_rewrite：输出完整重写后的本章正文。必须显式解决审计报告中的严重问题；对物品突然出现、动机缺铺垫、关系跳跃、因果断裂等问题，要在合理位置补前置铺垫和可见动作；语言保持通俗易懂，不要写成评审说明；仍要保留原章节主要场景容量、关键对话和章末钩子。
 - 如果处理模式是 de_ai / humanize / 去AI味：只降低 AI 味，不改变剧情；删除解释性心理总结；减少抽象词和模板句；打散过于整齐的段落节奏；对话更短、更绕、更不完整；增加少量具体、粗粝、非功能性细节；保留原剧情、关键动作、线索、章末钩子；不新增事件，不改人物关系，不把文字润成散文。
 - 如果处理模式以 target_ 开头：严格只处理选中片段。不能改选择范围外的文字，不能解释改法，不能返回 Markdown。句子级问题优先用更朴素、物理上成立、读者一眼能懂的表达替换，例如把不合理修辞改成具体动作或状态。
 - 如果是 target_context_fix：不要只润色目标句，必须解决用户指出的根因。例如“照相机突然出现”要在选中块靠前位置补出包、借相机、胶卷数量、为什么此刻带着它等可见准备信息；同时保留原有事件走向，不新增大剧情。
@@ -2148,6 +2197,9 @@ class AIService:
                         raise RuntimeError(f"AI 返回格式异常，自动修复失败: {content[:300]}")
 
     async def _ask_list(self, prompt: str, system: str = SYSTEM_ARCHITECT, **kwargs) -> list[dict]:
+        caller = inspect.currentframe().f_back
+        if caller and not kwargs.get("function_name"):
+            kwargs["function_name"] = caller.f_code.co_name
         result = await self._ask(prompt, system=system, **kwargs)
         if isinstance(result, list):
             return result
@@ -2257,7 +2309,7 @@ class AIService:
         action: str,
         instruction: str = "",
     ) -> dict:
-        result = await self._ask(REVISE_VOLUME_ARC_PROMPT, system=SYSTEM_ARCHITECT, max_tokens=8192,
+        result = await self._ask(REVISE_VOLUME_ARC_PROMPT, system=SYSTEM_ARCHITECT, max_tokens=32768,
             title=title, genre=genre,
             volume_title=volume_title, volume_outline=volume_outline,
             characters_summary=characters_summary, factions_summary=factions_summary,
@@ -2272,7 +2324,7 @@ class AIService:
             return result[0]
         raise RuntimeError("AI 返回弧线格式异常")
 
-    async def expand_arc_chapters(self, title: str, genre: str, volume_title: str, volume_outline: str, arc_name: str, arc_description: str, tension_curve: str, key_milestones: list, previous_arc_ending: str, characters_summary: str, factions_summary: str, pacing: str = "medium", event_density: str = "medium", expansion_scale: str = "standard", chapter_range_guidance: str = "按弧线复杂度自主判断", narrative_function: str = "", emotional_color: str = "", dependence_on_previous: str = "", payoff_for_next: str = "", writing_style_guidance: str = "未启用写作风格 Skill，按弧线功能和通用网文写法展开。", arc_steps: list | None = None, continuity_chain: str = "", handoff_from_previous: str = "", handoff_to_next: str = "", arc_type: str = "", closure_level: str = "", must_remain_open: list | None = None, bridge_chapter_plan: dict | None = None, protagonist_continuity_state: dict | None = None, character_lifecycle_updates: list | None = None, faction_lifecycle_updates: list | None = None, blueprint_repair_targets: list | None = None) -> list[dict]:
+    async def expand_arc_chapters(self, title: str, genre: str, volume_title: str, volume_outline: str, arc_name: str, arc_description: str, tension_curve: str, key_milestones: list, previous_arc_ending: str, characters_summary: str, factions_summary: str, pacing: str = "medium", event_density: str = "medium", expansion_scale: str = "standard", chapter_range_guidance: str = "按弧线复杂度自主判断", narrative_function: str = "", emotional_color: str = "", dependence_on_previous: str = "", payoff_for_next: str = "", writing_style_guidance: str = "未启用写作风格 Skill，按弧线功能和通用网文写法展开。", arc_steps: list | None = None, continuity_chain: str = "", handoff_from_previous: str = "", handoff_to_next: str = "", arc_type: str = "", closure_level: str = "", must_remain_open: list | None = None, bridge_chapter_plan: dict | None = None, protagonist_continuity_state: dict | None = None, character_lifecycle_updates: list | None = None, faction_lifecycle_updates: list | None = None, blueprint_repair_targets: list | None = None, previous_arc_last_hook: str = "") -> list[dict]:
         pacing_map = {
             "slow": ("缓慢", "生活流节奏，重心理描写与环境氛围，场景停留时间更长"),
             "medium": ("适中", "主线稳步推进，日常与冲突交替，保持阅读节奏感"),
@@ -2293,7 +2345,7 @@ class AIService:
         event_label, event_desc = event_map.get(event_density, event_map["medium"])
         scale_label, scale_desc = scale_map.get(expansion_scale, scale_map["standard"])
 
-        return await self._ask_list(EXPAND_ARC_CHAPTERS_PROMPT, system=SYSTEM_ARCHITECT, max_tokens=128000,
+        return await self._ask_list(EXPAND_ARC_CHAPTERS_PROMPT, system=SYSTEM_CHAPTER_BLUEPRINT, max_tokens=None,
             title=title, genre=genre,
             volume_title=volume_title, volume_outline=volume_outline,
             arc_name=arc_name, arc_description=arc_description,
@@ -2309,6 +2361,7 @@ class AIService:
             faction_lifecycle_updates=json.dumps(faction_lifecycle_updates or [], ensure_ascii=False, indent=2),
             blueprint_repair_targets=json.dumps(blueprint_repair_targets or [], ensure_ascii=False, indent=2),
             previous_arc_ending=previous_arc_ending,
+            previous_arc_last_hook=previous_arc_last_hook or "无",
             characters_summary=characters_summary, factions_summary=factions_summary,
             pacing=pacing_label, pacing_desc=pacing_desc,
             event_density=event_label, event_desc=event_desc,
@@ -2525,6 +2578,14 @@ class AIService:
             title=title, genre=genre, brief=brief or "",
             characters_summary=characters_summary, factions_summary=factions_summary,
             review_scope=review_scope, chapters_content=chapters_content)
+
+    async def review_volume_structure(self, title: str, genre: str, brief: str, project_outline: str, characters_summary: str, factions_summary: str, volume_payload: dict) -> dict:
+        return await self._ask(REVIEW_VOLUME_STRUCTURE_PROMPT, system=SYSTEM_EDITOR, max_tokens=32768,
+            title=title, genre=genre, brief=brief or "",
+            project_outline=project_outline or "无",
+            characters_summary=characters_summary or "无",
+            factions_summary=factions_summary or "无",
+            volume_payload=json.dumps(volume_payload or {}, ensure_ascii=False, indent=2))
 
     async def plan_review_repair(self, title: str, genre: str, brief: str, characters_summary: str, factions_summary: str, review_scope: str, review_result: dict, chapter_index: list[dict]) -> dict:
         return await self._ask(REVIEW_REPAIR_PLAN_PROMPT, system=SYSTEM_EDITOR, max_tokens=16384,

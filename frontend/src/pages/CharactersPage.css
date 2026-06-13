@@ -77,6 +77,14 @@
   margin-bottom: 14px;
 }
 
+.characters-factions-tabs {
+  margin-top: 4px;
+}
+
+.characters-factions-tabs .ant-tabs-nav {
+  margin-bottom: 14px;
+}
+
 .characters-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));

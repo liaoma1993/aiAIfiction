@@ -4,6 +4,11 @@
   padding: 24px 0 40px;
 }
 
+.landscape-page.embedded {
+  width: 100%;
+  padding: 0;
+}
+
 .landscape-loading {
   padding: 80px;
   text-align: center;

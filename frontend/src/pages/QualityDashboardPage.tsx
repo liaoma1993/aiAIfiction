@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import { Alert, Button, Card, Col, message, Progress, Row, Space, Spin, Statistic, Table, Tabs, Tag, Typography } from 'antd';
-import { AuditOutlined, BarChartOutlined, BranchesOutlined, DatabaseOutlined, ExclamationCircleOutlined, LeftOutlined, ToolOutlined } from '@ant-design/icons';
+import { Alert, Button, Card, Col, Empty, message, Modal, Progress, Row, Space, Spin, Statistic, Table, Tabs, Tag, Typography } from 'antd';
+import { AuditOutlined, BarChartOutlined, BranchesOutlined, DatabaseOutlined, ExclamationCircleOutlined, LeftOutlined, ReloadOutlined, ToolOutlined } from '@ant-design/icons';
 import { chapterApi, storyApi } from '@/services/projectApi';
 import api from '@/services/api';
 
@@ -20,6 +20,20 @@ const QUALITY_DIMENSION_LABELS: Record<string, string> = {
   pacing: '节奏控制',
   emotion: '情绪感染力',
   prose: '文笔质感',
+  opening_continuity: '开场承接',
+  chapter_function: '章节功能',
+  indispensability: '不可替代性',
+  character_voice: '角色声音',
+  information_reveal: '信息揭露节奏',
+  state_memory: '状态记忆',
+  opening: '开场质量',
+  state_delta: '状态增量',
+  state_delta_density: '状态增量密度',
+  arc_continuity: '弧线连续性',
+  faction_entry_slope: '组织入场坡度',
+  protagonist_state_memory: '主角状态记忆',
+  hook_strength: '钩子强度',
+  info_reveal_control: '信息揭露控制',
 };
 
 const CHAPTER_STATUS_LABELS: Record<string, { label: string; color: string }> = {
@@ -69,7 +83,7 @@ const percentColor = (score?: number | null) => {
   return '#ff4d4f';
 };
 
-const dimensionLabel = (name: string) => QUALITY_DIMENSION_LABELS[name] || name;
+const dimensionLabel = (name: string) => QUALITY_DIMENSION_LABELS[name] || name.replace(/_/g, ' ');
 
 const renderChapterStatus = (status: string) => {
   const info = CHAPTER_STATUS_LABELS[status] || { label: status || '未知', color: 'default' };
@@ -91,6 +105,226 @@ const issueText = (issue: any) => {
   if (!issue) return '-';
   if (typeof issue === 'string') return issue;
   return issue.description || issue.issue || issue.fix_suggestion || JSON.stringify(issue);
+};
+
+const issuePayloadText = (issue: any) => {
+  if (!issue) return '';
+  if (typeof issue === 'string') return issue;
+  try {
+    return JSON.stringify(issue);
+  } catch {
+    return issueText(issue);
+  }
+};
+
+const chapterIssueCount = (dashboard: any, chapterId?: string) => {
+  if (!dashboard || !chapterId) return 0;
+  const chapter = (dashboard.chapters || []).find((item: any) => String(item.id) === String(chapterId));
+  return Array.isArray(chapter?.quality_review?.issues) ? chapter.quality_review.issues.length : 0;
+};
+
+const severityWeight = (severity?: string) => {
+  const value = String(severity || '').toLowerCase();
+  if (value === 'critical' || value === '致命') return 4;
+  if (value === 'high' || value === '严重') return 3;
+  if (value === 'medium' || value === '中等') return 2;
+  if (value === 'low' || value === '轻微') return 1;
+  return 0;
+};
+
+const normalizeIssueRecord = (issue: any, chapter: any, issueIndex: number) => ({
+  chapter_id: chapter.id,
+  issue_index: issueIndex,
+  chapter_number: chapter.chapter_number,
+  chapter_title: chapter.title,
+  issue: issueText(issue),
+  severity: typeof issue === 'object' ? issue.severity : '',
+  target_text: typeof issue === 'object' ? issue.target_text : '',
+  fix_mode: typeof issue === 'object' ? issue.fix_mode : '',
+  fix_suggestion: typeof issue === 'object' ? issue.fix_suggestion : '',
+  raw_issue: issue,
+});
+
+const chapterIssueGroupsFromDashboard = (dashboard: any) => {
+  const groups = new Map<string, any>();
+  const ensure = (base: any) => {
+    const key = String(base.chapter_id || '');
+    if (!key) return null;
+    if (!groups.has(key)) {
+      groups.set(key, {
+        chapter_id: base.chapter_id,
+        chapter_number: base.chapter_number,
+        chapter_title: base.chapter_title,
+        quality_score: base.quality_score,
+        issues: [],
+      });
+    }
+    const group = groups.get(key);
+    if (base.quality_score !== undefined) group.quality_score = base.quality_score;
+    return group;
+  };
+
+  (dashboard?.chapters || []).forEach((chapter: any) => {
+    const issues = chapter?.quality_review?.issues || [];
+    if (!Array.isArray(issues) || issues.length === 0) return;
+    const group = ensure({
+      chapter_id: chapter.id,
+      chapter_number: chapter.chapter_number,
+      chapter_title: chapter.title,
+      quality_score: chapter.quality_score,
+    });
+    issues.forEach((issue: any, issueIndex: number) => group?.issues.push(normalizeIssueRecord(issue, chapter, issueIndex)));
+  });
+
+  (dashboard?.issues || []).forEach((issue: any) => {
+    const group = ensure(issue);
+    if (!group) return;
+    const duplicated = group.issues.some((item: any) => (
+      Number(item.issue_index) === Number(issue.issue_index)
+      && String(item.issue || '') === String(issue.issue || '')
+    ));
+    if (!duplicated) {
+      group.issues.push({
+        chapter_id: issue.chapter_id,
+        issue_index: issue.issue_index,
+        chapter_number: issue.chapter_number,
+        chapter_title: issue.chapter_title,
+        issue: issue.issue,
+        severity: issue.severity,
+        target_text: issue.target_text,
+        fix_mode: issue.fix_mode,
+        fix_suggestion: issue.fix_suggestion,
+        raw_issue: issue.raw_issue || issue,
+      });
+    }
+  });
+
+  return Array.from(groups.values())
+    .map((group) => ({
+      ...group,
+      issue_count: group.issues.length,
+      max_severity: group.issues.reduce((max: string, item: any) => (
+        severityWeight(item.severity) > severityWeight(max) ? item.severity : max
+      ), ''),
+      summary: group.issues.slice(0, 3).map((item: any) => item.issue).join('；'),
+    }))
+    .sort((a, b) => severityWeight(b.max_severity) - severityWeight(a.max_severity) || b.issue_count - a.issue_count || Number(a.chapter_number || 0) - Number(b.chapter_number || 0));
+};
+
+const renderStringList = (items: any[]) => (
+  <ul style={{ margin: 0, paddingLeft: 18 }}>
+    {(items || []).map((item, idx) => <li key={idx}>{String(item)}</li>)}
+  </ul>
+);
+
+const SystemHealthPanel = ({ data, loading, onRefresh }: { data: any; loading: boolean; onRefresh: () => void }) => {
+  if (!data && loading) return <div style={{ padding: 48, textAlign: 'center' }}><Spin /></div>;
+  if (!data) return <Empty description="暂无系统诊断数据" image={Empty.PRESENTED_IMAGE_SIMPLE} />;
+  const scores = data.scores || {};
+  const scoreItems = [
+    ['弧线连续', scores.arc_continuity],
+    ['蓝图质量', scores.chapter_blueprint],
+    ['钩子密度', scores.hook_density],
+    ['事件密度', scores.event_density],
+    ['伏笔追踪', scores.foreshadowing_tracking],
+    ['世界规则', scores.world_rules],
+  ];
+  const worldAudit = data.world_rule_audit;
+  return (
+    <Spin spinning={loading}>
+      <div style={{ display: 'grid', gap: 16 }}>
+        <Card size="small">
+          <Space align="center" size={18} style={{ width: '100%', justifyContent: 'space-between' }}>
+            <Space align="center" size={18}>
+              <Progress type="circle" percent={Number(data.overall_score || 0)} size={92} strokeColor={percentColor(data.overall_score)} />
+              <div>
+                <Title level={4} style={{ margin: 0 }}>系统健康度</Title>
+                <Text type="secondary">Prompt {data.prompt_version || '-'}</Text>
+              </div>
+            </Space>
+            <Button icon={<ReloadOutlined />} loading={loading} onClick={onRefresh}>刷新诊断</Button>
+          </Space>
+        </Card>
+
+        <Row gutter={[8, 8]}>
+          {scoreItems.map(([label, value]) => (
+            <Col xs={24} sm={12} md={8} key={label}>
+              <Card size="small">
+                <Space style={{ width: '100%', justifyContent: 'space-between' }}>
+                  <Text type="secondary">{label}</Text>
+                  <Text strong>{value ?? 0}</Text>
+                </Space>
+                <Progress percent={Number(value || 0)} size="small" strokeColor={percentColor(Number(value || 0))} />
+              </Card>
+            </Col>
+          ))}
+        </Row>
+
+        {Array.isArray(data.fatigue_warnings) && data.fatigue_warnings.length > 0 && (
+          <Alert type="warning" showIcon message="长篇疲劳警告" description={renderStringList(data.fatigue_warnings)} />
+        )}
+
+        {worldAudit && (
+          <Card size="small" title="世界规则闸门">
+            <Space direction="vertical" style={{ width: '100%' }}>
+              <Space style={{ width: '100%', justifyContent: 'space-between' }}>
+                <Progress percent={Number(worldAudit.score || 0)} size="small" status={worldAudit.passed ? 'success' : 'exception'} style={{ flex: 1 }} />
+                <Tag color={worldAudit.passed ? 'green' : 'orange'}>{worldAudit.passed ? '通过' : '需补强'}</Tag>
+              </Space>
+              {Array.isArray(worldAudit.risks) && worldAudit.risks.length > 0 && (
+                <Space wrap>
+                  {worldAudit.risks.slice(0, 8).map((risk: string, idx: number) => <Tag key={idx} color="orange">{risk}</Tag>)}
+                </Space>
+              )}
+            </Space>
+          </Card>
+        )}
+
+        <Row gutter={[12, 12]}>
+          <Col xs={24} lg={12}>
+            <Card size="small" title="弧线问题">
+              {Array.isArray(data.arc_issues) && data.arc_issues.length > 0 ? (
+                <div style={{ display: 'grid', gap: 8 }}>
+                  {data.arc_issues.slice(0, 12).map((item: any, idx: number) => (
+                    <div key={idx} style={{ padding: 10, border: '1px solid #eef2f7', borderRadius: 8, background: '#f8fafc' }}>
+                      <Text strong>{item.volume || item.name || `弧线 ${idx + 1}`}</Text>
+                      <div><Text type="secondary">{item.quality_gate?.related_issues?.[0]?.issue || (item.needs_repair ? '需要修复承接或台阶' : '连续性风险')}</Text></div>
+                    </div>
+                  ))}
+                </div>
+              ) : <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无弧线问题" />}
+            </Card>
+          </Col>
+          <Col xs={24} lg={12}>
+            <Card size="small" title="章节蓝图问题">
+              {Array.isArray(data.blueprint_issues) && data.blueprint_issues.length > 0 ? (
+                <div style={{ display: 'grid', gap: 8 }}>
+                  {data.blueprint_issues.slice(0, 12).map((item: any) => (
+                    <div key={item.chapter_number} style={{ padding: 10, border: '1px solid #eef2f7', borderRadius: 8, background: '#f8fafc' }}>
+                      <Text strong>第{item.chapter_number}章 {item.title || ''}</Text>
+                      <div><Text type="secondary">{(item.gate?.issues || []).join('；') || '蓝图质量未通过'}</Text></div>
+                    </div>
+                  ))}
+                </div>
+              ) : <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无蓝图问题" />}
+            </Card>
+          </Col>
+        </Row>
+
+        <Card size="small" title="伏笔状态">
+          {Array.isArray(data.foreshadowing) && data.foreshadowing.length > 0 ? (
+            <Space wrap>
+              {data.foreshadowing.slice(0, 32).map((f: any, idx: number) => (
+                <Tag key={`${f.name}-${idx}`} color={['已回收', '完成', 'done'].includes(f.status) ? 'green' : 'orange'}>
+                  {f.name || '未命名'} · {f.status || '未定'}
+                </Tag>
+              ))}
+            </Space>
+          ) : <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无伏笔状态" />}
+        </Card>
+      </div>
+    </Spin>
+  );
 };
 
 const LOCAL_FIX_MODES: Record<string, string> = {
@@ -157,21 +391,43 @@ export default function QualityDashboardPage() {
   const [data, setData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [repairingKey, setRepairingKey] = useState<string | null>(null);
+  const [systemHealth, setSystemHealth] = useState<any>(null);
+  const [systemHealthLoading, setSystemHealthLoading] = useState(false);
+  const [chapterIssueDetail, setChapterIssueDetail] = useState<any>(null);
 
-  const loadDashboard = (silent = false) => {
-    if (!projectId) return;
+  const loadDashboard = async (silent = false) => {
+    if (!projectId) return null;
     if (!silent) setLoading(true);
-    storyApi.qualityDashboard(projectId).then(setData).finally(() => setLoading(false));
+    try {
+      const dashboard = await storyApi.qualityDashboard(projectId);
+      setData(dashboard);
+      return dashboard;
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const loadSystemHealth = (silent = false) => {
+    if (!projectId) return;
+    if (!silent) setSystemHealthLoading(true);
+    api.get(`/projects/${projectId}/wizard/project-health`)
+      .then((res) => setSystemHealth(res.data))
+      .catch((e) => message.error(e?.response?.data?.detail || e.message || '加载系统诊断失败'))
+      .finally(() => setSystemHealthLoading(false));
   };
 
   useEffect(() => {
     loadDashboard();
+    loadSystemHealth();
   }, [projectId]);
 
   useEffect(() => {
     if (!projectId) return;
     const refreshIfSameProject = (payload: any) => {
-      if (payload?.projectId === projectId) loadDashboard(true);
+      if (payload?.projectId === projectId) {
+        loadDashboard(true);
+        loadSystemHealth(true);
+      }
     };
     const onQualityUpdated = (event: Event) => {
       refreshIfSameProject((event as CustomEvent).detail);
@@ -218,7 +474,7 @@ export default function QualityDashboardPage() {
       };
       const target = extractIssueTarget(issue, content);
       if (!target || !content.includes(target)) {
-        message.warning('老审计没有可定位原文，先点「重新审计定位」；急着处理可用「整章轻修」');
+        message.warning('当前问题没有可定位原文，请先重新审稿找问题，或直接做整章复审修复');
         return;
       }
       const selection = scope === 'sentence'
@@ -234,16 +490,32 @@ export default function QualityDashboardPage() {
         mode: LOCAL_FIX_MODES[scope],
         instruction: `从质量仪表盘修复这条问题，只能改选择范围内文字。问题：${JSON.stringify(issue)}`,
         selection,
-        controls: { readability_mode: 'easy', punctuation_style: 'standard' },
+        controls: {
+          readability_mode: 'easy',
+          punctuation_style: 'standard',
+          quality_resolved_issue: {
+            issue_index: record.issue_index,
+            issue: record.issue || issueText(issue),
+            raw_issue: issue,
+          },
+        },
         apply: true,
+        resolved_issue_index: typeof record.issue_index === 'number' ? record.issue_index : undefined,
+        resolved_issue: issuePayloadText(issue),
       });
       message.loading({
         content: scope === 'sentence' ? 'AI 正在只修原句…' : scope === 'context' ? 'AI 正在深修此问题…' : 'AI 正在修这一段…',
         key: 'quality-repair',
         duration: 0,
       });
-      await pollTask(res.data.task_id);
-      message.success({ content: '修复完成，已重新评分并刷新质量仪表盘', key: 'quality-repair' });
+      const result = await pollTask(res.data.task_id);
+      const issueCount = Array.isArray(result?.quality_review?.issues)
+        ? result.quality_review.issues.length
+        : chapterIssueCount(await loadDashboard(true), record.chapter_id);
+      message.success({
+        content: issueCount > 0 ? `修复完成，复审仍发现 ${issueCount} 个问题，已刷新问题清单` : '修复完成，复审通过，当前章节问题已清空',
+        key: 'quality-repair',
+      });
       notifyQualityUpdated(projectId, record.chapter_id);
     } catch (e: any) {
       message.error({ content: e?.response?.data?.detail || e.message || '修复失败', key: 'quality-repair' });
@@ -281,15 +553,87 @@ export default function QualityDashboardPage() {
         mode: 'quality_light_fix',
         instruction: `根据质量仪表盘这条问题做轻量修复。优先修复该问题，保留剧情、人物关系、关键线索和章末钩子。问题：${JSON.stringify(issue)}`,
         selection: '',
-        controls: { readability_mode: 'easy', punctuation_style: 'standard' },
+        controls: {
+          readability_mode: 'easy',
+          punctuation_style: 'standard',
+          quality_resolved_issue: {
+            issue_index: record.issue_index,
+            issue: record.issue || issueText(issue),
+            raw_issue: issue,
+          },
+        },
         apply: true,
+        resolved_issue_index: typeof record.issue_index === 'number' ? record.issue_index : undefined,
+        resolved_issue: issuePayloadText(issue),
       });
       message.loading({ content: 'AI 正在整章轻修…', key: 'quality-light-fix', duration: 0 });
-      await pollTask(res.data.task_id);
-      message.success({ content: '整章轻修完成，已重新评分并刷新', key: 'quality-light-fix' });
+      const result = await pollTask(res.data.task_id);
+      const issueCount = Array.isArray(result?.quality_review?.issues)
+        ? result.quality_review.issues.length
+        : chapterIssueCount(await loadDashboard(true), record.chapter_id);
+      message.success({
+        content: issueCount > 0 ? `整章轻修完成，复审仍发现 ${issueCount} 个问题，已刷新问题清单` : '整章轻修完成，复审通过，当前章节问题已清空',
+        key: 'quality-light-fix',
+      });
       notifyQualityUpdated(projectId, record.chapter_id);
     } catch (e: any) {
       message.error({ content: e?.response?.data?.detail || e.message || '整章轻修失败', key: 'quality-light-fix' });
+    } finally {
+      setRepairingKey(null);
+    }
+  };
+
+  const lightFixChapterIssueGroup = async (group: any, key: string) => {
+    if (!projectId || !group?.chapter_id || !Array.isArray(group.issues) || group.issues.length === 0) return;
+    setRepairingKey(key);
+    try {
+      const chapter = await chapterApi.get(projectId, group.chapter_id);
+      const originalChars = String(chapter?.content || '').length || Number(chapter?.word_count || 0);
+      const minChars = originalChars ? Math.floor(originalChars * 0.9) : 0;
+      const issueList = group.issues.map((item: any, idx: number) => ({
+        index: typeof item.issue_index === 'number' ? item.issue_index : idx,
+        severity: item.severity || '',
+        problem: item.issue || issueText(item.raw_issue),
+        target_text: item.target_text || item.raw_issue?.target_text || '',
+        fix_suggestion: item.fix_suggestion || item.raw_issue?.fix_suggestion || '',
+      }));
+      const res = await api.post(`/projects/${projectId}/wizard/revise-chapter/${group.chapter_id}`, {
+        mode: 'quality_group_fix',
+        instruction: [
+          `根据质量仪表盘汇总的问题，对第${group.chapter_number || ''}章《${group.chapter_title || ''}》做一次整章连续性修复。`,
+          '必须把这些问题当成同一章的同一组问题整体处理，不要只修第一条。',
+          '优先修复开场承接、上一章钩子回应、人物已知信息、章末钩子与状态快照冲突。',
+          '保留本章核心剧情、人物关系、关键线索和章末追读钩子；不得压缩成梗概，不得删除有效场景、对话、动作、阻力和余波。',
+          originalChars ? `原文约 ${originalChars} 字，修复后正文不得少于 ${minChars} 字；如果需要修复连续性，应通过补足过渡、反应、物件承接和场景实写完成，不允许缩水。` : '',
+          '输出必须是完整章节正文，不要只输出修改片段，不要输出修改说明代替正文。',
+          `本章问题清单：${JSON.stringify(issueList)}`,
+        ].filter(Boolean).join('\n'),
+        selection: '',
+        controls: {
+          readability_mode: 'easy',
+          punctuation_style: 'standard',
+          min_output_chars: minChars,
+          quality_resolved_issue_group: {
+            chapter_id: group.chapter_id,
+            issue_count: group.issues.length,
+            issues: issueList,
+          },
+        },
+        apply: true,
+        resolved_issue: JSON.stringify(issueList),
+      });
+      message.loading({ content: `AI 正在整章处理 ${group.issues.length} 个问题…`, key: 'quality-group-fix', duration: 0 });
+      const result = await pollTask(res.data.task_id);
+      const issueCount = Array.isArray(result?.quality_review?.issues)
+        ? result.quality_review.issues.length
+        : chapterIssueCount(await loadDashboard(true), group.chapter_id);
+      message.success({
+        content: issueCount > 0 ? `本章整组修复完成，复审仍发现 ${issueCount} 个问题，已刷新问题清单` : '本章整组修复完成，复审通过，当前章节问题已清空',
+        key: 'quality-group-fix',
+      });
+      notifyQualityUpdated(projectId, group.chapter_id);
+    } catch (e: any) {
+      message.error({ content: e?.response?.data?.detail || e.message || '本章整组修复失败', key: 'quality-group-fix' });
     } finally {
       setRepairingKey(null);
     }
@@ -318,50 +662,58 @@ export default function QualityDashboardPage() {
     const target = String(issue?.target_text || record?.target_text || '').trim();
     const preferredScope = issue?.fix_mode === 'paragraph' || issue?.fix_mode === 'context' ? issue.fix_mode : 'sentence';
     const hasNewLocator = !!target;
+    const isLowScoreWithoutLocator = issue?.issue_type === 'low_score_without_locator' || String(issue?.description || record?.issue || '').includes('模型未返回具体问题');
     return (
       <Space size={4} wrap>
-        <Button
-          size="small"
-          icon={<ToolOutlined />}
-          disabled={!!repairingKey}
-          loading={repairingKey === `${prefix}-sentence`}
-          onClick={() => repairIssue(record, 'sentence', `${prefix}-sentence`)}
-        >
-          只修原句
-        </Button>
-        <Button
-          size="small"
-          disabled={!!repairingKey}
-          loading={repairingKey === `${prefix}-paragraph`}
-          onClick={() => repairIssue(record, preferredScope === 'context' ? 'context' : 'paragraph', `${prefix}-paragraph`)}
-        >
-          {preferredScope === 'context' ? '修局部' : '修这一段'}
-        </Button>
-        <Button
-          size="small"
-          disabled={!!repairingKey}
-          loading={repairingKey === `${prefix}-context`}
-          onClick={() => repairIssue(record, 'context', `${prefix}-context`)}
-        >
-          深修此问题
-        </Button>
+        {!isLowScoreWithoutLocator && (
+          <>
+            <Button
+              size="small"
+              icon={<ToolOutlined />}
+              disabled={!!repairingKey || !hasNewLocator}
+              loading={repairingKey === `${prefix}-sentence`}
+              onClick={() => repairIssue(record, 'sentence', `${prefix}-sentence`)}
+            >
+              只修原句
+            </Button>
+            <Button
+              size="small"
+              disabled={!!repairingKey || !hasNewLocator}
+              loading={repairingKey === `${prefix}-paragraph`}
+              onClick={() => repairIssue(record, preferredScope === 'context' ? 'context' : 'paragraph', `${prefix}-paragraph`)}
+            >
+              {preferredScope === 'context' ? '修局部' : '修这一段'}
+            </Button>
+            <Button
+              size="small"
+              disabled={!!repairingKey || !hasNewLocator}
+              loading={repairingKey === `${prefix}-context`}
+              onClick={() => repairIssue(record, 'context', `${prefix}-context`)}
+            >
+              深修此问题
+            </Button>
+          </>
+        )}
         {!hasNewLocator && (
           <Button
             size="small"
+            type={isLowScoreWithoutLocator ? 'primary' : 'default'}
             disabled={!!repairingKey}
             loading={repairingKey === `${prefix}-audit`}
             onClick={() => reAuditChapter(record, `${prefix}-audit`)}
           >
-            重新审计定位
+            {isLowScoreWithoutLocator ? '重新审稿找问题' : '重新审计定位'}
           </Button>
         )}
         <Button
           size="small"
+          type={isLowScoreWithoutLocator ? 'primary' : 'default'}
+          ghost={isLowScoreWithoutLocator}
           disabled={!!repairingKey}
           loading={repairingKey === `${prefix}-light`}
           onClick={() => lightFixChapter(record, `${prefix}-light`)}
         >
-          整章轻修
+          {isLowScoreWithoutLocator ? '整章复审修复' : '整章轻修'}
         </Button>
         <Button
           size="small"
@@ -421,6 +773,7 @@ export default function QualityDashboardPage() {
   const summary = data?.summary || {};
   const aggregate = data?.aggregate_scores || {};
   const globalIssues = data?.quality_issues || [];
+  const chapterIssueGroups = chapterIssueGroupsFromDashboard(data);
   const scoreCards = [
     ['综合质量', aggregate.overall, '项目当前总控质量分'],
     ['世界规则', aggregate.world, '世界观硬规则、代价和主题绑定'],
@@ -561,6 +914,11 @@ export default function QualityDashboardPage() {
                 />
               ),
             },
+            {
+              key: 'system',
+              label: <span><DatabaseOutlined /> 系统诊断</span>,
+              children: <SystemHealthPanel data={systemHealth} loading={systemHealthLoading} onRefresh={() => loadSystemHealth()} />,
+            },
           ]}
         />
       </Card>
@@ -618,7 +976,39 @@ export default function QualityDashboardPage() {
               dataIndex: 'quality_review',
               ellipsis: true,
               render: (v, record: any) => {
-                const issue = (v?.issues || [])[0];
+                const issues = Array.isArray(v?.issues) ? v.issues : [];
+                const issue = issues[0];
+                if (!issue) return <Text type="secondary">暂无问题</Text>;
+                return (
+                  <div>
+                    <Space size={4} wrap style={{ marginBottom: 4 }}>
+                      <Tag color={issues.length > 1 ? 'red' : 'orange'}>{issues.length} 条问题</Tag>
+                      {typeof issue === 'object' && issue?.severity && renderSeverity(issue.severity)}
+                    </Space>
+                    <div><Text style={{ fontSize: 12 }}>{issueText(issue)}</Text></div>
+                    {typeof issue === 'object' && issue?.target_text && (
+                      <div><Text type="secondary" style={{ fontSize: 11 }}>定位：{issue.target_text}</Text></div>
+                    )}
+                    {issues.length > 1 && <div><Text type="secondary" style={{ fontSize: 11 }}>点击“查看问题”可一次性处理本章问题组。</Text></div>}
+                  </div>
+                );
+              },
+            },
+            {
+              title: '修复',
+              width: 360,
+              fixed: 'right',
+              render: (_v, record: any) => {
+                const issues = Array.isArray(record.quality_review?.issues) ? record.quality_review.issues : [];
+                const issue = issues[0];
+                if (!issue) return <Text type="secondary">暂无问题</Text>;
+                const group = chapterIssueGroups.find((item: any) => String(item.chapter_id) === String(record.id)) || {
+                  chapter_id: record.id,
+                  chapter_number: record.chapter_number,
+                  chapter_title: record.title,
+                  quality_score: record.quality_score,
+                  issues: issues.map((item: any, idx: number) => normalizeIssueRecord(item, record, idx)),
+                };
                 const repairRecord = {
                   chapter_id: record.id,
                   issue_index: 0,
@@ -632,71 +1022,94 @@ export default function QualityDashboardPage() {
                   raw_issue: issue,
                 };
                 return (
-                  <div>
-                    <Text style={{ fontSize: 12 }}>{issueText(issue)}</Text>
-                    {typeof issue === 'object' && issue?.target_text && (
-                      <div><Text type="secondary" style={{ fontSize: 11 }}>定位：{issue.target_text}</Text></div>
+                  <Space size={4} wrap>
+                    <Button
+                      size="small"
+                      icon={<ExclamationCircleOutlined />}
+                      disabled={!!repairingKey}
+                      onClick={() => setChapterIssueDetail(group)}
+                    >
+                      查看问题
+                    </Button>
+                    {group.issues.length > 1 && (
+                      <Button
+                        size="small"
+                        type="primary"
+                        icon={<ToolOutlined />}
+                        disabled={!!repairingKey}
+                        loading={repairingKey === `chapter-group-${record.id}`}
+                        onClick={() => lightFixChapterIssueGroup(group, `chapter-group-${record.id}`)}
+                      >
+                        修复本章全部问题
+                      </Button>
                     )}
-                  </div>
+                    {repairActions(repairRecord, `chapter-${record.id}`)}
+                  </Space>
                 );
-              },
-            },
-            {
-              title: '修复',
-              width: 360,
-              fixed: 'right',
-              render: (_v, record: any) => {
-                const issue = (record.quality_review?.issues || [])[0];
-                if (!issue) return <Text type="secondary">暂无问题</Text>;
-                const repairRecord = {
-                  chapter_id: record.id,
-                  issue_index: 0,
-                  chapter_number: record.chapter_number,
-                  chapter_title: record.title,
-                  issue: issueText(issue),
-                  severity: typeof issue === 'object' ? issue.severity : '',
-                  target_text: typeof issue === 'object' ? issue.target_text : '',
-                  fix_mode: typeof issue === 'object' ? issue.fix_mode : '',
-                  fix_suggestion: typeof issue === 'object' ? issue.fix_suggestion : '',
-                  raw_issue: issue,
-                };
-                return repairActions(repairRecord, `chapter-${record.id}`);
               },
             },
           ]}
         />
       </Card>
 
-      <Card title="问题清单">
-        <Table
-          rowKey={(r: any) => `${r.chapter_id}-${r.issue_index}-${r.issue}`}
-          dataSource={data?.issues || []}
-          pagination={{ pageSize: 10 }}
-          scroll={{ x: 1180 }}
-          columns={[
-            { title: '章节', dataIndex: 'chapter_number', width: 90, render: (v) => `第${v}章` },
-            { title: '标题', dataIndex: 'chapter_title', width: 180, ellipsis: true },
-            { title: '严重度', dataIndex: 'severity', width: 100, render: renderSeverity },
-            {
-              title: '问题',
-              dataIndex: 'issue',
-              width: 520,
-              render: (v, record: any) => (
-                <div style={{ whiteSpace: 'normal', overflowWrap: 'anywhere', lineHeight: 1.65 }}>
-                  <Text style={{ fontSize: 12 }}>{v}</Text>
-                  {record.target_text && (
-                    <div style={{ marginTop: 4 }}><Text type="secondary" style={{ fontSize: 11 }}>定位：{record.target_text}</Text></div>
-                  )}
-                  {record.fix_suggestion && (
-                    <div style={{ marginTop: 4 }}><Text type="secondary" style={{ fontSize: 11 }}>建议：{record.fix_suggestion}</Text></div>
-                  )}
+      <Modal
+        title={chapterIssueDetail ? `第${chapterIssueDetail.chapter_number}章《${chapterIssueDetail.chapter_title || ''}》问题清单` : '章节问题清单'}
+        open={!!chapterIssueDetail}
+        onCancel={() => setChapterIssueDetail(null)}
+        footer={null}
+        width={860}
+      >
+        {chapterIssueDetail && (
+          <div style={{ display: 'grid', gap: 12 }}>
+            <Space wrap>
+              <Tag color={scoreColor(chapterIssueDetail.quality_score)}>质量 {chapterIssueDetail.quality_score ?? '-'} / 10</Tag>
+              <Tag color={chapterIssueDetail.issue_count > 1 ? 'red' : 'orange'}>{chapterIssueDetail.issue_count} 条问题</Tag>
+              {chapterIssueDetail.max_severity && renderSeverity(chapterIssueDetail.max_severity)}
+            </Space>
+            <Alert
+              type="info"
+              showIcon
+              message="这里展示的是本章当前审稿问题清单"
+              description="连续性断裂、上一章钩子未承接、人物信息倒退、章末状态冲突这类问题建议点击“修复本章全部问题”，让模型一次性按整章处理。"
+            />
+            <div style={{ display: 'grid', gap: 10, maxHeight: '48vh', overflow: 'auto' }}>
+              {(chapterIssueDetail.issues || []).map((item: any, idx: number) => (
+                <div key={idx} style={{ padding: 12, border: '1px solid #e5ebf3', borderRadius: 8, background: '#fbfcfe' }}>
+                  <Space size={4} wrap style={{ marginBottom: 6 }}>
+                    <Tag>{idx + 1}</Tag>
+                    {renderSeverity(item.severity)}
+                    {typeof item.issue_index === 'number' && <Tag>问题 {item.issue_index + 1}</Tag>}
+                  </Space>
+                  <div style={{ whiteSpace: 'normal', overflowWrap: 'anywhere', lineHeight: 1.65 }}>
+                    <Text>{item.issue}</Text>
+                    {item.target_text && <div style={{ marginTop: 6 }}><Text type="secondary" style={{ fontSize: 12 }}>定位：{item.target_text}</Text></div>}
+                    {item.fix_suggestion && <div style={{ marginTop: 6 }}><Text type="secondary" style={{ fontSize: 12 }}>建议：{item.fix_suggestion}</Text></div>}
+                  </div>
                 </div>
-              ),
-            },
-            { title: '修复', width: 290, render: (_v, record: any) => repairActions(record, `issue-${record.chapter_id}-${record.issue}`) },
-          ]}
-        />
-      </Card>
+              ))}
+            </div>
+            <Space wrap style={{ justifyContent: 'flex-end' }}>
+              <Button onClick={() => setChapterIssueDetail(null)}>关闭</Button>
+              <Button
+                disabled={!!repairingKey}
+                loading={repairingKey === `modal-audit-${chapterIssueDetail.chapter_id}`}
+                onClick={() => reAuditChapter(chapterIssueDetail, `modal-audit-${chapterIssueDetail.chapter_id}`)}
+              >
+                重新审稿
+              </Button>
+              <Button
+                type="primary"
+                icon={<ToolOutlined />}
+                disabled={!!repairingKey}
+                loading={repairingKey === `modal-group-${chapterIssueDetail.chapter_id}`}
+                onClick={() => lightFixChapterIssueGroup(chapterIssueDetail, `modal-group-${chapterIssueDetail.chapter_id}`)}
+              >
+                修复本章全部问题
+              </Button>
+            </Space>
+          </div>
+        )}
+      </Modal>
     </div>
   );
 }

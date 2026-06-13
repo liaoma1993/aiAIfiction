@@ -114,7 +114,7 @@ function pct(part: number, total: number) {
   return Math.round((part / total) * 100);
 }
 
-export default function LandscapePage() {
+export default function LandscapePage({ embedded = false }: { embedded?: boolean }) {
   const { projectId } = useParams<{ projectId: string }>();
   const [data, setData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
@@ -153,14 +153,16 @@ export default function LandscapePage() {
   };
 
   return (
-    <div className="landscape-page">
-      <header className="landscape-header">
-        <Link to={`/projects/${projectId}`}><Button icon={<LeftOutlined />}>返回工作台</Button></Link>
-        <div className="landscape-titleblock">
-          <Title level={3}>小说景观</Title>
-          <Text type="secondary">按世界设定、卷章地图和事件线查看当前小说结构。</Text>
-        </div>
-      </header>
+    <div className={`landscape-page ${embedded ? 'embedded' : ''}`}>
+      {!embedded && (
+        <header className="landscape-header">
+          <Link to={`/projects/${projectId}`}><Button icon={<LeftOutlined />}>返回工作台</Button></Link>
+          <div className="landscape-titleblock">
+            <Title level={3}>小说景观</Title>
+            <Text type="secondary">按世界设定、卷章地图和事件线查看当前小说结构。</Text>
+          </div>
+        </header>
+      )}
 
       <section className="landscape-summary">
         <div className="landscape-stat">
