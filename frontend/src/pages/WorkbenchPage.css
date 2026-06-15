@@ -1186,6 +1186,16 @@
   border-radius: 8px;
 }
 
+.repair-preview-hero {
+  margin-bottom: 0;
+}
+
+.repair-preview-hero .ant-progress {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
 .task-chapter-preview-list {
   display: flex;
   flex-direction: column;

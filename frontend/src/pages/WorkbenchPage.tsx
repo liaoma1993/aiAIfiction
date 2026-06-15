@@ -287,6 +287,14 @@ const ReviewTaskResult = ({ result }: { result: any }) => {
         <div className="task-report-summary">
           <Text strong>评审结论</Text>
           <Paragraph>{result?.summary || '本次评审没有返回总结。'}</Paragraph>
+          {result?.audit_policy && (
+            <Alert
+              type={result.passed ? 'success' : 'warning'}
+              showIcon
+              style={{ marginTop: 8 }}
+              message={result.audit_policy}
+            />
+          )}
         </div>
         <div className="task-report-stat">
           <span>问题数</span>
@@ -364,6 +372,7 @@ const ReviewTaskResult = ({ result }: { result: any }) => {
                     <Text strong>{issue.chapter ? `第${issue.chapter}章` : issue.chapter_number ? `第${issue.chapter_number}章` : '全局'}</Text>
                     {issue.dimension && <Tag>{issue.dimension}</Tag>}
                     {issue.severity && <Tag color={group.color}>{issue.severity}</Tag>}
+                    {issue.source === 'programmatic' && <Tag color="magenta">程序化校验</Tag>}
                   </div>
                   <Paragraph>{issueDescription(issue)}</Paragraph>
                   {issue.evidence && <Paragraph className="task-issue-evidence"><Text strong>证据：</Text>{issue.evidence}</Paragraph>}
@@ -388,6 +397,8 @@ const ReviewTaskResult = ({ result }: { result: any }) => {
 
 const RepairTaskResult = ({ result }: { result: any }) => {
   const plan = result?.repair_plan || {};
+  const failedChapters = Array.isArray(result?.failed_chapters) ? result.failed_chapters : [];
+  const reaudit = Array.isArray(result?.reaudit) ? result.reaudit : [];
   return (
     <div className="task-report">
       <div className="task-report-hero compact">
@@ -403,6 +414,58 @@ const RepairTaskResult = ({ result }: { result: any }) => {
       {Array.isArray(result?.repaired_chapters) && result.repaired_chapters.length > 0 && (
         <Card size="small" title="已修复章节" className="task-report-card">
           <Space wrap>{result.repaired_chapters.map((n: any) => <Tag color="green" key={n}>第{n}章</Tag>)}</Space>
+        </Card>
+      )}
+      {failedChapters.length > 0 && (
+        <Card size="small" title="未写入章节" className="task-report-card">
+          <Alert
+            type="warning"
+            showIcon
+            message="这些章节没有覆盖正文"
+            description="模型输出过短、复制上一章或触发安全校验时，系统会跳过该章，保留原正文。"
+            style={{ marginBottom: 12 }}
+          />
+          <div className="task-issue-list">
+            {failedChapters.map((item: any, idx: number) => (
+              <div key={idx} className="task-issue-card orange">
+                <div className="task-issue-head">
+                  <Text strong>第{item.chapter_number || '?'}章 {item.chapter_title || ''}</Text>
+                  <Tag color="orange">未写入</Tag>
+                </div>
+                <Paragraph>{item.error || '未返回失败原因'}</Paragraph>
+                {item.first_error && <Paragraph type="secondary">首次失败：{item.first_error}</Paragraph>}
+              </div>
+            ))}
+          </div>
+        </Card>
+      )}
+      {reaudit.length > 0 && (
+        <Card size="small" title="复审结果" className="task-report-card">
+          <Space wrap>
+            {reaudit.map((item: any) => {
+              const rounds = item.verification_rounds ?? 1;
+              const score = item.audit?.overall_score ?? '-';
+              const passed = item.audit?.passed;
+              return (
+                <Tag
+                  key={item.chapter_id || item.chapter_number}
+                  color={passed ? 'green' : 'orange'}
+                  title={rounds > 1 ? `经过 ${rounds} 轮修复-验证循环` : '1 轮即达标'}
+                >
+                  第{item.chapter_number}章 {score} / 10{rounds > 1 ? ` · ${rounds}轮` : ''}
+                </Tag>
+              );
+            })}
+          </Space>
+          {reaudit.some((item: any) => (item.verification_rounds ?? 1) > 1) && (
+            <Alert
+              type="info"
+              showIcon
+              style={{ marginTop: 12 }}
+              message="部分章节经多轮修复-验证才达标"
+              description="带轮数标记的章节在第 1 轮修复后复审仍不达标，系统自动针对阻断问题再修一轮。建议人工抽查这类章节。"
+            />
+          )}
         </Card>
       )}
       {Array.isArray(plan.global_constraints) && plan.global_constraints.length > 0 && (
@@ -432,12 +495,110 @@ const RepairTaskResult = ({ result }: { result: any }) => {
   );
 };
 
+const RepairTaskPreview = ({ task }: { task: any }) => {
+  const detail = task?.detail || {};
+  const meta = task?.meta || {};
+  const result = task?.result || {};
+  const repaired = Array.isArray(result.repaired_chapters) ? result.repaired_chapters : [];
+  const failed = Array.isArray(result.failed_chapters) ? result.failed_chapters : [];
+  const reaudit = Array.isArray(result.reaudit) ? result.reaudit : [];
+  const total = Number(detail.task_count || meta.task_count || 0);
+  const currentChapter = detail.chapter_number;
+  const currentTitle = detail.chapter_title;
+  const isCompleted = task?.status === 'completed';
+  const isFailed = task?.status === 'failed';
+  const isRunning = task?.status === 'running' || task?.status === 'cancelling' || task?.status === 'pending';
+  const stageLabel: Record<string, string> = {
+    planned: '已生成修复计划',
+    repairing: '正在修复章节',
+    retrying_short_repair: '修复稿过短，正在保容量重试',
+    chapter_repair_failed: '单章修复失败，已跳过',
+    completed: '修复完成',
+  };
+  const title = isCompleted
+    ? '修复完成'
+    : isFailed
+      ? '修复失败'
+      : stageLabel[detail.stage] || TASK_LABELS[task?.task_type] || '按评审修复';
+  const summary = isCompleted
+    ? `已完成：写入 ${repaired.length} 章${failed.length ? `，跳过 ${failed.length} 章` : ''}${reaudit.length ? `，复审 ${reaudit.length} 章` : ''}。`
+    : isFailed
+      ? (task?.error || detail.error || '任务失败，正文未继续写入。')
+      : task?.progress_label || detail.diagnosis || '正在处理评审修复任务。';
+  return (
+    <div className="task-report">
+      <div className="task-report-hero compact repair-preview-hero">
+        <div>
+          <Progress
+            type="circle"
+            percent={Math.round(Number(task?.progress || 0) * 100)}
+            size={72}
+            status={task?.status === 'failed' ? 'exception' : task?.status === 'completed' ? 'success' : 'active'}
+          />
+        </div>
+        <div className="task-report-summary">
+          <Text strong>{title}</Text>
+          <Paragraph>{summary}</Paragraph>
+          <Space size={[6, 6]} wrap>
+            <Tag color={isFailed ? 'red' : isCompleted ? 'green' : 'blue'}>{task?.status || 'unknown'}</Tag>
+            {isRunning && currentChapter && <Tag color="purple">当前第{currentChapter}章{currentTitle ? `《${currentTitle}》` : ''}</Tag>}
+            {isCompleted && currentChapter && <Tag>最后处理第{currentChapter}章{currentTitle ? `《${currentTitle}》` : ''}</Tag>}
+            {total > 0 && <Tag>计划 {total} 项</Tag>}
+            {repaired.length > 0 && <Tag color="green">已写入 {repaired.length} 章</Tag>}
+            {failed.length > 0 && <Tag color="orange">跳过 {failed.length} 章</Tag>}
+            {(meta.reaudit || reaudit.length > 0) && <Tag color="cyan">修后复审</Tag>}
+          </Space>
+        </div>
+      </div>
+      {(detail.error || task?.error) && (
+        <Alert
+          type={task?.status === 'failed' ? 'error' : 'warning'}
+          showIcon
+          message="当前提示"
+          description={detail.error || task.error}
+        />
+      )}
+      {detail.repair_context && (
+        <Card size="small" title="当前修复目标" className="task-report-card">
+          <Descriptions size="small" column={1} bordered>
+            {detail.repair_context.issue_type && <Descriptions.Item label="问题类型">{detail.repair_context.issue_type}</Descriptions.Item>}
+            {detail.repair_context.issue_summary && <Descriptions.Item label="问题摘要">{detail.repair_context.issue_summary}</Descriptions.Item>}
+            {detail.repair_context.min_output_rule && <Descriptions.Item label="保容量规则">{detail.repair_context.min_output_rule}</Descriptions.Item>}
+            {Array.isArray(detail.repair_context.changes_required) && detail.repair_context.changes_required.length > 0 && (
+              <Descriptions.Item label="要求改动">{renderStringList(detail.repair_context.changes_required)}</Descriptions.Item>
+            )}
+          </Descriptions>
+        </Card>
+      )}
+      {Array.isArray(detail.duplicate_chapters) && detail.duplicate_chapters.length > 0 && (
+        <Card size="small" title="重复章节号提醒" className="task-report-card">
+          <div className="task-issue-list">
+            {detail.duplicate_chapters.map((item: any) => (
+              <div key={item.chapter_number} className="task-issue-card orange">
+                <Text strong>第{item.chapter_number}章出现 {item.count} 条记录</Text>
+                <Paragraph>{Array.isArray(item.titles) ? item.titles.join('、') : ''}</Paragraph>
+              </div>
+            ))}
+          </div>
+        </Card>
+      )}
+    </div>
+  );
+};
+
+const isActiveTaskStatus = (status?: string) => status === 'running' || status === 'pending' || status === 'cancelling';
+
 const AuditTaskResult = ({ result }: { result: any }) => (
   <div className="task-report">
     <div className="task-report-hero compact">
       <div>
         <div className="task-report-score">{result?.overall_score ?? '-'}/10</div>
         <Text type="secondary">{result?.passed ? '审计通过' : '审计未通过'}</Text>
+        {result?.audit_policy && (
+          <div style={{ marginTop: 6 }}>
+            <Tag color={result.passed ? 'green' : 'orange'}>{result.audit_policy}</Tag>
+          </div>
+        )}
       </div>
       <div className="task-report-summary">
         <Text strong>读者可能卡住的点</Text>
@@ -452,6 +613,7 @@ const AuditTaskResult = ({ result }: { result: any }) => (
               <div className="task-issue-head">
                 {issue.dimension && <Tag>{issue.dimension}</Tag>}
                 {issue.severity && <Tag color={issue.severity === 'critical' ? 'red' : issue.severity === 'high' ? 'orange' : 'blue'}>{issue.severity}</Tag>}
+                {issue.source === 'programmatic' && <Tag color="magenta">程序化校验</Tag>}
                 {issue.target_text && <Tag color="purple">定位：{issue.target_text}</Tag>}
               </div>
               <Paragraph>{issueDescription(issue)}</Paragraph>
@@ -2634,6 +2796,16 @@ export default function WorkbenchPage() {
               <div className="statusbar">
                 <span>字数：{content.length} / {currentChapter.target_words || 3500}</span>
                 <span>质量：{currentChapter.quality_score ? `${currentChapter.quality_score}/10` : '未评分'}</span>
+                {currentChapter.continuity_checks?.hook_lost_last && (
+                  <Tag color="red" title="AI 修复时丢失了章末钩子标记，系统已自动补回，建议人工核对钩子质量。">
+                    钩子回归告警
+                  </Tag>
+                )}
+                {currentChapter.continuity_checks?.fresh_chapter_guard_failed && (
+                  <Tag color="orange" title="新写章节未通过硬闸（长度/hook/重复上一章），重试后仍未达标，建议人工检查。">
+                    硬闸未通过
+                  </Tag>
+                )}
                 <span>
                   第{currentChapter.chapter_number}章 · {
                     saveState === 'saving' ? '保存中…' :
@@ -2995,7 +3167,7 @@ export default function WorkbenchPage() {
               icon={<EditOutlined />}
               loading={repairingReview}
               disabled={!reviewScope?.volumeId}
-            onClick={() => repairFromReview()}
+              onClick={() => repairFromReview()}
               style={{ marginBottom: 12 }}
             >
               按评审报告自动修复
@@ -3144,6 +3316,13 @@ export default function WorkbenchPage() {
               <Radio value="audit">写后只审稿</Radio>
               <Radio value="fix">审稿并轻修（谨慎）</Radio>
             </Radio.Group>
+            <Alert
+              type="success"
+              showIcon
+              style={{ marginTop: 10 }}
+              message="写作前置 AI 诊断已默认开启（非首章）"
+              description="第 2 章起，每章动笔前会自动做 AI 连续性诊断（开篇承接、角色入场坡度、钩子约束等），诊断出的缺口会注入写作指令。可在下方「写作控制」高级项手动关闭。"
+            />
           </Col>
         </Row>
       </Modal>
@@ -3563,10 +3742,11 @@ export default function WorkbenchPage() {
                 }},
               { title: '进度', dataIndex: 'progress', width: 230, render: (_: any, rec: any) => {
                   const pct = Math.round((rec.progress || 0) * 100);
+                  const showProgressLabel = isActiveTaskStatus(rec.status) && rec.progress_label;
                   return (
                     <div>
                       <Progress percent={pct} size="small" status={rec.status === 'failed' ? 'exception' : rec.status === 'completed' ? 'success' : 'active'} />
-                      {rec.progress_label && <Text type="secondary" style={{ fontSize: 12, display: 'block', whiteSpace: 'normal', wordBreak: 'break-word' }}>{rec.progress_label}</Text>}
+                      {showProgressLabel && <Text type="secondary" style={{ fontSize: 12, display: 'block', whiteSpace: 'normal', wordBreak: 'break-word' }}>{rec.progress_label}</Text>}
                     </div>
                   );
                 }},
@@ -3587,17 +3767,17 @@ export default function WorkbenchPage() {
                   ) },
                 { title: '时间', dataIndex: 'created_at', width: 96, render: (t: string) => t ? new Date(t).toLocaleString('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '' },
                ]}
-               expandable={tasks.some(t => t.error || t.progress_label || t.detail) ? {
+               expandable={tasks.some(t => t.error || (isActiveTaskStatus(t.status) && t.progress_label) || t.detail) ? {
                 expandedRowRender: (rec: any) => (
                   <div style={{ fontSize: 12 }}>
                     {rec.error && <Text type="danger" style={{ whiteSpace: 'pre-wrap', display: 'block', marginBottom: 8 }}>{rec.error}</Text>}
-                    {rec.progress_label && <Text style={{ display: 'block', marginBottom: 6 }}>当前：{rec.progress_label}</Text>}
+                    {isActiveTaskStatus(rec.status) && rec.progress_label && <Text style={{ display: 'block', marginBottom: 6 }}>当前：{rec.progress_label}</Text>}
                     {rec.detail && Object.keys(rec.detail).length > 0 && (
                       <pre style={{ margin: 0, whiteSpace: 'pre-wrap', color: '#64748b' }}>{JSON.stringify(rec.detail, null, 2)}</pre>
                     )}
                   </div>
                 ),
-                rowExpandable: (rec: any) => !!(rec.error || rec.progress_label || (rec.detail && Object.keys(rec.detail).length)),
+                rowExpandable: (rec: any) => !!(rec.error || (isActiveTaskStatus(rec.status) && rec.progress_label) || (rec.detail && Object.keys(rec.detail).length)),
               } : undefined}
           />
         )}
@@ -3732,8 +3912,9 @@ export default function WorkbenchPage() {
               <Descriptions.Item label="创建时间">{taskDetail.created_at ? new Date(taskDetail.created_at).toLocaleString('zh-CN') : '-'}</Descriptions.Item>
               <Descriptions.Item label="更新时间">{taskDetail.updated_at ? new Date(taskDetail.updated_at).toLocaleString('zh-CN') : '-'}</Descriptions.Item>
             </Descriptions>
-            {taskDetail.progress_label && <Paragraph>当前：{taskDetail.progress_label}</Paragraph>}
+            {isActiveTaskStatus(taskDetail.status) && taskDetail.progress_label && <Paragraph>当前：{taskDetail.progress_label}</Paragraph>}
             {taskDetail.error && <Paragraph type="danger" style={{ whiteSpace: 'pre-wrap' }}>{taskDetail.error}</Paragraph>}
+            {taskDetail.task_type === 'repair_from_review' && <RepairTaskPreview task={taskDetail} />}
             {taskDetail.result && <TaskResultView task={taskDetail} />}
             {taskDetail.meta && Object.keys(taskDetail.meta).length > 0 && (
               <RawJsonBlock title="任务参数" data={taskDetail.meta} />

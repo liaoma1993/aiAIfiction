@@ -85,6 +85,7 @@ from app.services.wizard.repair_guards import (
     LOCAL_REVISE_MODES,
     _split_hook_marker,
     _validate_full_chapter_revision,
+    _validate_fresh_chapter,
 )
 from app.services.wizard.state_tools import (
     _build_story_state_snapshot,
@@ -145,13 +146,75 @@ def _quality_issue_severity(issue: dict | str) -> str:
         return ""
     return str(issue.get("severity", "")).strip().lower()
 
-def _cap_quality_score_by_issues(score: int, issues: list) -> int:
+# 关键维度权重：逻辑/角色/连续性权重高，文笔/标点等权重低
+# 用于加权计算 overall_score，替代简单平均，体现"逻辑漏洞和角色崩塌权重更高"
+_QUALITY_DIMENSION_WEIGHTS: dict[str, float] = {
+    "plot_logic": 0.18,
+    "character_consistency": 0.18,
+    "continuity": 0.15,
+    "arc_continuity": 0.10,
+    "world_consistency": 0.08,
+    "pacing": 0.06,
+    "information_reveal": 0.06,
+    "dialogue": 0.05,
+    "emotion": 0.05,
+    "scene_clarity": 0.04,
+    "readability": 0.05,
+    "pov": 0.04,
+    "hook": 0.10,
+    "character_voice": 0.06,
+    "ai_flavor": 0.05,
+    "state_memory": 0.06,
+    "opening_continuity": 0.06,
+    "chapter_function": 0.05,
+    "indispensability": 0.05,
+}
+# 关键维度低分阈值：任一关键维度 <= 此值则整体封顶 6
+_CRITICAL_DIMENSION_FLOOR = 4
+_CRITICAL_DIMENSION_KEYS = ("plot_logic", "character_consistency", "continuity", "world_consistency")
+
+def _weighted_quality_score(scores: dict, base_score: int) -> int:
+    """按维度权重加权计算 overall_score；维度缺失时回退到 base_score。"""
+    if not isinstance(scores, dict) or not scores:
+        return base_score
+    weighted_total = 0.0
+    weight_sum = 0.0
+    for key, score in scores.items():
+        weight = _QUALITY_DIMENSION_WEIGHTS.get(key, 0.04)
+        try:
+            value = float(score)
+        except (TypeError, ValueError):
+            continue
+        weighted_total += value * weight
+        weight_sum += weight
+    if weight_sum <= 0:
+        return base_score
+    return max(1, min(10, int(round(weighted_total / weight_sum))))
+
+def _critical_dimension_floor_breached(scores: dict) -> list[str]:
+    """返回低于阈值的关重维度列表。"""
+    breached: list[str] = []
+    if not isinstance(scores, dict):
+        return breached
+    for key in _CRITICAL_DIMENSION_KEYS:
+        try:
+            if float(scores.get(key, 10)) <= _CRITICAL_DIMENSION_FLOOR:
+                breached.append(key)
+        except (TypeError, ValueError):
+            continue
+    return breached
+
+def _cap_quality_score_by_issues(score: int, issues: list, scores: dict | None = None) -> int:
+    """封顶逻辑：先按关重维度低分封顶（4分以下封顶6），再按问题严重度封顶。"""
+    capped = score
+    if scores and _critical_dimension_floor_breached(scores):
+        capped = min(capped, 6)
     severities = {_quality_issue_severity(issue) for issue in issues}
     if severities & {"critical", "致命"}:
-        return min(score, 6)
+        return min(capped, 6)
     if severities & {"high", "严重"}:
-        return min(score, 7)
-    return score
+        return min(capped, 7)
+    return capped
 
 def _normalize_quality_review_for_dashboard(review: dict) -> dict:
     normalized = dict(review or {})
@@ -160,13 +223,28 @@ def _normalize_quality_review_for_dashboard(review: dict) -> dict:
         normalized["issues"] = []
         return normalized
 
-    score = _review_score_value(normalized)
-    capped_score = _cap_quality_score_by_issues(score, issues)
-    if capped_score != score:
+    scores = normalized.get("scores")
+    if not isinstance(scores, dict):
+        scores = None
+
+    base_score = _review_score_value(normalized)
+    # 用加权分替代原始 overall_score（若有维度分），更贴合"逻辑/角色权重更高"
+    if scores:
+        weighted = _weighted_quality_score(scores, base_score)
+        if weighted:
+            normalized["overall_score"] = weighted
+            base_score = weighted
+
+    capped_score = _cap_quality_score_by_issues(base_score, issues, scores)
+    if capped_score != base_score:
         normalized["overall_score"] = capped_score
         normalized["passed"] = False
-        normalized["audit_policy"] = "存在致命/严重问题，综合分已按问题严重度封顶"
-        score = capped_score
+        breached = _critical_dimension_floor_breached(scores) if scores else []
+        if breached:
+            normalized["audit_policy"] = f"关键维度（{'、'.join(breached)}）低于 {_CRITICAL_DIMENSION_FLOOR} 分，综合分已封顶"
+        else:
+            normalized["audit_policy"] = "存在致命/严重问题，综合分已按问题严重度封顶"
+        base_score = capped_score
     blocking = [
         issue for issue in issues
         if _quality_issue_severity(issue) in {"critical", "high", "致命", "严重"}
@@ -175,7 +253,7 @@ def _normalize_quality_review_for_dashboard(review: dict) -> dict:
         issue for issue in issues
         if issue not in blocking
     ]
-    if score >= 8 and not blocking:
+    if base_score >= 8 and not blocking:
         suggestions = list(normalized.get("suggestions") or [])
         for issue in soft:
             if isinstance(issue, dict):
@@ -202,6 +280,18 @@ def _save_quality_review_to_chapter(chapter: Chapter, review: dict) -> None:
     checks = dict(chapter.continuity_checks or {})
     checks["quality_review"] = review
     checks["quality_review_status"] = "completed"
+    # hook 回归检测：修复时静默补回 hook 不再被掩盖，单独计数供看板告警
+    if review.get("hook_restored"):
+        hook_loss_counter = list(checks.get("hook_loss_history") or [])
+        hook_loss_counter.append({
+            "chapter_number": chapter.chapter_number,
+            "restored_at": datetime.now(timezone.utc).isoformat(),
+            "note": "AI 输出缺失 [HOOK] 标记，系统已补回原章末钩子。",
+        })
+        checks["hook_loss_history"] = hook_loss_counter[-50:]
+        checks["hook_lost_last"] = True
+    else:
+        checks["hook_lost_last"] = False
     chapter.continuity_checks = checks
     flag_modified(chapter, "continuity_checks")
 

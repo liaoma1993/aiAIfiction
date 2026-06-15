@@ -21,9 +21,9 @@ def _compact_json(value, limit: int = 1200) -> str:
 def _writing_context_limits(controls: dict | None) -> dict:
     mode = str((controls or {}).get("context_budget") or "standard").lower()
     presets = {
-        "compact": {"characters": 4500, "factions": 2200, "volume": 1800, "state": 1200},
-        "standard": {"characters": 7000, "factions": 3200, "volume": 2600, "state": 1600},
-        "rich": {"characters": 11000, "factions": 5200, "volume": 4200, "state": 2400},
+        "compact": {"characters": 4500, "factions": 2200, "volume": 1800, "state": 1600},
+        "standard": {"characters": 7000, "factions": 3200, "volume": 2600, "state": 2400},
+        "rich": {"characters": 11000, "factions": 5200, "volume": 4200, "state": 3600},
     }
     return presets.get(mode, presets["standard"])
 

@@ -16,7 +16,7 @@ export default function NovelPreviewPage() {
   const [loading, setLoading] = useState(true);
   const [currentChapterId, setCurrentChapterId] = useState<string>('');
   const [directoryOpen, setDirectoryOpen] = useState(false);
-  const [paragraphDensity, setParagraphDensity] = useState<'compact' | 'comfortable' | 'loose'>('compact');
+  const [paragraphDensity, setParagraphDensity] = useState<'compact' | 'comfortable' | 'loose'>('loose');
   const readerArticleRef = useRef<HTMLElement | null>(null);
   const readerPanelRef = useRef<HTMLElement | null>(null);
 

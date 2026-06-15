@@ -8,6 +8,59 @@ from app.services.wizard.outline_arcs import (
 )
 from app.services.wizard.world_entities import _normalize_role_type
 
+# state snapshot 字段优先级：连续性相关字段优先填充，避免整体截断时丢失关键承接信息
+_STATE_SNAPSHOT_PRIORITY = [
+    ("opening_requirements_for_next", 500),
+    ("next_must_follow", 400),
+    ("relationship_changes", 700),
+    ("object_states", 500),
+    ("external_pressures", 500),
+    ("deferred_hooks", 300),
+    ("hook_assessment", 300),
+    ("character_changes", 1200),
+    ("relationship_changes_alt", 0),  # 占位，实际不使用
+    ("timeline_events", 600),
+    ("foreshadowing_updates", 500),
+    ("indispensability_check", 300),
+    ("causality_links", 400),
+    ("voice_continuity_notes", 300),
+    ("informationReveal_notes", 400),
+    ("facts", 800),
+    ("resolved_hooks", 200),
+]
+
+def _build_safe_state_snapshot(result: dict, total_budget: int = 3000) -> str:
+    """按字段优先级逐项填充 state snapshot，每项独立 clip，避免整体 JSON 中途截断。
+    高优先级字段（下章承接要求、关系变化、物件状态）先填，低优先级后填；超预算的低优先级字段被裁掉而非截断。
+    """
+    if not isinstance(result, dict):
+        return json.dumps(result or {}, ensure_ascii=False)
+    safe: dict = {}
+    remaining = total_budget
+    for key, field_budget in _STATE_SNAPSHOT_PRIORITY:
+        if key.endswith("_alt") or field_budget <= 0:
+            continue
+        value = result.get(key)
+        if value in (None, "", [], {}):
+            continue
+        budget = min(field_budget, remaining)
+        if budget <= 60:
+            continue  # 剩余预算不足以放一个有意义的字段，跳过
+        try:
+            raw = json.dumps(value, ensure_ascii=False)
+        except TypeError:
+            raw = str(value)
+        if len(raw) > budget:
+            # 字段级裁剪：保留 JSON 可解析性，截断为字符串
+            safe[key] = raw[:budget - 12] + "...（已裁剪）"
+        else:
+            try:
+                safe[key] = json.loads(raw)
+            except Exception:
+                safe[key] = raw
+        remaining -= len(json.dumps(safe[key], ensure_ascii=False))
+    return json.dumps(safe, ensure_ascii=False)
+
 def _quality_needs_fix(review: dict | None) -> bool:
     if not isinstance(review, dict):
         return False
@@ -129,13 +182,25 @@ def _prewrite_should_block(controls: dict | None) -> bool:
         return False
     return bool(controls.get("strict_prewrite_check") or controls.get("block_on_prewrite_failure"))
 
-def _prewrite_ai_enabled(controls: dict | None) -> bool:
+def _prewrite_ai_enabled(controls: dict | None, chapter_number: int | None = None) -> bool:
+    """是否启用 AI 写作前置诊断。
+    非首章默认开启（chapter_number>1 且未显式关闭），以在写之前拦截连续性缺口。
+    首章默认关闭（首章无上承状态，AI 诊断价值低）。
+    """
     if not isinstance(controls, dict):
-        return False
+        return bool(chapter_number and chapter_number > 1)
     value = controls.get("auto_prewrite_check")
     if value is True:
         return bool(controls.get("strict_prewrite_check") or controls.get("deep_prewrite_check"))
-    return str(value or "").lower() in {"ai", "deep", "strict", "精修", "深度"}
+    if value in (False, "off"):
+        return False
+    lowered = str(value or "").lower()
+    if lowered in {"ai", "deep", "strict", "精修", "深度"}:
+        return True
+    if lowered in {"rule", ""}:
+        # rule 或未设置：非首章默认升级为 AI 诊断
+        return bool(chapter_number and chapter_number > 1)
+    return False
 
 def _run_rule_prewrite_diagnosis(chapter: Chapter, previous_ending: str, story_state_snapshot: str) -> dict:
     blocking = []
@@ -230,7 +295,7 @@ async def _extract_and_apply_state(db: AsyncSession, project_id: str, chapter: C
         },
         content=_clip_context(content, 18000),
     )
-    chapter.story_state_snapshot = json.dumps(result, ensure_ascii=False)[:3000]
+    chapter.story_state_snapshot = _build_safe_state_snapshot(result)
     chapter.relationship_changes = result.get("relationship_changes", []) if isinstance(result.get("relationship_changes", []), list) else []
     chapter.object_states = result.get("object_states", []) if isinstance(result.get("object_states", []), list) else []
     chapter.external_pressures = result.get("external_pressures", []) if isinstance(result.get("external_pressures", []), list) else []
@@ -345,7 +410,7 @@ async def _do_write_chapter(project_id: str, chapter_id: str, mode: str = "appen
         prewrite_guidance = ""
         if controls.get("auto_prewrite_check", "rule"):
             diagnosis = _run_rule_prewrite_diagnosis(chapter, previous_ending, story_state_snapshot)
-            if _prewrite_ai_enabled(controls):
+            if _prewrite_ai_enabled(controls, chapter.chapter_number):
                 diagnosis = await _run_prewrite_diagnosis(
                     ai,
                     project,
@@ -378,18 +443,40 @@ async def _do_write_chapter(project_id: str, chapter_id: str, mode: str = "appen
             chapter_summary = f"{chapter_summary}\n\n【跨弧线桥接要求】\n{bridge_context}"
         writing_style_guidance = _format_project_writing_guidance(project, await _active_writing_style_skill(db, project), "writing")
 
-        text, hook, new_characters = await ai.write_chapter(
-            project.title, project.genre, _wizard_story_brief(project),
-            chapter.chapter_number, chapter.title or "", chapter_summary,
-            _clip_context(vol.outline if vol else "", _writing_context_limits(controls)["volume"]), chars_summary, facs_summary,
-            min_words=target_words, written_so_far=len(chapter.content or ""),
-            previous_ending=previous_ending,
-            story_state_snapshot=_clip_context(f"{story_state_snapshot}\n\n{bridge_context}", _writing_context_limits(controls)["state"]),
-            pov_character=pov_char,
-            readability_guidance=_readability_guidance(controls),
-            early_grip_guidance=_early_grip_guidance(project, chapter, vol, controls),
-            writing_style_guidance=writing_style_guidance,
-        )
+        # 新写章节硬闸：长度/hook存在性/重复上一章。失败重试一次（追加拒因到 instruction）。
+        async def _call_write_chapter(extra_instruction: str = "") -> tuple[str, str, list]:
+            composed_summary = chapter_summary
+            if extra_instruction:
+                composed_summary = f"{chapter_summary}\n\n【上一次输出被系统拒绝，必须修正】\n{extra_instruction}"
+            return await ai.write_chapter(
+                project.title, project.genre, _wizard_story_brief(project),
+                chapter.chapter_number, chapter.title or "", composed_summary,
+                _clip_context(vol.outline if vol else "", _writing_context_limits(controls)["volume"]), chars_summary, facs_summary,
+                min_words=target_words, written_so_far=len(chapter.content or ""),
+                previous_ending=previous_ending,
+                story_state_snapshot=_clip_context(f"{story_state_snapshot}\n\n{bridge_context}", _writing_context_limits(controls)["state"]),
+                pov_character=pov_char,
+                readability_guidance=_readability_guidance(controls),
+                early_grip_guidance=_early_grip_guidance(project, chapter, vol, controls),
+                writing_style_guidance=writing_style_guidance,
+            )
+
+        prev_content_for_guard = prev_chapter.content or "" if prev_chapter else ""
+        # 首章不需要 hook（视项目而定，保守起见：chapter_number>1 时要求 hook）
+        expect_hook = bool(chapter.chapter_number and chapter.chapter_number > 1)
+        text, hook, new_characters = await _call_write_chapter()
+        fresh_failures = _validate_fresh_chapter(text, target_words, prev_content_for_guard, expect_hook=expect_hook)
+        if fresh_failures:
+            retry_note = "；".join(fresh_failures)
+            text, hook, new_characters = await _call_write_chapter(
+                f"上一次输出未通过系统质量闸：{retry_note}。本次必须输出不少于 {target_words} 字的完整正文，"
+                f"结尾必须包含 [HOOK] 标记和具体章末钩子，且不得复制上一章已发生的场景。"
+            )
+            fresh_failures_retry = _validate_fresh_chapter(text, target_words, prev_content_for_guard, expect_hook=expect_hook)
+            if fresh_failures_retry:
+                checks_guard = chapter.continuity_checks or {}
+                checks_guard["fresh_chapter_guard_failed"] = fresh_failures_retry
+                chapter.continuity_checks = checks_guard
         quality_review = {}
         if controls.get("auto_quality_check", False):
             text, quality_review = await _review_and_light_fix_chapter(
@@ -1287,7 +1374,7 @@ async def _do_extract_state(project_id: str, chapter_id: str, apply_changes: boo
         ai = AIService()
         result = await ai.extract_state_changes(chapter.chapter_number, chapter.title or "", chapter.summary or "", chapter.content)
         if apply_changes:
-            chapter.story_state_snapshot = json.dumps(result, ensure_ascii=False)[:3000]
+            chapter.story_state_snapshot = _build_safe_state_snapshot(result)
             checks = dict(chapter.continuity_checks or {})
             checks["state_extract"] = result
             checks["state_extract_validation"] = _validate_state_extract_payload(result)
@@ -1314,7 +1401,7 @@ async def _do_extract_state(project_id: str, chapter_id: str, apply_changes: boo
         return result
 
 async def _apply_state_payload(db: AsyncSession, project_id: str, chapter: Chapter, result: dict):
-    chapter.story_state_snapshot = json.dumps(result, ensure_ascii=False)[:3000]
+    chapter.story_state_snapshot = _build_safe_state_snapshot(result)
     for event in result.get("timeline_events", []):
         db.add(TimelineEvent(
             project_id=project_id,

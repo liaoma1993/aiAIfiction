@@ -24,6 +24,54 @@ def _split_hook_marker(content: str) -> tuple[str, str]:
         hook_text = hook_text.split("[NEW_CHARACTERS]", 1)[0].strip()
     return before.strip(), hook_text
 
+def _effective_original_hook(original_content: str, original_hook: str = "") -> str:
+    if (original_hook or "").strip():
+        return original_hook.strip()
+    _, embedded_hook = _split_hook_marker(original_content)
+    return embedded_hook.strip()
+
+def _restore_missing_hook_marker(
+    original_content: str,
+    new_content: str,
+    original_hook: str = "",
+    revised_hook: str = "",
+) -> tuple[str, str, bool]:
+    effective_hook = (revised_hook or "").strip() or _effective_original_hook(original_content, original_hook)
+    if not effective_hook or "[HOOK]" in (new_content or ""):
+        return new_content, effective_hook, False
+    restored_content = f"{(new_content or '').rstrip()}\n\n[HOOK] {effective_hook}".strip()
+    return restored_content, effective_hook, True
+
+def _detect_fresh_chapter_hook_loss(content: str) -> bool:
+    """新写章节未带 [HOOK] 标记视为 hook 丢失回归（repair 有原 hook 可补，新写无原 hook 可补，需重试）。"""
+    return "[HOOK]" not in (content or "")
+
+def _validate_fresh_chapter(
+    content: str,
+    min_words: int,
+    previous_content: str = "",
+    expect_hook: bool = True,
+) -> list[str]:
+    """新写章节硬闸：返回失败原因列表（空列表表示通过）。
+    - 长度：低于 min_words * 0.7 视为过短（新写无原长可比，按目标字数）
+    - hook 存在性：expect_hook 时必须含 [HOOK] 标记
+    - 重复上一章：复用 _previous_overlap_fragment 防止复制上一章场景
+    与 repair 的 _validate_full_chapter_revision 不同：repair 有原文可比对长度比和 hook，新写没有原文，故按目标字数和标记存在性判断。
+    """
+    failures: list[str] = []
+    text = (content or "").strip()
+    if min_words and len(text) < int(min_words * 0.7):
+        failures.append(
+            f"新写章节正文过短：目标 {min_words} 字，实际约 {len(text)} 字，低于目标 70%。"
+        )
+    if expect_hook and _detect_fresh_chapter_hook_loss(text):
+        failures.append("新写章节缺少章末钩子 [HOOK] 标记。")
+    if previous_content:
+        duplicate = _previous_overlap_fragment(previous_content, text)
+        if duplicate:
+            failures.append(f"新写章节疑似复制上一章正文。重复片段：{duplicate}...")
+    return failures
+
 def _revision_min_ratio(mode: str) -> float:
     if mode in {"quality_light_fix", "quality_group_fix", "de_ai", "humanize", "make_easy", "dialogue_natural", "punctuation_fix"}:
         return 0.9
@@ -56,7 +104,8 @@ def _validate_full_chapter_revision(original_content: str, new_content: str, ori
             raise RuntimeError(
                 f"AI 修复输出过短，本次未写入正文：原文约 {original_len} 字，修复后约 {new_len} 字，低于最低保留阈值 {min_len} 字。"
             )
-    if "[HOOK]" in (original_content or "") and not ("[HOOK]" in new_content or (original_hook or "").strip()):
+    effective_original_hook = _effective_original_hook(original_content, original_hook)
+    if effective_original_hook and "[HOOK]" not in (new_content or ""):
         raise RuntimeError("AI 修复丢失章末钩子，本次未写入正文。")
     duplicate = _previous_overlap_fragment(previous_content, new_content)
     if duplicate:
