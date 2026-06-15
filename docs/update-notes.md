@@ -4,6 +4,48 @@
 
 文档维护规则：每次更新都追加独立条目；即使是同一天的多次更新，也使用时间或主题区分，不覆盖、不改写已有更新说明。
 
+## 2026-06-15 评审修复 - 按问题粒度分流（语句/段落/全文）
+
+本次更新让“按评审修复”不再一刀切全文重写，而是按每个评审问题的 `fix_mode` 自动分流到合适的修复粒度，避免标点/对话类小问题也重写整章导致“越修越漂”。
+
+### 问题背景
+
+- 评审（audit）原本已为每个问题返回 `fix_mode ∈ {sentence, paragraph, context}` 和 `target_text`（可定位原文片段）。
+- 但 `_do_repair_from_review` 一律用 `mode="repair"` 全文重写，完全忽略 `fix_mode`。
+- 后果：一个标点错误（sentence 级）也要重写整章，成本高、可能改坏别处、章节容易越修越漂。
+
+### 后端：按 fix_mode 分流修复
+
+- 新增 `_issue_local_fixable`：判断问题能否走局部替换（`fix_mode` 是 sentence/paragraph 且 `target_text` 能在原文精确匹配）。
+- 新增 `_apply_local_fix`：对单个 sentence/paragraph 问题调用 `revise_chapter` 的 `target_sentence_fix`/`target_paragraph_fix` 模式。
+  - AI 只返回被替换后的片段（不输出整章），程序用 `str.replace(target_text, new_fragment)` 精确替换。
+  - 防御：若 AI 返回内容比原片段长 4 倍且超过原文 60%，判定为疑似返回整章，拒绝替换。
+- `_do_repair_from_review` 任务循环改造：
+  - 先逐个处理 sentence/paragraph 级问题（局部精确替换，每处单独保存版本）。
+  - 剩余 context 级问题或无法定位原文的阻断问题，才进全文 `repair` 重写。
+  - 若所有问题都已局部修复且无 context 级问题，跳过全文重写（`repair_mode: "local_only"`），只做一次复审验证。
+  - 仍有 critical/high 阻断问题未处理时，即使 fix_mode 非 context 也强制全文修。
+- `_merge_chapter_tasks` 合并任务时收集各 issue 的 `fix_mode` 到 `fix_modes` 字段，供分流判断。
+- 复审记录带 `repair_mode`（`local_only` / `full_chapter`）和 `local_fixes`（每处局部修复的 fix_mode/target_text/ok 状态）。
+
+### 修复粒度对照
+
+| 问题粒度 | fix_mode | 修复方式 | AI 返回 | 程序处理 |
+|---|---|---|---|---|
+| 语句修复 | sentence | `target_sentence_fix` | 只返回那句 | `replace(target_text, new)` |
+| 段落修复 | paragraph | `target_paragraph_fix` | 只返回那段 | `replace(target_text, new)` |
+| 全文修复 | context | `repair` | 完整章节 | 整章替换 + 修复-验证循环 |
+
+### 前端：修复报告展示修复模式
+
+- `RepairTaskResult` 复审结果区每章 Tag 显示修复模式（局部修复 / 局部N+全文 / 全文修复）和局部替换次数。
+- 鼠标悬停看详情（局部精确替换 N 处 / 未重写整章 / 经 N 轮修复-验证循环）。
+- 触发局部修复时展示绿色提示框，说明已启用按问题粒度分流。
+
+### 数据库
+
+- 本次更新**无 schema 改动**。`repair_mode` 和 `local_fixes` 通过任务结果返回前端展示，不持久化到新字段。
+
 ## 2026-06-15 评审质量体系 - 10 项优化 + 前端配套
 
 本次系统梳理评审/写作链路后，围绕“评审看不全、新写不拦截、修不彻底、评分不严谨”四大质量漏洞，落地 10 项后端优化 + 5 项前端配套展示。全部写入现有 JSON 字段，**无数据库 schema 改动、无需迁移**。

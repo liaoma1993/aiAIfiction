@@ -446,13 +446,20 @@ const RepairTaskResult = ({ result }: { result: any }) => {
               const rounds = item.verification_rounds ?? 1;
               const score = item.audit?.overall_score ?? '-';
               const passed = item.audit?.passed;
+              const repairMode = item.repair_mode || 'full_chapter';
+              const localCount = Array.isArray(item.local_fixes) ? item.local_fixes.filter((f: any) => f.ok).length : 0;
+              const modeLabel = repairMode === 'local_only' ? '局部修复' : localCount > 0 ? `局部${localCount}+全文` : '全文修复';
+              const titleParts: string[] = [];
+              if (rounds > 1) titleParts.push(`经过 ${rounds} 轮修复-验证循环`);
+              if (localCount > 0) titleParts.push(`局部精确替换 ${localCount} 处`);
+              if (repairMode === 'local_only') titleParts.push('未重写整章，仅替换问题片段');
               return (
                 <Tag
                   key={item.chapter_id || item.chapter_number}
                   color={passed ? 'green' : 'orange'}
-                  title={rounds > 1 ? `经过 ${rounds} 轮修复-验证循环` : '1 轮即达标'}
+                  title={titleParts.join('；') || '1 轮即达标'}
                 >
-                  第{item.chapter_number}章 {score} / 10{rounds > 1 ? ` · ${rounds}轮` : ''}
+                  第{item.chapter_number}章 {score} / 10 · {modeLabel}{rounds > 1 ? `${rounds}轮` : ''}
                 </Tag>
               );
             })}
@@ -464,6 +471,15 @@ const RepairTaskResult = ({ result }: { result: any }) => {
               style={{ marginTop: 12 }}
               message="部分章节经多轮修复-验证才达标"
               description="带轮数标记的章节在第 1 轮修复后复审仍不达标，系统自动针对阻断问题再修一轮。建议人工抽查这类章节。"
+            />
+          )}
+          {reaudit.some((item: any) => item.repair_mode === 'local_only' || (Array.isArray(item.local_fixes) && item.local_fixes.some((f: any) => f.ok))) && (
+            <Alert
+              type="success"
+              showIcon
+              style={{ marginTop: 12 }}
+              message="已启用按问题粒度分流修复"
+              description="标点、对话、单句表达等 sentence/paragraph 级问题，AI 只返回问题片段，程序精确替换原文明，不重写整章；只有逻辑断层、角色崩塌等 context 级问题才全文重写。"
             />
           )}
         </Card>

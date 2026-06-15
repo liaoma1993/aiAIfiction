@@ -215,6 +215,66 @@ def _detect_character_consistency_issues(content: str, characters: list[Characte
                 break  # 同一角色只记一条
     return issues
 
+# fix_mode → 局部修复模式的映射（context 或无法定位原文的走全文 repair）
+_FIX_MODE_TO_LOCAL: dict[str, str] = {
+    "sentence": "target_sentence_fix",
+    "paragraph": "target_paragraph_fix",
+}
+
+def _issue_local_fixable(issue: dict, content: str) -> bool:
+    """判断该 issue 能否走局部替换：fix_mode 是 sentence/paragraph 且 target_text 能在原文精确匹配。"""
+    if not isinstance(issue, dict):
+        return False
+    fix_mode = str(issue.get("fix_mode") or "").strip().lower()
+    if fix_mode not in _FIX_MODE_TO_LOCAL:
+        return False
+    target = (issue.get("target_text") or "").strip()
+    if not target:
+        return False
+    return target in (content or "")
+
+async def _apply_local_fix(
+    ai: AIService,
+    project: Project,
+    chapter: Chapter,
+    issue: dict,
+    previous_ending: str,
+) -> tuple[bool, str, dict]:
+    """对单个 sentence/paragraph 问题做局部替换修复。
+    返回 (是否成功, 新正文, revise 结果)。失败时新正文=原正文。
+    AI 只返回被替换后的片段，程序用 str.replace 精确替换，不重写整章。
+    """
+    content = chapter.content or ""
+    target = (issue.get("target_text") or "").strip()
+    fix_mode = str(issue.get("fix_mode") or "").strip().lower()
+    mode = _FIX_MODE_TO_LOCAL.get(fix_mode, "target_sentence_fix")
+    if not target or target not in content:
+        return False, content, {}
+    instruction = (
+        f"针对以下评审问题做局部修复（只返回替换后的片段，不要输出整章）。"
+        f"问题：{issue.get('description', '')}；建议：{issue.get('fix_suggestion', '')}。"
+    )
+    result = await ai.revise_chapter(
+        project.title, project.genre, chapter.chapter_number, chapter.title or "",
+        chapter.summary or "", content, mode,
+        instruction=instruction,
+        selection=target,
+        previous_ending=previous_ending,
+        controls={"local_fix": True, "issue_dimension": issue.get("dimension", "")},
+        repair_context=json.dumps({"issue": issue, "selection": target}, ensure_ascii=False),
+    )
+    new_fragment = (result.get("content") or "").strip()
+    if not new_fragment:
+        return False, content, result
+    # 防御：AI 偶尔返回整章，若片段比原文还长很多且包含大量原文外内容，拒绝替换
+    if len(new_fragment) > len(target) * 4 and len(new_fragment) > len(content) * 0.6:
+        result.setdefault("change_notes", []).append("局部修复返回内容过长，疑似返回整章，已跳过本次局部替换。")
+        return False, content, result
+    new_content = content.replace(target, new_fragment, 1)
+    if new_content == content:
+        return False, content, result
+    return True, new_content, result
+
 def _dedup_review_issues(issues: list[dict]) -> list[dict]:
     """跨评审去重前置：同一 (chapter_number + dimension) 的问题按 severity 取最高保留。
     避免 review_volume 与 audit 同章产生重复问题污染看板。
@@ -821,6 +881,12 @@ async def _do_repair_from_review(project_id: str, volume_id: str, body: RepairFr
             )[:2000]
             primary["merged_tasks"] = items
             primary["merged_issue_count"] = len(items)
+            # 收集各 issue 的 fix_mode，供后续判断是否还有需全文修的 context 级问题
+            primary["fix_modes"] = sorted({
+                str(it.get("fix_mode") or "").strip().lower()
+                for it in items
+                if isinstance(it, dict) and it.get("fix_mode")
+            })
             merged.append(primary)
         merged.extend(passthrough)
         return merged
@@ -993,7 +1059,69 @@ async def _do_repair_from_review(project_id: str, volume_id: str, body: RepairFr
                 _validate_full_chapter_revision(chapter.content or "", new_content, original_hook, "repair", prev.content if prev else "")
                 return result, new_content, restored_hook, original_hook
 
+            local_fix_records: list[dict] = []
+            local_fixed_targets: set[str] = set()
+            # 先做局部修复：sentence/paragraph 级问题逐个精确替换，不重写整章（仅 apply 模式写入）
             if body.apply:
+                for issue in list(chapter_review_issues):
+                    if not _issue_local_fixable(issue, chapter.content or ""):
+                        continue
+                    target = (issue.get("target_text") or "").strip()
+                    if target in local_fixed_targets:
+                        continue
+                    try:
+                        ok, new_content_local, local_result = await _apply_local_fix(
+                            ai, project, chapter, issue, previous_ending,
+                        )
+                    except RuntimeError as local_exc:
+                        local_fix_records.append({
+                            "fix_mode": issue.get("fix_mode"),
+                            "target_text": target[:60],
+                            "ok": False,
+                            "error": str(local_exc),
+                        })
+                        continue
+                    if ok:
+                        await _save_chapter_version(db, chapter, "ai_local_fix", f"局部修复（{issue.get('fix_mode')}）：第{chapter.chapter_number}章", {
+                            "issue": issue,
+                            "selection": target,
+                        })
+                        chapter.content = new_content_local
+                        chapter.word_count = len(chapter.content or "")
+                        chapter.version = (chapter.version or 1) + 1
+                        chapter.status = _status_after_content_change(chapter.status)
+                        await db.commit()
+                        local_fixed_targets.add(target)
+                        local_fix_records.append({
+                            "fix_mode": issue.get("fix_mode"),
+                            "target_text": target[:60],
+                            "ok": True,
+                        })
+                    else:
+                        local_fix_records.append({
+                            "fix_mode": issue.get("fix_mode"),
+                            "target_text": target[:60],
+                            "ok": False,
+                            "error": "返回内容无法替换或疑似返回整章",
+                        })
+
+            # 剩余未处理问题：只保留 context 级或局部修复失败的，决定是否还需全文修复
+            remaining_issues = [
+                issue for issue in chapter_review_issues
+                if (issue.get("target_text") or "").strip() not in local_fixed_targets
+            ]
+            # 若所有问题都已局部修复，跳过全文重写，直接进入复审验证
+            skip_full_repair = bool(local_fixed_targets) and not any(
+                str(i.get("fix_mode") or "").lower() == "context" for i in remaining_issues
+            )
+            # 临界/严重问题即使 fix_mode 非 context，只要还有阻断问题未处理，仍需全文修
+            has_blocking_remaining = any(
+                str(i.get("severity") or "").lower() in {"critical", "high", "致命", "严重", "未分级"}
+                or str(i.get("priority") or "").lower() in {"critical", "high"}
+                for i in remaining_issues
+            )
+
+            if body.apply and not skip_full_repair:
                 try:
                     result, new_content, restored_hook, _original_hook = await _run_repair_attempt(1)
                 except RuntimeError as exc:
@@ -1138,6 +1266,37 @@ async def _do_repair_from_review(project_id: str, volume_id: str, body: RepairFr
                     "chapter_id": str(chapter.id),
                     "audit": last_audit,
                     "verification_rounds": verification_round,
+                    "repair_mode": "full_chapter",
+                    "local_fixes": local_fix_records,
+                })
+
+            elif body.apply and skip_full_repair:
+                # 全部问题已通过局部修复处理，跳过全文重写，仍做一次 re-audit 验证
+                with db.no_autoflush:
+                    await _extract_and_apply_state(db, project_id, chapter, chapter.content)
+                await db.commit()
+                prev_for_audit = await _get_previous_chapter(db, project_id, str(chapter.volume_id) if chapter.volume_id else None, chapter.chapter_number)
+                audit_prev_ending = chapter.connects_from or ""
+                audit_prev_hook = ""
+                audit_prev_snapshot = "无"
+                if prev_for_audit and prev_for_audit.content:
+                    audit_prev_ending = prev_for_audit.content[-500:] if len(prev_for_audit.content) > 500 else prev_for_audit.content
+                    audit_prev_hook = prev_for_audit.hook or ""
+                    audit_prev_snapshot = _build_story_state_snapshot(prev_for_audit, prev_for_audit.story_state_snapshot or "")
+                last_audit = await ai.audit_chapter(
+                    audit_prev_ending, audit_prev_hook, audit_prev_snapshot, chapter.content or "",
+                )
+                _save_quality_review_to_chapter(chapter, last_audit)
+                await db.commit()
+                repaired_chapters.append(chapter.chapter_number)
+                repaired_chapter_ids.append(str(chapter.id))
+                chapter_audit_records.append({
+                    "chapter_number": chapter.chapter_number,
+                    "chapter_id": str(chapter.id),
+                    "audit": last_audit,
+                    "verification_rounds": 0,
+                    "repair_mode": "local_only",
+                    "local_fixes": local_fix_records,
                 })
 
         audited = chapter_audit_records
