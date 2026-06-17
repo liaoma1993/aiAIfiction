@@ -10,6 +10,7 @@ from app.models.writing_style_skill import WritingStyleSkill
 from app.api.deps import get_current_user
 from app.services.ai_service import AIService
 from app.services.task_manager import start_task, get_task
+from app.utils.timezone import isoformat as tz_isoformat
 
 router = APIRouter(prefix="/projects", tags=["projects"])
 
@@ -79,7 +80,7 @@ def _session_payload(session: ProjectPlanSession | None) -> dict | None:
         "selected_suggestion_index": session.selected_suggestion_index or 0,
         "next_questions": session.next_questions or [],
         "detail_options": session.detail_options or [],
-        "updated_at": updated_at.isoformat() if updated_at else None,
+        "updated_at": tz_isoformat(updated_at) or None,
     }
 
 

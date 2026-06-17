@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import {
   Layout, Card, Typography, Tag, Spin, Button, Empty, Popconfirm, message, Modal, Radio,
-  Tabs, Badge, Select, Space, Drawer, Input, Descriptions, Table, Progress, Alert, Row, Col, Collapse,
+  Tabs, Badge, Select, Space, Drawer, Input, Descriptions, Table, Progress, Alert, Row, Col, Collapse, Checkbox,
 } from 'antd';
 import {
   ThunderboltOutlined, LeftOutlined, TeamOutlined, ApartmentOutlined,
@@ -914,6 +914,46 @@ const ChapterBlueprintTaskResult = ({ result }: { result: any }) => {
   );
 };
 
+const BatchWriteTaskResult = ({ result }: { result: any }) => {
+  const chapters = Array.isArray(result?.chapter_results) ? result.chapter_results : [];
+  const written = chapters.filter((c: any) => c.status === 'written');
+  const already = chapters.filter((c: any) => c.status === 'already_written');
+  const totalWords = chapters.reduce((sum: number, c: any) => sum + (c.word_count || 0), 0);
+  return (
+    <div className="task-report">
+      <div className="task-report-hero compact">
+        <div>
+          <div className="task-report-score">{result?.written_count ?? written.length}</div>
+          <Text type="secondary">本章批写作</Text>
+        </div>
+        <div className="task-report-summary">
+          <Text strong>{result?.arc_name ? `弧线「${result.arc_name}」` : '批量写作'}完成</Text>
+          <Paragraph>共 {chapters.length} 章 · 总字数 {totalWords.toLocaleString()} · 新写 {written.length} 章{already.length > 0 ? ` · 已有 ${already.length} 章` : ''}</Paragraph>
+        </div>
+      </div>
+      {chapters.length > 0 && (
+        <Card size="small" title="章节预览" className="task-report-card" style={{ marginTop: 12 }}>
+          <Table
+            size="small"
+            rowKey="chapter_id"
+            dataSource={chapters}
+            pagination={false}
+            scroll={{ x: 560 }}
+            columns={[
+              { title: '章', dataIndex: 'chapter_number', width: 60, render: (v) => `第${v}章` },
+              { title: '标题', dataIndex: 'title', ellipsis: true },
+              { title: '字数', dataIndex: 'word_count', width: 80, render: (v: number) => v?.toLocaleString() },
+              { title: '状态', dataIndex: 'status', width: 80, render: (v: string) => <Tag color={v === 'written' ? 'green' : 'default'}>{v === 'written' ? '新写' : '已有'}</Tag> },
+              { title: '章末钩子', dataIndex: 'hook', ellipsis: true, render: (v: string) => v ? <Text type="secondary" style={{ fontSize: 12 }}>{v}</Text> : <Text type="secondary">-</Text> },
+            ]}
+          />
+        </Card>
+      )}
+      <RawJsonBlock title="原始结果数据" data={result} />
+    </div>
+  );
+};
+
 const GenericTaskResult = ({ result }: { result: any }) => {
   if (typeof result === 'string') return <Alert type="success" showIcon message={result} />;
   const arcIssues = Array.isArray(result?.arc_quality?.issues) ? result.arc_quality.issues : [];
@@ -989,6 +1029,7 @@ const TaskResultView = ({ task }: { task: any }) => {
   if (type === 'audit_chapter') return <AuditTaskResult result={result} />;
   if (type === 'extract_state') return <ExtractStateTaskResult result={result} />;
   if (type === 'expand_arc_chapters') return <ChapterBlueprintTaskResult result={result} />;
+  if (type === 'batch_write_arc') return <BatchWriteTaskResult result={result} />;
   return <GenericTaskResult result={result} />;
 };
 
@@ -1605,6 +1646,7 @@ export default function WorkbenchPage() {
   const [batchArcIdx, setBatchArcIdx] = useState(0);
   const [batchSelectedChs, setBatchSelectedChs] = useState<Set<string>>(new Set());
   const [batchReadabilityMode, setBatchReadabilityMode] = useState('easy');
+  const [batchClearAndRewrite, setBatchClearAndRewrite] = useState(false);
   const [exportModalOpen, setExportModalOpen] = useState(false);
   const [exportCfg, setExportCfg] = useState({ scope: 'volume', volumeId: '', arcName: '', format: 'md' });
   const [exporting, setExporting] = useState(false);
@@ -2105,7 +2147,7 @@ export default function WorkbenchPage() {
     setRepairingReview(false);
   };
 
-  const batchWriteArc = async (vol: any, arcIdx: number, chapterIds?: string[], mode: string = 'easy') => {
+  const batchWriteArc = async (vol: any, arcIdx: number, chapterIds?: string[], mode: string = 'easy', clearContentAndRewrite: boolean = false) => {
     if (!projectId) return;
     setExpandLoading(`${vol.id}-batch-${arcIdx}`);
     try {
@@ -2113,6 +2155,7 @@ export default function WorkbenchPage() {
       const body: any = {
         arc_index: arcIdx,
         readability_mode: mode,
+        clear_content_and_rewrite: clearContentAndRewrite,
         controls: {
           write_flow_mode: 'stable_draft',
           auto_quality_check: false,
@@ -2123,11 +2166,11 @@ export default function WorkbenchPage() {
       };
       if (chapterIds?.length) body.chapter_ids = chapterIds;
       const res = await api.post(`/projects/${projectId}/wizard/batch-write-arc/${vol.id}`, body);
-      message.loading({ content: `后端批量任务已提交，模式：${selectedMode}…`, key: 'batch', duration: 0 });
+      message.loading({ content: `后端批量任务已提交${clearContentAndRewrite ? '（清空重写）' : ''}，模式：${selectedMode}…`, key: 'batch', duration: 0 });
       await pollTask(res.data.task_id, 1200, 'batch');
       const chs = await chapterApi.list(projectId);
       setChapters(chs);
-      message.success({ content: '批量写作完成', key: 'batch' });
+      message.success({ content: clearContentAndRewrite ? '清空重写完成' : '批量写作完成', key: 'batch' });
       loadRightPanel();
     } catch (e: any) { message.error({ content: e.message || '批量写作失败', key: 'batch' }); }
     setExpandLoading(null);
@@ -3344,18 +3387,19 @@ export default function WorkbenchPage() {
       </Modal>
 
       {/* Batch Write Selector */}
-      <Modal title="批量写作" open={batchModalOpen} onCancel={() => { setBatchModalOpen(false); setBatchSelectedChs(new Set()); }} footer={null} width={420}>
+      <Modal title="批量写作" open={batchModalOpen} onCancel={() => { setBatchModalOpen(false); setBatchSelectedChs(new Set()); setBatchClearAndRewrite(false); }} footer={null} width={420}>
         {batchVolume && (() => {
           const arc = batchVolume.narrative_arcs?.[batchArcIdx];
           const arcChs = chapters.filter((c: any) => c.volume_id === batchVolume.id && c.arc_name === arc?.name);
           const unwritten = arcChs.filter((c: any) => !c.content);
+          const written = arcChs.filter((c: any) => c.content);
           const allIds = unwritten.map((c: any) => c.id);
           const selectedCount = batchSelectedChs.size || allIds.length;
 
           return (
             <div>
               <Text strong style={{ display: 'block', marginBottom: 8 }}>
-                {batchVolume.title} · {arc?.name}（{arcChs.length} 章，{unwritten.length} 章未写）
+                {batchVolume.title} · {arc?.name}（{arcChs.length} 章，{unwritten.length} 章未写{written.length > 0 ? `，${written.length} 章已写` : ''}）
               </Text>
               <div style={{ marginBottom: 12 }}>
                 <Text type="secondary" style={{ display: 'block', fontSize: 12, marginBottom: 4 }}>阅读难度</Text>
@@ -3367,6 +3411,18 @@ export default function WorkbenchPage() {
                   style={{ width: '100%' }}
                 />
               </div>
+              {written.length > 0 && (
+                <div style={{ marginBottom: 12 }}>
+                  <Checkbox
+                    checked={batchClearAndRewrite}
+                    onChange={(e) => setBatchClearAndRewrite(e.target.checked)}
+                  >
+                    <Text type={batchClearAndRewrite ? 'danger' : 'secondary'} style={{ fontSize: 12 }}>
+                      清空已有内容并重新写（会先备份）
+                    </Text>
+                  </Checkbox>
+                </div>
+              )}
               <div style={{ maxHeight: 300, overflow: 'auto', marginBottom: 12 }}>
                 {unwritten.map((ch: any) => (
                   <div key={ch.id} style={{
@@ -3393,22 +3449,28 @@ export default function WorkbenchPage() {
                 ))}
               </div>
               <div style={{ display: 'flex', gap: 8 }}>
-                <Button size="small" onClick={() => {
-                  if (batchSelectedChs.size === 0) setBatchSelectedChs(new Set(allIds));
-                  else setBatchSelectedChs(new Set());
-                }}>
-                  {batchSelectedChs.size === 0 ? '全选' : '取消全选'}
-                </Button>
-                <Button type="primary" block
-                  disabled={!unwritten.length || (batchSelectedChs.size > 0 && selectedCount === 0)}
+                {!batchClearAndRewrite && (
+                  <Button size="small" onClick={() => {
+                    if (batchSelectedChs.size === 0) setBatchSelectedChs(new Set(allIds));
+                    else setBatchSelectedChs(new Set());
+                  }}>
+                    {batchSelectedChs.size === 0 ? '全选' : '取消全选'}
+                  </Button>
+                )}
+                <Button
+                  type="primary"
+                  block
+                  danger={batchClearAndRewrite}
+                  disabled={!batchClearAndRewrite && (!unwritten.length || (batchSelectedChs.size > 0 && selectedCount === 0))}
                   onClick={() => {
                     const ids = batchSelectedChs.size > 0 ? Array.from(batchSelectedChs) : undefined;
                     const mode = batchReadabilityMode;
                     setBatchModalOpen(false);
                     setBatchSelectedChs(new Set());
-                    batchWriteArc(batchVolume, batchArcIdx, ids, mode);
+                    setBatchClearAndRewrite(false);
+                    batchWriteArc(batchVolume, batchArcIdx, ids, mode, batchClearAndRewrite);
                   }}>
-                  写 {selectedCount} 章
+                  {batchClearAndRewrite ? `清空并重写整个弧线（${arcChs.length} 章）` : `写 ${selectedCount} 章`}
                 </Button>
               </div>
             </div>

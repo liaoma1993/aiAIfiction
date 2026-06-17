@@ -388,7 +388,7 @@ async def _do_write_chapter(project_id: str, chapter_id: str, mode: str = "appen
             previous_ending = f"【开头】{opening}\n\n……\n\n【结尾】{ending}"
             if prev_chapter.hook:
                 previous_hook = prev_chapter.hook
-                previous_ending += f"\n\n【上章钩子】{prev_chapter.hook}"
+                previous_ending += f"\n\n【上章钩子——必须回应但禁止重复】{prev_chapter.hook}\n警告：绝对禁止重复钩子中的对话、场景或动作。跳过钩子描述的那个瞬间，直接从事件发生后的即刻反应或下一个动作开始。"
             story_state_snapshot = _build_story_state_snapshot(prev_chapter, prev_chapter.story_state_snapshot or "")
         elif chapter.connects_from:
             previous_ending = chapter.connects_from
@@ -1033,7 +1033,7 @@ async def export_manuscript(project_id: str, body: ExportManuscriptRequest, user
     }
     return StreamingResponse(io.BytesIO(data), media_type=media_type, headers=headers)
 
-async def _do_batch_write_arc(project_id: str, volume_id: str, arc_index: int, task_id: str = "", chapter_ids: list[str] | None = None, readability_mode: str = "easy", controls: dict | None = None) -> dict:
+async def _do_batch_write_arc(project_id: str, volume_id: str, arc_index: int, task_id: str = "", chapter_ids: list[str] | None = None, readability_mode: str = "easy", controls: dict | None = None, clear_content_and_rewrite: bool = False) -> dict:
     async with async_session() as db:
         project = (await db.execute(select(Project).where(Project.id == project_id))).scalar_one_or_none()
         volume = (await db.execute(select(Volume).where(Volume.id == volume_id, Volume.project_id == project_id))).scalar_one_or_none()
@@ -1053,6 +1053,39 @@ async def _do_batch_write_arc(project_id: str, volume_id: str, arc_index: int, t
 
         if not chapters:
             raise RuntimeError("请先展开章节")
+
+        # 如果需要清空内容并重写，则清空所有章节的内容和记忆
+        if clear_content_and_rewrite:
+            chapter_ids_to_clear = [ch.id for ch in chapters if ch.content]
+            for ch in chapters:
+                if ch.content:
+                    await _save_chapter_version(db, ch, "clear_for_rewrite", f"清空内容准备重新写：{arc.get('name', '')}", {})
+                    ch.content = ""
+                    ch.word_count = 0
+                    ch.hook = ""
+                    ch.status = "pending"
+                    # 清空章节记忆，让重新写作时从上一章/上一弧线的记忆开始重新构建
+                    ch.story_state_snapshot = ""
+                    ch.relationship_changes = []
+                    ch.object_states = []
+                    ch.external_pressures = []
+                    ch.opening_requirements_for_next = []
+                    ch.causality_links = []
+                    # 清空连续性检查记录，重新写作时会重新生成
+                    if ch.continuity_checks:
+                        ch.continuity_checks = {}
+
+            # 删除这些章节关联的时间线事件和状态轨迹（会在重新写作时重新生成）
+            if chapter_ids_to_clear:
+                from app.models.timeline import TimelineEvent, StoryStateTrail
+                await db.execute(
+                    delete(TimelineEvent).where(TimelineEvent.chapter_id.in_(chapter_ids_to_clear))
+                )
+                await db.execute(
+                    delete(StoryStateTrail).where(StoryStateTrail.chapter_id.in_(chapter_ids_to_clear))
+                )
+
+            await db.commit()
 
         todo = [c for c in chapters if not c.content]
         if chapter_ids:
@@ -1095,7 +1128,7 @@ async def _do_batch_write_arc(project_id: str, volume_id: str, arc_index: int, t
         for ch in todo:
             ending_context = f"【前一章结尾——从这里接】\n{previous_ending}"
             if previous_hook:
-                ending_context += f"\n\n【上一章钩子——必须从这个悬念开始续写】\n{previous_hook}"
+                ending_context += f"\n\n【上一章钩子——必须回应但禁止重复】\n{previous_hook}\n警告：绝对禁止重复钩子中的对话、场景或动作。跳过钩子描述的那个瞬间，直接从事件发生后的即刻反应或下一个动作开始。"
             if ch.connects_from:
                 ending_context += f"\n\n【蓝图要求的上承状态】\n{ch.connects_from}"
             if arc_bridge_context and ch == todo[0]:
@@ -1155,18 +1188,40 @@ async def _do_batch_write_arc(project_id: str, volume_id: str, arc_index: int, t
             if ch.characters_in_chapter:
                 pov_char = ch.characters_in_chapter[0] if ch.characters_in_chapter else "主角"
 
-            text, hook, new_characters = await ai.write_chapter(
-                project.title, project.genre, _wizard_story_brief(project),
-                ch.chapter_number, ch.title or "", f"{ch.summary or ''}\n\n{prewrite_guidance}\n\n【本次写作控制】\n{_writing_controls_guidance(write_controls)}\n\n【章节连贯性硬约束】\n{_format_chapter_continuity_payload(ch)}",
-                _clip_context(volume.outline or "", _writing_context_limits(write_controls)["volume"]), chars_summary, facs_summary,
-                min_words=ch.target_words or 3000, written_so_far=0,
-                previous_ending=final_ending,
-                story_state_snapshot=_clip_context(story_state_snapshot, _writing_context_limits(write_controls)["state"]),
-                pov_character=pov_char,
-                readability_guidance=_readability_guidance(write_controls),
-                early_grip_guidance=_early_grip_guidance(project, ch, volume, write_controls),
-                writing_style_guidance=writing_style_guidance,
-            )
+            try:
+                text, hook, new_characters = await ai.write_chapter(
+                    project.title, project.genre, _wizard_story_brief(project),
+                    ch.chapter_number, ch.title or "", f"{ch.summary or ''}\n\n{prewrite_guidance}\n\n【本次写作控制】\n{_writing_controls_guidance(write_controls)}\n\n【章节连贯性硬约束】\n{_format_chapter_continuity_payload(ch)}",
+                    _clip_context(volume.outline or "", _writing_context_limits(write_controls)["volume"]), chars_summary, facs_summary,
+                    min_words=ch.target_words or 3000, written_so_far=0,
+                    previous_ending=final_ending,
+                    story_state_snapshot=_clip_context(story_state_snapshot, _writing_context_limits(write_controls)["state"]),
+                    pov_character=pov_char,
+                    readability_guidance=_readability_guidance(write_controls),
+                    early_grip_guidance=_early_grip_guidance(project, ch, volume, write_controls),
+                    writing_style_guidance=writing_style_guidance,
+                )
+            except Exception as e:
+                error_msg = str(e)
+                if "quota" in error_msg.lower() or "insufficient" in error_msg.lower() or "credit" in error_msg.lower():
+                    friendly_msg = "API 配额不足或余额耗尽，请充值后重试"
+                elif "timeout" in error_msg.lower():
+                    friendly_msg = "API 请求超时，请稍后重试"
+                elif "rate limit" in error_msg.lower():
+                    friendly_msg = "API 调用频率超限，请稍后重试"
+                else:
+                    friendly_msg = f"AI 写作失败：{error_msg[:150]}"
+                if task_id:
+                    update_progress(task_id, done / total if total else 0, f"❌ {friendly_msg} (已完成 {done}/{total} 章)", {
+                        "arc_name": arc.get("name", ""),
+                        "total": total,
+                        "done": done,
+                        "error": error_msg,
+                        "stage": "failed",
+                    })
+                import logging
+                logging.getLogger(__name__).error(f"批量写作在第{ch.chapter_number}章失败: {error_msg}", exc_info=True)
+                raise RuntimeError(friendly_msg) from e
             quality_review = {}
             if write_controls.get("auto_quality_check", False):
                 text, quality_review = await _review_and_light_fix_chapter(
@@ -1271,10 +1326,10 @@ async def batch_write_arc(project_id: str, volume_id: str, body: ExpandArcReques
         "async_quality_check": bool(body_controls.get("async_quality_check", False)),
     }
     start_task(
-        _do_batch_write_arc(project_id, volume_id, body.arc_index, task_id, body.chapter_ids, body.readability_mode, controls),
+        _do_batch_write_arc(project_id, volume_id, body.arc_index, task_id, body.chapter_ids, body.readability_mode, controls, body.clear_content_and_rewrite),
         "batch_write_arc",
         project_id,
-        {"volume_id": volume_id, "arc_index": body.arc_index, "chapter_ids": body.chapter_ids or [], "readability_mode": body.readability_mode, "controls": controls},
+        {"volume_id": volume_id, "arc_index": body.arc_index, "chapter_ids": body.chapter_ids or [], "readability_mode": body.readability_mode, "controls": controls, "clear_content_and_rewrite": body.clear_content_and_rewrite},
         task_id=task_id,
         timeout=BATCH_WRITE_ARC_TIMEOUT_SECONDS,
     )

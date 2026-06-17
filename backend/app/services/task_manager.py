@@ -1,7 +1,7 @@
 import asyncio
 import random
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 import uuid
 from typing import Coroutine, Any
 from sqlalchemy import select
@@ -10,13 +10,14 @@ from sqlalchemy.exc import IntegrityError, OperationalError
 from app.database import async_session
 from app.models.chapter import GenerationTask
 from app.services.llm_call_logger import llm_call_context
+from app.utils.timezone import isoformat as tz_isoformat, now as tz_now
 
 _tasks: dict[str, dict] = {}
 INTERRUPTED_BY_RESTART = "服务重启，后台任务已中断，请重新发起"
 
 
 def _now() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return tz_now().isoformat()
 
 
 def _format_db_task(task: GenerationTask) -> dict:
@@ -37,8 +38,8 @@ def _format_db_task(task: GenerationTask) -> dict:
         "project_id": str(task.project_id) if task.project_id else None,
         "chapter_id": str(task.chapter_id) if task.chapter_id else None,
         "meta": config.get("meta", {}),
-        "created_at": task.created_at.isoformat() if task.created_at else "",
-        "updated_at": task.updated_at.isoformat() if task.updated_at else "",
+        "created_at": tz_isoformat(task.created_at),
+        "updated_at": tz_isoformat(task.updated_at),
     }
 
 
@@ -69,11 +70,12 @@ def _parse_task_time(value: str | None) -> datetime | None:
         return None
     try:
         parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
-        if parsed.tzinfo is not None:
-            parsed = parsed.astimezone(timezone.utc).replace(tzinfo=None)
-        return parsed
     except ValueError:
         return None
+    # 统一规整为带时区的东八区时间，用于任务去重比较（口径一致即可）
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone(timedelta(hours=8)))
 
 
 def _find_running_duplicate(task_type: str, project_id: str | None, meta: dict | None) -> str | None:
@@ -344,11 +346,23 @@ def is_cancelled(task_id: str) -> bool:
     return _tasks.get(task_id, {}).get("status") in ("cancelling", "cancelled")
 
 
+def _task_sort_key(t: dict) -> datetime:
+    """按时间排序的统一 key：把任意格式的 created_at 解析为带时区 datetime。
+    naive（旧数据）按 UTC 解释后转东八区，避免字符串排序时 +08:00 后缀导致新数据错排到后面。
+    """
+    value = t.get("created_at") or ""
+    parsed = _parse_task_time(value)
+    if parsed is None:
+        # 解析失败的排到最后（reverse=True 时最小值）
+        return datetime.min.replace(tzinfo=timezone.utc)
+    return parsed
+
+
 def list_tasks(project_id: str | None = None) -> list[dict]:
     tasks = list(_tasks.values())
     if project_id:
         tasks = [t for t in tasks if t.get("project_id") == project_id]
-    return sorted(tasks, key=lambda t: t.get("created_at", ""), reverse=True)
+    return sorted(tasks, key=_task_sort_key, reverse=True)
 
 
 async def list_tasks_persisted(project_id: str | None = None) -> list[dict]:
@@ -369,4 +383,8 @@ async def list_tasks_persisted(project_id: str | None = None) -> list[dict]:
             detail = task.get("detail") or {}
             detail["interrupted_reason"] = "process_restart"
             task["detail"] = detail
-    return _dedupe_task_list(sorted(by_id.values(), key=lambda t: t.get("created_at", ""), reverse=True))
+    all_tasks = _dedupe_task_list(sorted(by_id.values(), key=_task_sort_key, reverse=True))
+    # 只展示最近 30 个，但正在运行的任务必须保留
+    running = [t for t in all_tasks if t.get("status") in {"running", "pending", "cancelling"}]
+    finished = [t for t in all_tasks if t.get("status") not in {"running", "pending", "cancelling"}]
+    return (running + finished[:max(0, 30 - len(running))]) if len(running) < 30 else running

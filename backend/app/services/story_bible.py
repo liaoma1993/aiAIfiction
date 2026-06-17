@@ -196,6 +196,10 @@ async def build_story_bible(db: AsyncSession, project_id: str, chapter_id: str |
                 "summary": _clip(c.summary, 400),
                 "hook": c.hook,
                 "story_state_snapshot": _clip(c.story_state_snapshot, 600),
+                # 关键事件 + 章节功能：供蓝图生成判断"是否重复"，防止本章重演已发生事件
+                "key_events": (c.key_events or [])[:6],
+                "chapter_function": (c.continuity_checks or {}).get("chapter_function", "") if isinstance(c.continuity_checks, dict) else "",
+                "connects_to": c.connects_to or "",
             } for c in prev_chapters
         ],
     }

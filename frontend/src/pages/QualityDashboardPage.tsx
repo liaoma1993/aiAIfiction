@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import { Alert, Button, Card, Col, Empty, message, Modal, Progress, Row, Space, Spin, Statistic, Table, Tabs, Tag, Typography } from 'antd';
+import { Alert, Button, Card, Col, Empty, message, Modal, Progress, Row, Space, Spin, Table, Tabs, Tag, Typography } from 'antd';
 import { AuditOutlined, BarChartOutlined, BranchesOutlined, DatabaseOutlined, ExclamationCircleOutlined, LeftOutlined, ReloadOutlined, ToolOutlined } from '@ant-design/icons';
 import { chapterApi, storyApi } from '@/services/projectApi';
 import api from '@/services/api';
@@ -395,6 +395,26 @@ export default function QualityDashboardPage() {
   const [systemHealthLoading, setSystemHealthLoading] = useState(false);
   const [chapterIssueDetail, setChapterIssueDetail] = useState<any>(null);
 
+  // 修复并发控制：全局修复（world/outline/task）禁用所有按钮；章节级修复只禁用同一章节
+  // key 形如：global-xxx / top-xxx（全局）、chapter-<id> / chapter-group-<id> / <prefix>-sentence 等
+  const repairingScope = (() => {
+    if (!repairingKey) return { any: false, isGlobal: false, chapterId: null as string | null };
+    // 全局问题（world/outline/task 修复）会整表重构，必须禁用全部
+    if (repairingKey.startsWith('global-') || repairingKey.startsWith('top-')) {
+      return { any: true, isGlobal: true, chapterId: null };
+    }
+    // 章节级：从 key 提取 chapter_id（形如 chapter-<id>、chapter-group-<id>、modal-*-<id>）
+    const m = repairingKey.match(/(?:^chapter-group-|^chapter-|^modal-[a-z]+-)([a-f0-9-]+)/i);
+    return { any: true, isGlobal: false, chapterId: m ? m[1] : null };
+  })();
+  // 判断某章节的按钮是否应被禁用：全局修复时全禁；章节修复时只禁同章
+  const isChapterDisabled = (chapterId: string) => {
+    if (!repairingScope.any) return false;
+    if (repairingScope.isGlobal) return true;
+    // 章节修复：无法解析 chapterId 时保守禁用，能解析时只禁同章
+    return !repairingScope.chapterId ? true : String(repairingScope.chapterId) === String(chapterId);
+  };
+
   const loadDashboard = async (silent = false) => {
     if (!projectId) return null;
     if (!silent) setLoading(true);
@@ -663,6 +683,7 @@ export default function QualityDashboardPage() {
     const preferredScope = issue?.fix_mode === 'paragraph' || issue?.fix_mode === 'context' ? issue.fix_mode : 'sentence';
     const hasNewLocator = !!target;
     const isLowScoreWithoutLocator = issue?.issue_type === 'low_score_without_locator' || String(issue?.description || record?.issue || '').includes('模型未返回具体问题');
+    const disabledHere = isChapterDisabled(String(record.chapter_id));
     return (
       <Space size={4} wrap>
         {!isLowScoreWithoutLocator && (
@@ -670,7 +691,7 @@ export default function QualityDashboardPage() {
             <Button
               size="small"
               icon={<ToolOutlined />}
-              disabled={!!repairingKey || !hasNewLocator}
+              disabled={disabledHere || !hasNewLocator}
               loading={repairingKey === `${prefix}-sentence`}
               onClick={() => repairIssue(record, 'sentence', `${prefix}-sentence`)}
             >
@@ -678,7 +699,7 @@ export default function QualityDashboardPage() {
             </Button>
             <Button
               size="small"
-              disabled={!!repairingKey || !hasNewLocator}
+              disabled={disabledHere || !hasNewLocator}
               loading={repairingKey === `${prefix}-paragraph`}
               onClick={() => repairIssue(record, preferredScope === 'context' ? 'context' : 'paragraph', `${prefix}-paragraph`)}
             >
@@ -686,7 +707,7 @@ export default function QualityDashboardPage() {
             </Button>
             <Button
               size="small"
-              disabled={!!repairingKey || !hasNewLocator}
+              disabled={disabledHere || !hasNewLocator}
               loading={repairingKey === `${prefix}-context`}
               onClick={() => repairIssue(record, 'context', `${prefix}-context`)}
             >
@@ -698,7 +719,7 @@ export default function QualityDashboardPage() {
           <Button
             size="small"
             type={isLowScoreWithoutLocator ? 'primary' : 'default'}
-            disabled={!!repairingKey}
+            disabled={disabledHere}
             loading={repairingKey === `${prefix}-audit`}
             onClick={() => reAuditChapter(record, `${prefix}-audit`)}
           >
@@ -709,7 +730,7 @@ export default function QualityDashboardPage() {
           size="small"
           type={isLowScoreWithoutLocator ? 'primary' : 'default'}
           ghost={isLowScoreWithoutLocator}
-          disabled={!!repairingKey}
+          disabled={disabledHere}
           loading={repairingKey === `${prefix}-light`}
           onClick={() => lightFixChapter(record, `${prefix}-light`)}
         >
@@ -719,7 +740,7 @@ export default function QualityDashboardPage() {
           size="small"
           type="primary"
           ghost
-          disabled={!!repairingKey}
+          disabled={disabledHere}
           loading={repairingKey === `${prefix}-complete`}
           onClick={() => completeIssue(record, `${prefix}-complete`)}
         >
@@ -775,282 +796,270 @@ export default function QualityDashboardPage() {
   const globalIssues = data?.quality_issues || [];
   const chapterIssueGroups = chapterIssueGroupsFromDashboard(data);
   const scoreCards = [
-    ['综合质量', aggregate.overall, '项目当前总控质量分'],
-    ['世界规则', aggregate.world, '世界观硬规则、代价和主题绑定'],
-    ['大纲结构', aggregate.outline, '全书长线和分卷结构'],
-    ['卷轴结构', aggregate.volume, '卷目标、压力升级和章节承载'],
-    ['弧线连续', aggregate.arc, '上承下启和变化台阶'],
-    ['章节质量', aggregate.chapter, '正文审计平均质量'],
-    ['任务运行', aggregate.task, '失败任务和运行状态'],
+    ['世界规则', aggregate.world],
+    ['大纲结构', aggregate.outline],
+    ['卷轴结构', aggregate.volume],
+    ['弧线连续', aggregate.arc],
+    ['章节质量', aggregate.chapter],
+    ['任务运行', aggregate.task],
   ];
   const topIssues = globalIssues.slice(0, 6);
 
+  // 紧凑统计指标：合并原"统计数字行"，横排到概览区
+  const stats = [
+    { label: '平均质量', value: summary.average_quality ? `${summary.average_quality}` : '--', suffix: summary.average_quality ? '/10' : '' },
+    { label: '低分章节', value: summary.low_quality_count || 0 },
+    { label: '已写章节', value: summary.written_chapter_count || 0 },
+    { label: '总字数', value: summary.total_words || 0 },
+    { label: '平均字数', value: summary.average_words || 0 },
+    { label: '全局问题', value: summary.global_issue_count || summary.issue_count || 0 },
+  ];
+
   return (
-    <div style={{ padding: 24, maxWidth: 1280, margin: '0 auto' }}>
-      <Space style={{ marginBottom: 16 }}>
+    <div style={{ padding: 24, maxWidth: 1440, margin: '0 auto' }}>
+      <Space style={{ marginBottom: 12 }}>
         <Link to={`/projects/${projectId}`}><Button icon={<LeftOutlined />}>返回工作台</Button></Link>
         <AuditOutlined style={{ color: '#1677ff', fontSize: 20 }} />
         <Title level={3} style={{ margin: 0 }}>项目质量总控</Title>
       </Space>
 
-      <Row gutter={[12, 12]} style={{ marginBottom: 16 }}>
-        <Col xs={24} lg={8}>
-          <Card>
-            <Space align="center" size={18}>
-              <Progress type="circle" percent={Number(aggregate.overall || 0)} size={112} strokeColor={percentColor(aggregate.overall)} />
+      {/* 顶部紧凑概览：圆环 + 项目信息 + 关键计数 + 6 项子评分 + 统计数字，全部压进一块 */}
+      <Card style={{ marginBottom: 12 }}>
+        <Row gutter={[16, 12]} align="middle">
+          <Col xs={24} md={6} lg={5}>
+            <Space align="center" size={14}>
+              <Progress type="circle" percent={Number(aggregate.overall || 0)} size={88} strokeColor={percentColor(aggregate.overall)} />
               <div>
-                <Title level={4} style={{ margin: 0 }}>{data?.project?.title || '当前项目'}</Title>
-                <Text type="secondary">{data?.project?.genre || '未分类'} · {data?.project?.core_theme ? `核心主题：${data.project.core_theme}` : '未设置核心主题'}</Text>
-                <div style={{ marginTop: 10 }}>
-                  <Space wrap>
-                    <Tag color={summary.high_issue_count ? 'red' : 'green'}>高优先级 {summary.high_issue_count || 0}</Tag>
-                    <Tag color={summary.global_issue_count ? 'orange' : 'green'}>问题 {summary.global_issue_count || 0}</Tag>
-                    <Tag color={summary.failed_task_count ? 'red' : 'green'}>失败任务 {summary.failed_task_count || 0}</Tag>
-                  </Space>
-                </div>
+                <Text strong style={{ fontSize: 15 }}>{data?.project?.title || '当前项目'}</Text>
+                <div><Text type="secondary" style={{ fontSize: 12 }}>{data?.project?.genre || '未分类'}{data?.project?.core_theme ? ` · ${data.project.core_theme}` : ''}</Text></div>
               </div>
             </Space>
-          </Card>
-        </Col>
-        <Col xs={24} lg={16}>
-          <Row gutter={[8, 8]}>
-            {scoreCards.slice(1).map(([label, value, help]) => (
-              <Col xs={12} md={8} key={String(label)}>
-                <Card size="small">
-                  <Space style={{ width: '100%', justifyContent: 'space-between' }}>
-                    <Text type="secondary">{label}</Text>
-                    <Text strong>{value ?? 0}</Text>
-                  </Space>
-                  <Progress percent={Number(value || 0)} size="small" showInfo={false} strokeColor={percentColor(Number(value || 0))} />
-                  <Text type="secondary" style={{ fontSize: 11 }}>{help}</Text>
-                </Card>
+          </Col>
+          <Col xs={24} md={18} lg={19}>
+            <Row gutter={[8, 8]}>
+              <Col xs={24}>
+                <Space wrap size={6}>
+                  <Tag color={summary.high_issue_count ? 'red' : 'green'}>高优先级 {summary.high_issue_count || 0}</Tag>
+                  <Tag color={summary.global_issue_count ? 'orange' : 'green'}>全局问题 {summary.global_issue_count || 0}</Tag>
+                  <Tag color={summary.failed_task_count ? 'red' : 'green'}>失败任务 {summary.failed_task_count || 0}</Tag>
+                  {stats.map((s) => (
+                    <Tag key={s.label} style={{ marginInlineEnd: 0 }}>{s.label} <Text strong>{s.value}{s.suffix || ''}</Text></Tag>
+                  ))}
+                </Space>
               </Col>
-            ))}
-          </Row>
-        </Col>
-      </Row>
+              {scoreCards.map(([label, value]) => (
+                <Col xs={12} md={4} key={String(label)}>
+                  <div>
+                    <Space style={{ width: '100%', justifyContent: 'space-between' }}>
+                      <Text type="secondary" style={{ fontSize: 12 }}>{label}</Text>
+                      <Text strong style={{ fontSize: 12 }}>{value ?? 0}</Text>
+                    </Space>
+                    <Progress percent={Number(value || 0)} size="small" showInfo={false} strokeColor={percentColor(Number(value || 0))} />
+                  </div>
+                </Col>
+              ))}
+            </Row>
+          </Col>
+        </Row>
+      </Card>
 
       {topIssues.length > 0 && (
-        <Card title={<span><ExclamationCircleOutlined /> 优先处理</span>} style={{ marginBottom: 16 }}>
-          <div style={{ display: 'grid', gap: 10 }}>
-            {topIssues.map((issue: any, idx: number) => (
-              <div key={`${issue.scope}-${issue.scope_id}-${idx}`} style={{ display: 'grid', gridTemplateColumns: 'auto 1fr auto', gap: 10, alignItems: 'center', padding: '10px 12px', border: '1px solid #e5ebf3', borderRadius: 8, background: '#fbfcfe' }}>
-                <Space size={4} wrap>{renderSeverity(issue.severity)}{renderScope(issue.scope)}</Space>
-                <div>
-                  <Text strong>{issue.scope_name}</Text>
-                  <div style={{ marginTop: 2 }}><Text>{issue.title}</Text></div>
-                  {issue.description && <div><Text type="secondary" style={{ fontSize: 12 }}>{issue.description}</Text></div>}
+        <Alert
+          type="warning"
+          showIcon
+          style={{ marginBottom: 12 }}
+          message={<Text strong>优先处理 · {topIssues.length} 项</Text>}
+          description={
+            <div style={{ display: 'grid', gap: 6 }}>
+              {topIssues.map((issue: any, idx: number) => (
+                <div key={`${issue.scope}-${issue.scope_id}-${idx}`} style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                  <Space size={4}>{renderSeverity(issue.severity)}{renderScope(issue.scope)}</Space>
+                  <Text strong style={{ fontSize: 13 }}>{issue.scope_name}</Text>
+                  <Text style={{ fontSize: 12 }}>{issue.title}</Text>
+                  {globalIssueActions(issue, `top-${idx}`)}
                 </div>
-                {globalIssueActions(issue, `top-${idx}`)}
-              </div>
-            ))}
-          </div>
-        </Card>
+              ))}
+            </div>
+          }
+        />
       )}
 
-      <Row gutter={[12, 12]} style={{ marginBottom: 16 }}>
-        <Col xs={12} md={4}><Card><Statistic title="平均质量" value={summary.average_quality ?? '--'} suffix={summary.average_quality ? '/10' : ''} /></Card></Col>
-        <Col xs={12} md={4}><Card><Statistic title="低分章节" value={summary.low_quality_count || 0} /></Card></Col>
-        <Col xs={12} md={4}><Card><Statistic title="已写章节" value={summary.written_chapter_count || 0} /></Card></Col>
-        <Col xs={12} md={4}><Card><Statistic title="总字数" value={summary.total_words || 0} /></Card></Col>
-        <Col xs={12} md={4}><Card><Statistic title="平均字数" value={summary.average_words || 0} /></Card></Col>
-        <Col xs={12} md={4}><Card><Statistic title="全局问题" value={summary.global_issue_count || summary.issue_count || 0} /></Card></Col>
-      </Row>
-
-      <Card style={{ marginBottom: 16 }}>
-        <Tabs
-          items={[
-            {
-              key: 'issues',
-              label: <span><ExclamationCircleOutlined /> 问题队列</span>,
-              children: (
-                <Table
-                  rowKey={(r: any, idx) => `${r.scope}-${r.scope_id}-${idx}`}
-                  dataSource={globalIssues}
-                  pagination={{ pageSize: 10 }}
-                  scroll={{ x: 1180 }}
-                  columns={[
-                    { title: '层级', dataIndex: 'scope', width: 96, filters: Object.entries(SCOPE_LABELS).map(([value, info]) => ({ text: info.label, value })), onFilter: (value, record: any) => record.scope === value, render: renderScope },
-                    { title: '严重度', dataIndex: 'severity', width: 100, render: renderSeverity },
-                    { title: '对象', dataIndex: 'scope_name', width: 190, ellipsis: true },
-                    {
-                      title: '问题',
-                      dataIndex: 'title',
-                      render: (v, record: any) => (
-                        <div style={{ whiteSpace: 'normal', overflowWrap: 'anywhere', lineHeight: 1.65 }}>
-                          <Text strong>{v}</Text>
-                          {record.description && <div><Text type="secondary" style={{ fontSize: 12 }}>{record.description}</Text></div>}
-                        </div>
-                      ),
-                    },
-                    { title: '操作', width: 310, fixed: 'right', render: (_v, record: any, idx) => globalIssueActions(record, `global-${idx}`) },
-                  ]}
-                />
-              ),
-            },
-            {
-              key: 'scores',
-              label: <span><BarChartOutlined /> 评分合并</span>,
-              children: (
-                <Table
-                  rowKey={(r: any, idx) => `${r.scope}-${r.scope_id}-${idx}`}
-                  dataSource={data?.quality_scores || []}
-                  pagination={{ pageSize: 10 }}
-                  scroll={{ x: 980 }}
-                  columns={[
-                    { title: '层级', dataIndex: 'scope', width: 96, render: renderScope },
-                    { title: '对象', dataIndex: 'scope_name', width: 220, ellipsis: true },
-                    { title: '评分类型', dataIndex: 'score_type', width: 140 },
-                    { title: '分数', dataIndex: 'score', width: 160, render: (v: number, record: any) => <Space><Tag color={percentColor(v)}>{v}</Tag><Progress percent={Number(v || 0)} size="small" showInfo={false} style={{ width: 90 }} strokeColor={percentColor(v)} /></Space> },
-                    { title: '状态', dataIndex: 'status', width: 100, render: (v: string) => <Tag color={v === 'pass' ? 'green' : v === 'warning' ? 'orange' : 'red'}>{v === 'pass' ? '通过' : v === 'warning' ? '提醒' : '需修'}</Tag> },
-                    {
-                      title: '维度',
-                      dataIndex: 'dimensions',
-                      render: (dims: any[]) => (
-                        <Space wrap>{(dims || []).slice(0, 8).map((d: any) => <Tag key={d.key || d.label}>{d.label || d.key} {d.score}</Tag>)}</Space>
-                      ),
-                    },
-                  ]}
-                />
-              ),
-            },
-            {
-              key: 'system',
-              label: <span><DatabaseOutlined /> 系统诊断</span>,
-              children: <SystemHealthPanel data={systemHealth} loading={systemHealthLoading} onRefresh={() => loadSystemHealth()} />,
-            },
-          ]}
-        />
-      </Card>
-
-      <Row gutter={[16, 16]} style={{ marginBottom: 16 }}>
-        <Col xs={24} lg={8}>
-          <Card title="维度均分">
-            {(data?.dimensions || []).length === 0 ? <Text type="secondary">暂无审稿维度数据</Text> : (
-              <div style={{ display: 'grid', gap: 12 }}>
-                {data.dimensions.map((d: any) => (
-                  <div key={d.name}>
-                    <Space style={{ width: '100%', justifyContent: 'space-between' }}>
-                      <Text>{dimensionLabel(d.name)}</Text>
-                      <Text strong>{d.score}/10</Text>
-                    </Space>
-                    <Progress percent={Math.round(d.score * 10)} size="small" strokeColor={scoreColor(d.score) === 'red' ? '#ff4d4f' : '#1677ff'} />
-                  </div>
-                ))}
-              </div>
-            )}
+      {/* 双栏主体：左章节明细 + 右 Tab 区（问题/评分/诊断/趋势/维度） */}
+      <Row gutter={[12, 12]}>
+        <Col xs={24} lg={15}>
+          <Card title="章节明细" size="small" style={{ marginBottom: 12 }}>
+            <Table
+              rowKey="id"
+              dataSource={data?.chapters || []}
+              pagination={{ pageSize: 10 }}
+              scroll={{ x: 1180 }}
+              columns={[
+                { title: '章', dataIndex: 'chapter_number', width: 64, render: (v) => `第${v}章` },
+                { title: '标题', dataIndex: 'title', ellipsis: true },
+                { title: '状态', dataIndex: 'status', width: 86, render: renderChapterStatus },
+                { title: '字数', dataIndex: 'word_count', width: 80 },
+                { title: '质量', dataIndex: 'quality_score', width: 92, render: (v) => v ? <Tag color={scoreColor(v)}>{v}/10</Tag> : <Tag>未审</Tag> },
+                {
+                  title: '主要问题',
+                  dataIndex: 'quality_review',
+                  ellipsis: true,
+                  render: (v, record: any) => {
+                    const issues = Array.isArray(v?.issues) ? v.issues : [];
+                    const issue = issues[0];
+                    if (!issue) return <Text type="secondary">暂无</Text>;
+                    return (
+                      <div>
+                        <Space size={4} wrap style={{ marginBottom: 2 }}>
+                          <Tag color={issues.length > 1 ? 'red' : 'orange'}>{issues.length} 条</Tag>
+                          {typeof issue === 'object' && issue?.severity && renderSeverity(issue.severity)}
+                        </Space>
+                        <div><Text style={{ fontSize: 12 }}>{issueText(issue)}</Text></div>
+                      </div>
+                    );
+                  },
+                },
+                {
+                  title: '操作',
+                  width: 320,
+                  fixed: 'right',
+                  render: (_v, record: any) => {
+                    const issues = Array.isArray(record.quality_review?.issues) ? record.quality_review.issues : [];
+                    const issue = issues[0];
+                    if (!issue) return <Text type="secondary">暂无</Text>;
+                    const group = chapterIssueGroups.find((item: any) => String(item.chapter_id) === String(record.id)) || {
+                      chapter_id: record.id,
+                      chapter_number: record.chapter_number,
+                      chapter_title: record.title,
+                      quality_score: record.quality_score,
+                      issues: issues.map((item: any, idx: number) => normalizeIssueRecord(item, record, idx)),
+                    };
+                    const repairRecord = {
+                      chapter_id: record.id,
+                      issue_index: 0,
+                      chapter_number: record.chapter_number,
+                      chapter_title: record.title,
+                      issue: issueText(issue),
+                      severity: typeof issue === 'object' ? issue.severity : '',
+                      target_text: typeof issue === 'object' ? issue.target_text : '',
+                      fix_mode: typeof issue === 'object' ? issue.fix_mode : '',
+                      fix_suggestion: typeof issue === 'object' ? issue.fix_suggestion : '',
+                      raw_issue: issue,
+                    };
+                    return (
+                      <Space size={4} wrap>
+                        <Button size="small" icon={<ExclamationCircleOutlined />} disabled={isChapterDisabled(String(record.id))} onClick={() => setChapterIssueDetail(group)}>查看</Button>
+                        {group.issues.length > 1 && (
+                          <Button size="small" type="primary" icon={<ToolOutlined />} disabled={isChapterDisabled(String(record.id))} loading={repairingKey === `chapter-group-${record.id}`} onClick={() => lightFixChapterIssueGroup(group, `chapter-group-${record.id}`)}>修复全部</Button>
+                        )}
+                        {repairActions(repairRecord, `chapter-${record.id}`)}
+                      </Space>
+                    );
+                  },
+                },
+              ]}
+            />
           </Card>
         </Col>
-        <Col xs={24} lg={16}>
-          <Card title="章节质量趋势">
-            <div style={{ display: 'flex', gap: 8, overflowX: 'auto', alignItems: 'end', minHeight: 160, padding: '8px 0' }}>
-              {(data?.trends || []).map((t: any) => {
-                const h = Math.max(12, (t.quality_score || 0) * 12);
-                return (
-                  <div key={t.chapter_number} style={{ width: 34, flexShrink: 0, textAlign: 'center' }}>
-                    <div title={`第${t.chapter_number}章：${t.quality_score || '未审'}`} style={{ height: h, borderRadius: 4, background: t.quality_score ? '#1677ff' : '#d9d9d9' }} />
-                    <Text type="secondary" style={{ fontSize: 11 }}>{t.chapter_number}</Text>
-                  </div>
-                );
-              })}
-            </div>
-          </Card>
-        </Col>
-      </Row>
 
-      <Card title="章节明细" style={{ marginBottom: 16 }}>
-        <Table
-          rowKey="id"
-          dataSource={data?.chapters || []}
-          pagination={{ pageSize: 12 }}
-          scroll={{ x: 1180 }}
-          columns={[
-            { title: '章', dataIndex: 'chapter_number', width: 70, render: (v) => `第${v}章` },
-            { title: '标题', dataIndex: 'title', ellipsis: true },
-            { title: '弧线', dataIndex: 'arc_name', width: 140, render: (v) => v ? <Tag>{v}</Tag> : '-' },
-            { title: '状态', dataIndex: 'status', width: 100, render: renderChapterStatus },
-            { title: '字数', dataIndex: 'word_count', width: 100 },
-            { title: '质量', dataIndex: 'quality_score', width: 110, render: (v) => v ? <Tag color={scoreColor(v)}>{v}/10</Tag> : <Tag>未审</Tag> },
-            {
-              title: '主要问题',
-              dataIndex: 'quality_review',
-              ellipsis: true,
-              render: (v, record: any) => {
-                const issues = Array.isArray(v?.issues) ? v.issues : [];
-                const issue = issues[0];
-                if (!issue) return <Text type="secondary">暂无问题</Text>;
-                return (
-                  <div>
-                    <Space size={4} wrap style={{ marginBottom: 4 }}>
-                      <Tag color={issues.length > 1 ? 'red' : 'orange'}>{issues.length} 条问题</Tag>
-                      {typeof issue === 'object' && issue?.severity && renderSeverity(issue.severity)}
-                    </Space>
-                    <div><Text style={{ fontSize: 12 }}>{issueText(issue)}</Text></div>
-                    {typeof issue === 'object' && issue?.target_text && (
-                      <div><Text type="secondary" style={{ fontSize: 11 }}>定位：{issue.target_text}</Text></div>
-                    )}
-                    {issues.length > 1 && <div><Text type="secondary" style={{ fontSize: 11 }}>点击“查看问题”可一次性处理本章问题组。</Text></div>}
-                  </div>
-                );
-              },
-            },
-            {
-              title: '修复',
-              width: 360,
-              fixed: 'right',
-              render: (_v, record: any) => {
-                const issues = Array.isArray(record.quality_review?.issues) ? record.quality_review.issues : [];
-                const issue = issues[0];
-                if (!issue) return <Text type="secondary">暂无问题</Text>;
-                const group = chapterIssueGroups.find((item: any) => String(item.chapter_id) === String(record.id)) || {
-                  chapter_id: record.id,
-                  chapter_number: record.chapter_number,
-                  chapter_title: record.title,
-                  quality_score: record.quality_score,
-                  issues: issues.map((item: any, idx: number) => normalizeIssueRecord(item, record, idx)),
-                };
-                const repairRecord = {
-                  chapter_id: record.id,
-                  issue_index: 0,
-                  chapter_number: record.chapter_number,
-                  chapter_title: record.title,
-                  issue: issueText(issue),
-                  severity: typeof issue === 'object' ? issue.severity : '',
-                  target_text: typeof issue === 'object' ? issue.target_text : '',
-                  fix_mode: typeof issue === 'object' ? issue.fix_mode : '',
-                  fix_suggestion: typeof issue === 'object' ? issue.fix_suggestion : '',
-                  raw_issue: issue,
-                };
-                return (
-                  <Space size={4} wrap>
-                    <Button
+        <Col xs={24} lg={9}>
+          <Card size="small" style={{ position: 'sticky', top: 12 }}>
+            <Tabs
+              defaultActiveKey="issues"
+              size="small"
+              items={[
+                {
+                  key: 'issues',
+                  label: <span><ExclamationCircleOutlined /> 问题 ({globalIssues.length})</span>,
+                  children: (
+                    <Table
                       size="small"
-                      icon={<ExclamationCircleOutlined />}
-                      disabled={!!repairingKey}
-                      onClick={() => setChapterIssueDetail(group)}
-                    >
-                      查看问题
-                    </Button>
-                    {group.issues.length > 1 && (
-                      <Button
-                        size="small"
-                        type="primary"
-                        icon={<ToolOutlined />}
-                        disabled={!!repairingKey}
-                        loading={repairingKey === `chapter-group-${record.id}`}
-                        onClick={() => lightFixChapterIssueGroup(group, `chapter-group-${record.id}`)}
-                      >
-                        修复本章全部问题
-                      </Button>
-                    )}
-                    {repairActions(repairRecord, `chapter-${record.id}`)}
-                  </Space>
-                );
-              },
-            },
-          ]}
-        />
-      </Card>
+                      rowKey={(r: any, idx) => `${r.scope}-${r.scope_id}-${idx}`}
+                      dataSource={globalIssues}
+                      pagination={{ pageSize: 6 }}
+                      scroll={{ x: 560 }}
+                      columns={[
+                        { title: '层级', dataIndex: 'scope', width: 72, render: renderScope },
+                        { title: '严重度', dataIndex: 'severity', width: 76, render: renderSeverity },
+                        { title: '问题', dataIndex: 'title', render: (v, record: any) => (
+                          <div style={{ whiteSpace: 'normal', overflowWrap: 'anywhere', lineHeight: 1.5 }}>
+                            <Text strong style={{ fontSize: 12 }}>{record.scope_name}</Text>
+                            <div><Text style={{ fontSize: 12 }}>{v}</Text></div>
+                            <div style={{ marginTop: 4 }}>{globalIssueActions(record, `global-${record.scope_id}`)}</div>
+                          </div>
+                        ) },
+                      ]}
+                    />
+                  ),
+                },
+                {
+                  key: 'scores',
+                  label: <span><BarChartOutlined /> 评分合并</span>,
+                  children: (
+                    <Table
+                      size="small"
+                      rowKey={(r: any, idx) => `${r.scope}-${r.scope_id}-${idx}`}
+                      dataSource={data?.quality_scores || []}
+                      pagination={{ pageSize: 6 }}
+                      scroll={{ x: 480 }}
+                      columns={[
+                        { title: '对象', dataIndex: 'scope_name', width: 140, ellipsis: true, render: (v, r: any) => <span>{renderScope(r.scope)} {v}</span> },
+                        { title: '分', dataIndex: 'score', width: 70, render: (v: number) => <Tag color={percentColor(v)}>{v}</Tag> },
+                        { title: '维度', dataIndex: 'dimensions', render: (dims: any[]) => (
+                          <Space wrap size={4}>{(dims || []).slice(0, 5).map((d: any) => <Tag key={d.key || d.label} style={{ marginInlineEnd: 0 }}>{d.label || d.key} {d.score}</Tag>)}</Space>
+                        ) },
+                      ]}
+                    />
+                  ),
+                },
+                {
+                  key: 'dimensions',
+                  label: '维度/趋势',
+                  children: (
+                    <div style={{ display: 'grid', gap: 10, maxHeight: 'calc(100vh - 220px)', overflowY: 'auto', paddingRight: 4 }}>
+                      <div>
+                        <Text type="secondary" style={{ fontSize: 12 }}>维度均分</Text>
+                        {(data?.dimensions || []).length === 0 ? <Text type="secondary"> 暂无</Text> : (
+                          // 两列网格，省一半高度
+                          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '4px 12px', marginTop: 6 }}>
+                            {data.dimensions.slice(0, 16).map((d: any) => (
+                              <div key={d.name}>
+                                <Space style={{ width: '100%', justifyContent: 'space-between' }}>
+                                  <Text style={{ fontSize: 11 }} ellipsis>{dimensionLabel(d.name)}</Text>
+                                  <Text strong style={{ fontSize: 11 }}>{d.score}</Text>
+                                </Space>
+                                <Progress percent={Math.round(d.score * 10)} size="small" strokeColor={scoreColor(d.score) === 'red' ? '#ff4d4f' : '#1677ff'} />
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                      <div>
+                        <Text type="secondary" style={{ fontSize: 12 }}>章节质量趋势</Text>
+                        <div style={{ display: 'flex', gap: 3, overflowX: 'auto', alignItems: 'end', minHeight: 90, maxHeight: 110, padding: '6px 0' }}>
+                          {(data?.trends || []).map((t: any) => {
+                            const h = Math.max(8, (t.quality_score || 0) * 9);
+                            return (
+                              <div key={t.chapter_number} style={{ width: 20, flexShrink: 0, textAlign: 'center' }}>
+                                <div title={`第${t.chapter_number}章：${t.quality_score || '未审'}`} style={{ height: h, borderRadius: 2, background: t.quality_score ? '#1677ff' : '#d9d9d9' }} />
+                                <Text type="secondary" style={{ fontSize: 9 }}>{t.chapter_number}</Text>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    </div>
+                  ),
+                },
+                {
+                  key: 'system',
+                  label: <span><DatabaseOutlined /> 诊断</span>,
+                  children: <SystemHealthPanel data={systemHealth} loading={systemHealthLoading} onRefresh={() => loadSystemHealth()} />,
+                },
+              ]}
+            />
+          </Card>
+        </Col>
+      </Row>
 
       <Modal
         title={chapterIssueDetail ? `第${chapterIssueDetail.chapter_number}章《${chapterIssueDetail.chapter_title || ''}》问题清单` : '章节问题清单'}
@@ -1091,7 +1100,7 @@ export default function QualityDashboardPage() {
             <Space wrap style={{ justifyContent: 'flex-end' }}>
               <Button onClick={() => setChapterIssueDetail(null)}>关闭</Button>
               <Button
-                disabled={!!repairingKey}
+                disabled={isChapterDisabled(String(chapterIssueDetail.chapter_id))}
                 loading={repairingKey === `modal-audit-${chapterIssueDetail.chapter_id}`}
                 onClick={() => reAuditChapter(chapterIssueDetail, `modal-audit-${chapterIssueDetail.chapter_id}`)}
               >
@@ -1100,7 +1109,7 @@ export default function QualityDashboardPage() {
               <Button
                 type="primary"
                 icon={<ToolOutlined />}
-                disabled={!!repairingKey}
+                disabled={isChapterDisabled(String(chapterIssueDetail.chapter_id))}
                 loading={repairingKey === `modal-group-${chapterIssueDetail.chapter_id}`}
                 onClick={() => lightFixChapterIssueGroup(chapterIssueDetail, `modal-group-${chapterIssueDetail.chapter_id}`)}
               >

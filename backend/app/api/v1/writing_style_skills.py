@@ -12,6 +12,7 @@ from app.database import get_db, async_session
 from app.models.project import Project
 from app.models.user import User
 from app.models.writing_style_skill import WritingStyleSkill
+from app.utils.timezone import isoformat as tz_isoformat, now as tz_now
 from app.services.ai_service import AIService
 from app.services.task_manager import get_task_persisted, list_tasks, start_task, update_progress
 
@@ -264,8 +265,8 @@ def _skill_payload(skill: WritingStyleSkill) -> dict:
         "prompt_fragment": skill.prompt_fragment or "",
         "is_public": bool(skill.is_public),
         "is_active": bool(skill.is_active),
-        "created_at": skill.created_at.isoformat() if skill.created_at else None,
-        "updated_at": skill.updated_at.isoformat() if skill.updated_at else None,
+        "created_at": tz_isoformat(skill.created_at) or None,
+        "updated_at": tz_isoformat(skill.updated_at) or None,
     }
 
 
@@ -287,8 +288,8 @@ def _project_payload(project: Project) -> dict:
         "wizard_step": project.wizard_step,
         "status": project.status,
         "planning_memory": project.planning_memory or {},
-        "created_at": project.created_at.isoformat() if project.created_at else None,
-        "updated_at": project.updated_at.isoformat() if project.updated_at else None,
+        "created_at": tz_isoformat(project.created_at) or None,
+        "updated_at": tz_isoformat(project.updated_at) or None,
     }
 
 
@@ -422,7 +423,7 @@ async def set_project_active_writing_style_skill(project_id: str, body: ActiveWr
     if not isinstance(style, dict):
         style = {}
     style["active_style_skill_id"] = body.skill_id or ""
-    style["active_style_skill_updated_at"] = datetime.utcnow().isoformat()
+    style["active_style_skill_updated_at"] = tz_now().isoformat()
     project.writing_style = style
     await db.flush()
     return {"project": _project_payload(project)}

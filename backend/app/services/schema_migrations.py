@@ -7,6 +7,8 @@ from datetime import datetime
 from sqlalchemy import inspect, text
 from sqlalchemy.engine import Connection
 
+from app.utils.timezone import now as tz_now
+
 
 MigrationFn = Callable[[Connection], None]
 
@@ -276,5 +278,5 @@ def run_schema_migrations(conn: Connection) -> None:
                 "INSERT INTO schema_migrations (version, name, applied_at) "
                 "VALUES (:version, :name, :applied_at)"
             ),
-            {"version": version, "name": name, "applied_at": datetime.utcnow()},
+            {"version": version, "name": name, "applied_at": tz_now()},
         )

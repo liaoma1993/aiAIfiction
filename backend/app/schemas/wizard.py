@@ -89,6 +89,7 @@ class ExpandArcRequest(BaseModel):
     chapter_ids: list[str] | None = None
     readability_mode: str = "easy"
     controls: dict = {}
+    clear_content_and_rewrite: bool = False
 
 class ReviseVolumeArcRequest(BaseModel):
     arc_index: int = 0

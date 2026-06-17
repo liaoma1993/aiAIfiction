@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.attributes import flag_modified
-from sqlalchemy import select, func
+from sqlalchemy import select, func, delete
 from sqlalchemy.exc import OperationalError
 import asyncio
 import io
@@ -12,6 +12,7 @@ import uuid
 from datetime import datetime, timezone
 from urllib.parse import quote
 from app.database import get_db, async_session
+from app.utils.timezone import now as tz_now
 from app.models.user import User
 from app.models.project import Project
 from app.models.volume import Volume
@@ -285,7 +286,7 @@ def _save_quality_review_to_chapter(chapter: Chapter, review: dict) -> None:
         hook_loss_counter = list(checks.get("hook_loss_history") or [])
         hook_loss_counter.append({
             "chapter_number": chapter.chapter_number,
-            "restored_at": datetime.now(timezone.utc).isoformat(),
+            "restored_at": tz_now().isoformat(),
             "note": "AI 输出缺失 [HOOK] 标记，系统已补回原章末钩子。",
         })
         checks["hook_loss_history"] = hook_loss_counter[-50:]
@@ -311,7 +312,7 @@ def _remember_resolved_quality_issue(chapter: Chapter, body: "ReviseChapterReque
         "resolved_by": "ai_revise",
         "mode": body.mode,
         "review_issue_count_after": len(review.get("issues") or []) if isinstance(review, dict) else None,
-        "resolved_at": datetime.now(timezone.utc).isoformat(),
+        "resolved_at": tz_now().isoformat(),
         "note": "质量大盘修复后已重新审稿；当前问题清单以复审结果为准。",
     })
     checks["quality_resolved_issues"] = resolved[-100:]

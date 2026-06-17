@@ -8,6 +8,7 @@ from app.models.user import User
 from app.models.outline import ForeshadowingPlan
 from app.models.timeline import TimelineEvent, StoryStateTrail
 from app.api.deps import get_current_user
+from app.utils.timezone import isoformat as tz_isoformat
 
 router = APIRouter(prefix="/projects/{project_id}/story", tags=["story"])
 
@@ -901,7 +902,7 @@ async def get_quality_dashboard(project_id: str, user: User = Depends(get_curren
                 "id": str(task.id),
                 "task_type": task.task_type,
                 "error_message": task.error_message,
-                "updated_at": task.updated_at.isoformat() if task.updated_at else "",
+                "updated_at": tz_isoformat(task.updated_at),
             } for task in failed_tasks[:20]
         ],
         "chapters": chapter_rows,
