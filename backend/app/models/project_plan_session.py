@@ -15,3 +15,4 @@ class ProjectPlanSession(BaseModel):
     selected_suggestion_index = Column(Integer, default=0)
     next_questions = Column(JSON, default=list)
     detail_options = Column(JSON, default=list)
+    rejected_entries = Column(JSON, default=list)

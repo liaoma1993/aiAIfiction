@@ -72,16 +72,52 @@ PUNCTUATION_RULES = """
 STORY_SUGGESTIONS_PROMPT = """
 用户想写小说，灵感是：{inspiration}
 类型偏好：{genres}
+用户已拒绝的方向（必须避开，禁止再走相似入口或母题）：{rejected_directions}
 
 请生成 3-5 个不同的故事方案。每个方案不是简单的情节变体，而是从不同的叙事入口、不同的核心冲突引擎出发的独立构想。
 
 生成前必须先做类型模型判断：每个方案都要符合其题材读者的核心期待，而不是只把设定写完整。不同题材的主反馈不同：玄幻/仙侠重升级与资源争夺，都市/职场重现实阻力与阶层跃迁，悬疑重谜题和阶段真相，科幻/末世重规则边界和生存秩序，言情重情感张力和关系推进，历史/权谋重权力结构和局势反转，无限流/游戏重规则、奖励和失败代价。
 
+【反陈词滥调硬约束】（违反则方案作废）
+3-5 个建议中，以下入口母题最多出现 1 次（写够一次就停，禁止两个建议同源）：
+  被废 / 被弃 / 灭门 / 灭族 / 父母仇杀 / 重生复仇 / 系统觉醒 / 穿越附体 /
+  失忆 / 天选之子 / 绝世天赋觉醒 / 绑定金手指 / 被未婚夫退婚 / 转世投胎 / 末日苟活。
+- 禁止默认让主角的初始处境是"惨剧后遗症"（孤儿/被废/灭门/被退婚等）。允许 1 个建议走悲剧入口，但不得是 3 个里默认 3 个。
+- "黑暗压抑"不是高级。同一类型可以是温暖、烟火气、轻松、滑稽或克制的。
+- 写 brief 时不得使用"逐渐成长""暗流涌动""更大阴谋""命运齿轮""各方势力登场"等空泛句式。
+
+【入口形态多样化】（违反则方案作废）
+3-5 个建议必须落在不同的 story_entry_type（同类型最多 1 个）：
+  daily_to_anomaly（日常突变：主角在过日常生活时被卷入异常）
+  task_driven（任务/委托驱动：被指派一个任务或接到一单委托）
+  relationship_seed（关系结识为起点：因结识某人而拉开故事）
+  institutional_conflict（制度阻力：与体制/规则的对抗）
+  mystery_investigation（谜题侦察：发现一个不解之谜）
+  environmental_anomaly（异常环境：环境/世界本身变化触发故事）
+  interest_motivated（兴趣/爱好驱动：主角为追求某个具体爱好或目标）
+
+【情绪光谱】（违反则方案作废）
+3-5 个建议的 tone_profile.emotional_temperature 必须至少有 1 个属于：
+  轻快 / 治愈 / 反差幽默 / 烟火气日常 / 温暖。
+不得全部"黑暗 / 压抑 / 冷峻 / 沉重 / 凝重"。
+
+【细分品类锁定】
+每个建议的 type_model.primary_subgenre 必须落到具体细分品类，不得仅写"玄幻""都市"这种粗类：
+  玄幻 → 修仙 / 西方魔幻 / 民俗志怪 / 异能现代 / 克苏鲁向 / 武侠 / 仙侠 / 神话重述
+  都市 → 职场 / 创业 / 娱乐圈 / 烟火气日常 / 都市异能 / 校园 / 美食 / 体育
+  悬疑 → 推理本格 / 社会派 / 刑侦 / 心理悬疑 / 灵异向 / 密室向
+  科幻 → 硬科幻 / 软科幻 / 末世 / 赛博朋克 / 太空歌剧 / 时间循环 / 近未来
+  言情 → 现言 / 古言 / 甜宠 / 虐恋 / 救赎 / 双向治愈 / 校园恋爱
+  历史 → 正剧权谋 / 架空王朝 / 民国 / 宫斗 / 朝堂博弈
+  无限流 / 游戏 → 副本流 / 直播流 / 系统流 / 流派对抗
+  其他细分自定，但必须比"玄幻/都市"更窄。
+
 每个方案包含：
 - title: 书名（12字以内，有辨识度，避免陈词滥调）
 - genre: 类型标签
+- story_entry_type: 上面列表中的一种（必须自报）
 - tone_profile: 作品总体风格。必须包含 tone_label（如轻松爽文/热血燃向/冷峻悬疑/压抑现实/温暖治愈/黑色幽默/史诗厚重/甜宠轻喜/克制文艺等）、narrative_texture（叙事质感）、pacing（节奏）、humor_level（幽默程度）、emotional_temperature（情绪温度）、language_style（语言手感）、taboos（后续写作禁忌）。这个风格会贯穿后续大纲和正文。
-- type_model: 题材模型。包含 primary_genre、reader_expectation、core_reader_reward、main_conflict_form、upgrade_feedback_loop、early_obstacle_pattern。
+- type_model: 题材模型。包含 primary_genre、primary_subgenre（必须是细分品类）、subgenre_reader_expectation（该细分品类读者具体期待）、subgenre_anti_pattern（同细分品类已被写疲劳、本作要避开的套路）、reader_expectation、core_reader_reward、main_conflict_form、upgrade_feedback_loop、early_obstacle_pattern。
 - reader_promise: 80字以内，读者为什么愿意追下去。
 - core_engine: 一句话写清故事持续运转的冲突引擎。
 - first_volume_promise: 第一卷读者能看到的明确看点。
@@ -91,7 +127,7 @@ STORY_SUGGESTIONS_PROMPT = """
 - total_words: 建议总字数。只有在故事体量已经清楚时才填写数字；不确定时填 null，不要默认 500000
 
 直接返回 JSON 数组，不要任何其他文字：
-[{{"title":"...","genre":"...","tone_profile":{{"tone_label":"轻松爽文","narrative_texture":"...","pacing":"...","humor_level":"...","emotional_temperature":"...","language_style":"...","taboos":["..."]}},"type_model":{{"primary_genre":"...","reader_expectation":"...","core_reader_reward":"...","main_conflict_form":"...","upgrade_feedback_loop":"...","early_obstacle_pattern":"..."}},"reader_promise":"...","core_engine":"...","first_volume_promise":"...","early_event_chain":[{{"event":"...","protagonist_action":"...","obstacle":"...","payoff":"...","carry_forward":"..."}}],"brief":"...","tags":["...","..."],"total_words":null}}, ...]
+[{{"title":"...","genre":"...","story_entry_type":"daily_to_anomaly","tone_profile":{{"tone_label":"轻松爽文","narrative_texture":"...","pacing":"...","humor_level":"...","emotional_temperature":"...","language_style":"...","taboos":["..."]}},"type_model":{{"primary_genre":"...","primary_subgenre":"...","subgenre_reader_expectation":"...","subgenre_anti_pattern":"...","reader_expectation":"...","core_reader_reward":"...","main_conflict_form":"...","upgrade_feedback_loop":"...","early_obstacle_pattern":"..."}},"reader_promise":"...","core_engine":"...","first_volume_promise":"...","early_event_chain":[{{"event":"...","protagonist_action":"...","obstacle":"...","payoff":"...","carry_forward":"..."}}],"brief":"...","tags":["...","..."],"total_words":null}}, ...]
 """
 
 PROJECT_CHAT_PROMPT = """
@@ -109,6 +145,17 @@ PROJECT_CHAT_PROMPT = """
 - 先吸收用户最新补充，不要让用户每次从头描述。
 - 第一优先级是守住用户已经给出的核心：主角身份、核心矛盾、类型、世界规则、关键关系不能擅自漂移。发散只能在“同一故事引擎”内发散，不能把故事改成另一个项目。
 - 你不是设定补丁工具，而是类型小说项目主编。任何时候都要先判断故事是否符合当前题材的读者期待、第一卷是否可追读，再处理设定合理性。
+- 在生成 project_draft 前必须先锁定细分品类 type_model.primary_subgenre，不得把"玄幻""都市""悬疑""科幻""言情""历史""无限流"这种粗类直接当 primary_subgenre。可选细分（按主类型）：
+  · 玄幻 → 修仙 / 西方魔幻 / 民俗志怪 / 异能现代 / 克苏鲁向 / 武侠 / 仙侠 / 神话重述
+  · 都市 → 职场 / 创业 / 娱乐圈 / 烟火气日常 / 都市异能 / 校园 / 美食 / 体育
+  · 悬疑 → 推理本格 / 社会派 / 刑侦 / 心理悬疑 / 灵异向 / 密室向
+  · 科幻 → 硬科幻 / 软科幻 / 末世 / 赛博朋克 / 太空歌剧 / 时间循环 / 近未来
+  · 言情 → 现言 / 古言 / 甜宠 / 虐恋 / 救赎 / 双向治愈 / 校园恋爱
+  · 历史 → 正剧权谋 / 架空王朝 / 民国 / 宫斗 / 朝堂博弈
+  · 无限流 / 游戏 → 副本流 / 直播流 / 系统流 / 流派对抗
+  · 其他细分自定，但必须比上述粗类更窄。
+  细分品类一旦锁定，整个 project_draft（type_model、tone_profile、first_volume_engine、long_term_plan）都必须服从该细分的读者期待与已疲劳套路。
+- 同步给 type_model 输出 subgenre_anti_pattern：写明这个细分品类已经被写疲劳、本作刻意避开的套路（例如修仙就别再"被废弟子重生复仇"，娱乐圈就别再"跨服打脸退圈"）。
 - 必须先识别题材模型：它不是简单标签，而是该类型读者期待的主反馈、冲突形态、升级反馈、早期阻力和长期钩子。不同题材要自适应：
   - 玄幻/仙侠：修行目标、境界反馈、资源争夺、宗门/家族/王朝压力、越阶挑战、道途选择和代价。
   - 都市/职场/商战：现实阻力、资源获取、阶层跃迁、规则利用、关系博弈、财富或事业反馈。
@@ -172,6 +219,9 @@ PROJECT_CHAT_PROMPT = """
     }},
     "type_model": {{
       "primary_genre": "主类型模型，不只是标签",
+      "primary_subgenre": "细分品类，必须比主类型更窄（如 修仙/职场/娱乐圈/推理本格/赛博朋克 等）",
+      "subgenre_reader_expectation": "该细分品类读者的具体期待（比主类型更精准）",
+      "subgenre_anti_pattern": "同细分品类已经被写疲劳、本作刻意避开的套路",
       "reader_expectation": "该类型读者点开后最期待什么",
       "core_reader_reward": "主要读者奖励：升级/赚钱/解谜/情感推进/逃生/权力上升等",
       "main_conflict_form": "冲突主要以什么形式发生",
@@ -208,7 +258,7 @@ PROJECT_CHAT_PROMPT = """
     "open_questions": ["还需要用户确认的问题"]
   }},
   "suggestions": [
-    {{"title":"方案1书名","genre":"类型","length_type":"长篇/短篇等","tone_profile":{{"tone_label":"总体风格","narrative_texture":"叙事质感","pacing":"节奏","humor_level":"幽默程度","emotional_temperature":"情绪温度","language_style":"语言手感","taboos":["禁忌"]}},"type_model":{{"primary_genre":"主类型模型","reader_expectation":"读者期待","core_reader_reward":"读者奖励","main_conflict_form":"冲突形态","upgrade_feedback_loop":"反馈循环","early_obstacle_pattern":"早期阻力"}},"reader_promise":"追读承诺","core_engine":"核心冲突引擎","first_volume_engine":{{"volume_promise":"第一卷承诺","protagonist_first_move":"第一主动动作","early_visible_opponent":"早期可见阻力","first_reward":"第一反馈","first_cost":"第一代价","volume_hook":"卷末钩子"}},"early_event_chain":[{{"event":"事件","protagonist_action":"行动","obstacle":"阻力","payoff":"反馈","carry_forward":"后续压力"}}],"brief":"300字以内独立方案，写清主角、核心冲突、卖点和长线方向","long_term_plan":{{"endgame":"终局","stage_plan":["阶段1","阶段2"],"foreshadowing_payoffs":["伏笔1"]}},"tags":["标签"],"total_words":null}}
+    {{"title":"方案1书名","genre":"类型","length_type":"长篇/短篇等","tone_profile":{{"tone_label":"总体风格","narrative_texture":"叙事质感","pacing":"节奏","humor_level":"幽默程度","emotional_temperature":"情绪温度","language_style":"语言手感","taboos":["禁忌"]}},"type_model":{{"primary_genre":"主类型","primary_subgenre":"细分品类","subgenre_reader_expectation":"细分读者期待","subgenre_anti_pattern":"避开的疲劳套路","reader_expectation":"读者期待","core_reader_reward":"读者奖励","main_conflict_form":"冲突形态","upgrade_feedback_loop":"反馈循环","early_obstacle_pattern":"早期阻力"}},"reader_promise":"追读承诺","core_engine":"核心冲突引擎","first_volume_engine":{{"volume_promise":"第一卷承诺","protagonist_first_move":"第一主动动作","early_visible_opponent":"早期可见阻力","first_reward":"第一反馈","first_cost":"第一代价","volume_hook":"卷末钩子"}},"early_event_chain":[{{"event":"事件","protagonist_action":"行动","obstacle":"阻力","payoff":"反馈","carry_forward":"后续压力"}}],"brief":"300字以内独立方案，写清主角、核心冲突、卖点和长线方向","long_term_plan":{{"endgame":"终局","stage_plan":["阶段1","阶段2"],"foreshadowing_payoffs":["伏笔1"]}},"tags":["标签"],"total_words":null}}
   ]
 }}
 
@@ -262,9 +312,16 @@ CHARACTERS_PROMPT = """
 
 生成 {char_count} 个角色。拒绝扁平化——每个角色必须有内在矛盾、语言指纹、行为模式和弧光预设。
 
+【反角色公式硬约束】
+- 不得让所有角色都是"功能位齐套餐"（主角+反派+导师+恋人+盟友）。本次生成必须至少包含 1 个"无明显叙事功能"的角色（生活搭子/邻居/旁观者/反例对照/烟火气路人），TA 存在的意义是让世界有温度，不为推情节服务。
+- 每个角色必须至少有 1 个反类型特质（铁血将军会讲冷笑话 / 天才学者怕黑 / 反派有人性化动机 / 主角有具体的弱点或羞耻）。
+- 禁止默认角色背景全部都是"悲剧后遗症"（孤儿/被废/灭门）。除非剧情核心需要，不得超过 1 个角色出身惨剧。
+
 每个角色返回以下字段，深度要求大幅提升：
 - name: 角色名
-- role_type: 角色类型，用中文自由填写，不要输出英文枚举。常见值可用：主角/男主/女主/反派/配角/导师/恋人/盟友/竞争者/路人/特殊角色。也可以根据作品需要创造更准确的中文类型，例如“吐槽担当”“高维观察者”“社死推动者”。
+- role_type: 角色类型，用中文自由填写，不要输出英文枚举。常见值可用：主角/男主/女主/反派/配角/导师/恋人/盟友/竞争者/路人/特殊角色。也可以根据作品需要创造更准确的中文类型，例如"吐槽担当""高维观察者""社死推动者"。
+- non_function_role: bool —— TA 是否是"无叙事功能"的存在（生活搭子/旁观者/反例对照）。每次生成中至少有 1 个角色为 true。
+- anti_archetype_trait: 80字 —— TA 的反类型特质，必须具体到一个习惯/弱点/小爱好/微表情，不允许写"很复杂"这种空话。
 - personality: 150字人格画像——不只是标签（"外向"），而是写出矛盾性（"表面热情但内心冷漠"）
 - background: 200字背景——不只写事件，而要写"因为A事件→形成了B信念→现在的人设"
 - motivation: 100字深层动机——区分"想要的目标"和"真正的需求"
@@ -289,9 +346,17 @@ FACTIONS_PROMPT = """
 
 生成 {faction_count} 个势力。拒绝孤立设计——每个势力必须在博弈网络中定位，势力间关系必须有机而非标签化。
 
+【反势力公式硬约束】
+- 不得让势力清单是简单的"正派/反派/中立"三件套。本次生成至少有 1 个"独立利益第三方"——既不依附正派也不依附反派，有自己的算盘、可能在剧情中段倒戈或斡旋。
+- 每个强势力必须有可见的内部脆弱面（贵族家族的私生子隐忧、强国的资源枯竭、宗门的传承断代等），不允许"看上去无懈可击"的纸面强者。
+- 每个势力必须有 1 个"非典型派系"——内部某个小团体不为主流路线服务，有独立动机（清流派、改革派、隐世派、商业派等具体落点）。
+
 每个势力返回：
 - name: 势力名
-- faction_type: 势力/组织类型，用中文自由填写，不要输出英文枚举。常见值可用：门派/家族/帝国/暗组织/种族/商会/公司/学校/官方机构/民间团体/高维组织。也可以根据作品需要创造更准确的中文类型，例如“吃瓜群”“观测部门”“社死直播平台”。
+- faction_type: 势力/组织类型，用中文自由填写，不要输出英文枚举。常见值可用：门派/家族/帝国/暗组织/种族/商会/公司/学校/官方机构/民间团体/高维组织。也可以根据作品需要创造更准确的中文类型，例如"吃瓜群""观测部门""社死直播平台"。
+- independent_third_party: bool —— TA 是否是独立利益第三方（不依附正反两派）。本次生成中至少有 1 个为 true。
+- visible_internal_weakness: 100字 —— TA 可见的内部脆弱面（资源/继承/传承/制度漏洞等具体落点）。
+- non_mainstream_faction: 80字 —— 内部非典型派系（不为主流路线服务的小团体），写清这个派系的核心人物或诉求。
 - description: 200字——不只写"是什么"，要写"为什么是这个样子"（历史成因）
 - core_creed: 150字核心理念——真正驱动这个势力的信仰/利益逻辑
 - headquarters: 总部地点与地理政治意义
@@ -324,6 +389,25 @@ Skill 使用规则：
 - 项目梗概、世界硬约束、角色设定优先级高于 Skill。
 - 禁止复刻 Skill 来源样本的原句、桥段、人物名、地名、组织名和专有设定。
 
+本次输出分两层，严格区分，不得越界：
+
+【第一层 story_overview——全书宏观超长大纲，3000-5000 字，不分卷叙述】
+- 禁止使用"第一卷做X、第二卷做Y、第三卷做Z"这种按卷叙述方式。这层只写全书层面，不出现"第N卷"字样。
+- 必须按以下六个子层展开，每段独立成段、有清楚标题：
+  ① 主角弧线（500-800字）：从开篇起始处境 → 中段累积变化 → 结尾终局状态，写连续的内在变化曲线，不分卷。
+  ② 全书主题与价值观光谱（300-500字）：故事真正讨论的命题，以及主角立场如何随经历位移。
+  ③ 核心对抗压力的累积（500-700字）：反派/外部压力/制度阻力从开始到终局如何不可逆地升级，主角每一阶段付出的代价。
+  ④ 关键关系演变曲线（400-600字）：3 个最重要的角色关系（盟友/对手/师徒/恋人等），从相遇到决裂或共生的完整变化。
+  ⑤ 全书伏笔与回收网（400-600字）：3-5 条贯穿全书的伏笔，写清埋点的形态和回收的时机/方式，不必指定卷号。
+  ⑥ 全书情绪节奏曲线与缓冲设计（300-500字）：哪几个故事阶段压抑/紧绷，哪几个阶段是缓冲/暖意/烟火气，缓冲卷如何承接前后压力。
+- 字数硬下限 3000 字。低于 3000 字视为不合格输出。
+
+【第二层 volumes[]——分卷草案，每卷只写骨架，不写大段叙述】
+- volumes 数组只承担"全书弧度落到几卷上"的轻量映射。
+- 每卷只输出 title / narrative_mission / opening_state / closing_state / tone_arc / primary_emotion / buffer_required / target_words / chapter_count / volume_cliffhanger 等结构化字段。
+- summary 字段控制在 120-200 字，只描述本卷使命、起点状态、终点状态。
+- 不要在 volumes 里写本卷长大纲——那是后续"拆卷"动作的事，本阶段不写。
+
 在分卷之前，先设计全书的"叙事引擎"层面：
 
 1. 核心驱动力——什么力量在不可逆地推动故事前进？不是"主角想变强"，而是具体的时间压力、空间限制、规则约束。例如："封印每月削弱10%，主角必须在第8卷前集齐7个碎片，否则世界将不可逆地坍缩"
@@ -331,6 +415,10 @@ Skill 使用规则：
 3. 信息差管理——读者 vs 角色 vs 叙述者分别知道什么？哪些真相在哪个节点揭露？设计至少3层"知道的人不知道，不知道的人以为知道"的信息差
 4. 角色关系演变曲线——全书角色关系不是每卷定一次，而是一条连续变化的曲线。用前卷关系状态作为后卷的起点
 5. 伏笔链条——设计至少3条跨卷伏笔，标明种下时机和揭晓时机
+6. 情绪节奏曲线（emotional_arc_curve）——全书情绪不能平铺，必须设计起伏。
+   · 给出 global_shape（整体走向，如 升-降-反差-升-终爆 / 暖-冷-暖-崩-救赎）
+   · 给出 per_volume 数组：每卷写明 tone_arc（本卷情绪走向，如 压抑→暖意→反转）、primary_emotion（本卷主导情绪）、buffer_required（是否承担缓冲卷功能）
+   · 必须有 buffer_rule：在 N 卷之间至少有 1 段轻松、治愈、烟火气或温暖缓冲卷；不得全书全程黑暗压抑或全程紧绷
 
 卷间连贯规则：
 1. 每一卷的 summary 开头必须明确承接上一卷结尾的核心状态（角色处境、势力格局、情感关系、未解悬念）
@@ -342,9 +430,11 @@ Skill 使用规则：
 自主决定分几卷。每个卷应该是一个完整的叙事阶段，有独立的起承转合。卷数取决于故事的自然结构——短篇可能2-3卷，史诗可能5-8卷。不要让字数限制你，故事的自然转折点在哪里，卷就在哪里断开。只输出一份volumes列表，卷号连续唯一。
 
 字数硬性要求：
-- story_overview 至少 1000 字（全书故事弧线概述），不能低于此字数。这是全书最重要的部分，决定了后续所有创作的质量。
-- 每卷 outline 至少 1000 字（本卷大纲），每卷 summary 至少 400 字（本卷概要）。
-- 如果 AI 觉得自己写不够，就补充：因果链细节、角色状态变化、势力格局演变、伏笔铺垫、主题呼应。
+- story_overview 至少 3000 字（全书宏观超长大纲，六个子层各自展开），不能低于此字数。这是全书最重要的部分，决定了后续所有创作的质量。
+- 不要在 story_overview 内分卷叙述（"第一卷做X、第二卷做Y"）；分卷叙述属于后续拆卷阶段。
+- volumes[] 每卷 summary 控制在 120-200 字，只写本卷使命+起点+终点，不展开过程。
+- volumes[] 中不要再输出长 outline 字段——分卷长大纲由后续 expand_volume_outline 生成。
+- 如果 AI 觉得 story_overview 写不够 3000 字，就补充：主角内在变化的具体表现、主题如何被反复检验、关键关系的关键转折点、伏笔的具体形态、缓冲段的具体气质。
 
 🚫 绝对禁止：不要在 volumes 数组中放两套方案。反面示例（绝对不要这样做）：
 ❌ "volumes":[卷1,卷2,卷3, 卷1,卷2,卷3]  ← 这是两套方案合并，错误
@@ -360,19 +450,30 @@ Skill 使用规则：
     "relationship_evolution_curve": "角色关系演变曲线概述",
     "foreshadowing_chain": "跨卷伏笔链条"
   }},
-  "story_overview": "1000字全书故事弧线概述，写清贯穿全书的因果链和主题",
+  "emotional_arc_curve": {{
+    "global_shape": "整体情绪走向（如 升-降-反差-升-终爆 / 暖-冷-暖-崩-救赎）",
+    "per_volume": [
+      {{"volume_number": 1, "tone_arc": "本卷情绪走向，如 压抑→暖意→反转", "primary_emotion": "本卷主导情绪", "buffer_required": false}}
+    ],
+    "buffer_rule": "全书必须至少包含 N 段缓冲（轻松/治愈/烟火气/温暖），具体描述哪几卷承担缓冲"
+  }},
+  "story_overview": "3000字以上全书宏观超长大纲，按六个子层（主角弧线 / 全书主题 / 核心对抗压力 / 关键关系演变 / 全书伏笔回收网 / 情绪节奏曲线与缓冲设计）分段展开。严禁分卷叙述（不出现'第N卷'字样）。",
   "volumes": [
     {{
       "volume_number": 1,
       "title": "卷名",
-      "narrative_mission": "本卷叙事使命——在全书结构中承担什么功能",
-      "summary": "400字概要，开头必须承接上一卷结尾状态",
-      "theme": "卷主题",
-      "outline": "1000字本卷大纲，用叙事阶段描述（如'开篇阶段''发展阶段''转折阶段''高潮阶段'）而非定死章节号。不要写'第X章至第Y章'，因为具体章数要后续才能确定。",
+      "narrative_mission": "本卷在全书结构中承担的叙事使命（一句话）",
+      "opening_state": "本卷起点状态——承接上一卷的角色处境/势力格局/未解悬念，一段话",
+      "closing_state": "本卷终点状态——交给下一卷的角色处境/势力格局/新生悬念，一段话",
+      "summary": "120-200字概要，只写'本卷干什么'，不展开过程",
+      "theme": "卷主题（短语）",
       "target_words": 105000,
       "default_chapter_words": 3500,
       "chapter_count": 30,
       "emotional_arc_description": "低→中→高→回落→爆发",
+      "tone_arc": "本卷情绪走向（与 emotional_arc_curve.per_volume 对应卷一致）",
+      "primary_emotion": "本卷主导情绪",
+      "buffer_required": false,
       "stakes_level": "个人/团队/势力/世界",
       "volume_cliffhanger": "卷末钩子——本卷结束时悬念/反转/未解冲突"
     }}
@@ -386,6 +487,50 @@ Skill 使用规则：
 }}
 
 只输出一条故事线，volumes按卷号严格递增，不要重复卷号。直接返回JSON。
+"""
+
+MASTER_OUTLINE_REVISE_CHAT_PROMPT = """
+你是小说项目大纲修订编辑。用户已经有一份生成好的全书宏观超长大纲和分卷骨架，但希望根据自己的反馈做修订。
+你的任务：在保留原大纲优秀部分的前提下，根据用户本轮反馈给出修订方案；用户反馈含糊时，必须先问澄清问题再动手。
+
+【项目基本信息】
+书名《{title}》  类型{genre}
+故事梗概：{brief}
+核心角色：{characters_summary}
+势力格局：{factions_summary}
+
+【当前全书超长大纲】（待修订）
+{current_outline}
+
+【当前分卷骨架】（待修订）
+{current_volume_plan_json}
+
+【对话历史】（按时间顺序，role=user/assistant，最新一条是用户本轮反馈）
+{messages_json}
+
+工作方式：
+- 先抓住用户本轮反馈的核心意图，再决定本轮是给修订版还是先问澄清问题。
+- 修订必须基于当前大纲，保留没被反馈触及的部分；不要因为用户提了一句"再轻松点"就把整条主线推翻。
+- 修订后的 master_outline 仍要 ≥ 3000 字，严格服从 OUTLINE_PLAN_PROMPT 的六层结构（主角弧线 / 主题 / 核心对抗压力 / 关键关系演变 / 全书伏笔回收网 / 情绪节奏曲线与缓冲设计），不允许分卷叙述。
+- 修订后的 volumes[] 仍是骨架——只含 title / narrative_mission / opening_state / closing_state / 120-200 字 summary / tone_arc / primary_emotion / buffer_required / target_words / chapter_count / volume_cliffhanger，不带长 outline 字段。
+- 严守反陈词滥调约束：被废 / 灭门 / 父母仇杀 / 重生复仇 / 系统觉醒 / 失忆 / 天选之子 / 绑定金手指 这些母题最多保留 1 个，且不得新增。
+- 严守情绪光谱：不允许把全书改成清一色黑暗 / 压抑 / 冷峻。
+- 用户提"再轻松点"、"换日常切入"、"加一段缓冲"、"主角不要这么惨"、"军饷案挪到下一卷" 等明确指令 → 直接出修订版。
+- 用户提"改改吧"、"再来一版"、"我不喜欢" 但没说改什么 → 只在 assistant_reply 里复述当前大纲核心，问 1-2 个澄清问题，revised_outline 和 revised_volume_plan 必须填 null。
+- 如果用户反馈违反硬约束（比如要求"主角必须被废"），礼貌拒绝并解释为什么，给出 1-2 个合规替代方案。
+
+【输出 JSON，不要其他文字、不要 Markdown】
+{{
+  "assistant_reply": "给用户的中文回复。先复述你抓到的反馈点，再说明本轮做了什么改动；如果只是问澄清问题，列出问题。300字内。",
+  "revised_outline": "修订后的完整 master_outline（≥3000 字，六层结构齐全）；若本轮只问澄清不出新版，填 null。",
+  "revised_volume_plan": [
+    {{"volume_number": 1, "title": "卷名", "narrative_mission": "...", "opening_state": "...", "closing_state": "...", "summary": "120-200字", "theme": "...", "target_words": 105000, "default_chapter_words": 3500, "chapter_count": 30, "tone_arc": "...", "primary_emotion": "...", "buffer_required": false, "stakes_level": "...", "volume_cliffhanger": "..."}}
+  ],
+  "change_summary": ["本轮改了 X 1-3 条具体改动描述（如 '第三卷情绪从压抑改为反差幽默'）"],
+  "next_questions": ["可以继续聊的下一步 0-3 条问题"]
+}}
+
+如果 revised_outline 为 null（只问澄清），revised_volume_plan 也必须为 null，change_summary 可为空数组。
 """
 
 EXPAND_VOLUME_ARCS_PROMPT = """
@@ -413,6 +558,15 @@ EXPAND_VOLUME_ARCS_PROMPT = """
 角色：{characters_summary}
 势力：{factions_summary}
 本卷共 {chapter_count} 章。
+
+【弧线分布硬指标——违反则被系统打回重做】
+- 本卷必须至少拆出 {min_arc_count} 条同级弧线；少于此值视为颗粒度过粗。
+- 单条弧线 chapter_count 不得超过 {single_arc_max_chapters} 章；超过视为弧线吞并多段叙事。
+- 如果本卷大纲明显包含多个不同的叙事阶段（如开篇/发展/转折/高潮/收束），每个独立叙事阶段必须落到独立的弧线，不允许把"转折阶段+高潮阶段"或"发展阶段+转折阶段"塞进同一条弧线——双高潮叠加在一条弧线里读者节奏会爆。
+- 一条弧线只能承载一次连续变化。如果你发现自己写的弧线里出现"先发生 A 大反转，再发生 B 大反转"，必须把 B 抽出来做独立弧线。
+
+【上次系统打回的修正要求】（如非空，必须严格遵守，重写而非微调）
+{retry_note}
 
 【跨卷承接上下文】
 {volume_continuity_context}
@@ -1178,6 +1332,9 @@ EXPAND_VOLUME_OUTLINE_PROMPT = """
 全书叙事引擎：
 {narrative_engine}
 
+本卷情绪节奏硬约束（必须严格遵守）：
+{tone_arc_constraint}
+
 当前卷数据：
 {volume_data}
 
@@ -1190,12 +1347,46 @@ EXPAND_VOLUME_OUTLINE_PROMPT = """
 - outline 至少 900 字。
 - 必须写清本卷开局承接上一卷什么状态，中段冲突如何升级，高潮如何爆发，结尾如何把读者推向下一卷。
 - 必须包含角色关系变化、反派压力、关键反转、伏笔播种/回收、制度/世界规则的推进。
-- 不要写“详细描述”“约1000字本卷大纲”“待补充”“略”这类占位文字。
-- 不要定死每一章编号，可以按“开篇阶段/发展阶段/转折阶段/高潮阶段/收束阶段”描述。
+- 本卷情绪走向必须严格落到上面的 tone_arc 约束上：若标注 buffer_required=true，本卷必须设计可见的缓冲段落（轻松/治愈/烟火气/温暖），不得全程紧绷或全程压抑；若标注 primary_emotion 为温暖/治愈/反差，整卷主调必须以该情绪为底。
+- 不要写"详细描述""约1000字本卷大纲""待补充""略"这类占位文字。
+- 不要定死每一章编号，可以按"开篇阶段/发展阶段/转折阶段/高潮阶段/收束阶段"描述。
 
 返回 JSON：
 {{
   "outline": "900字以上的本卷详细大纲"
+}}
+"""
+
+STYLE_FINGERPRINT_PROMPT = """
+你是写作风格分析师。下面给你 N 段同一部小说的正文样本（按章节顺序），请从中提取这部作品的稳定语言指纹，供后续章节生成时作为风格基线注入。
+
+【作品信息】
+书名《{title}》  类型{genre}
+
+【样本正文】（每段独立）
+{samples_text}
+
+请只描述客观可观察的语言/叙述特征，不要做文学评论；用具体、可执行、能被下章 AI 复用的句子表述。
+
+返回 JSON：
+{{
+  "sentence_length_distribution": "短/中/长句各占比例及典型句长（一句描述）",
+  "dialogue_density": "对白与叙述比例的客观估计（如 对白约35%，叙述约65%）",
+  "psych_vs_action_ratio": "心理描写与动作/场景/对白的比例及典型出现位置",
+  "narration_pov_habits": "叙事视角和距离感的稳定习惯（如 紧贴主角内聚焦/带轻微反讽距离）",
+  "character_speech_marks": [
+    {{"name": "角色名", "口头禅或表达习惯": "TA 说话时的稳定句式/口头禅/语气词"}}
+  ],
+  "typical_sentence_patterns": [
+    "可作为基线复用的 3-6 个典型句式，要写出可套用的句式骨架"
+  ],
+  "preferred_imagery_or_motifs": [
+    "本作偏爱的意象/感官通道/比喻方向，0-5 条"
+  ],
+  "avoid_phrases": [
+    "已被使用且容易疲劳的桥段/比喻/词组，下章应避开，0-8 条"
+  ],
+  "tone_anchor": "本作稳定的情绪基调一句话（如 冷峻克制带反讽 / 烟火气日常 / 紧绷压抑）"
 }}
 """
 
@@ -2354,8 +2545,14 @@ class AIService:
                 return result[key]
         return [result]
 
-    async def generate_story_suggestions(self, inspiration: str, genres: str = "") -> list[dict]:
-        result = await self._ask(STORY_SUGGESTIONS_PROMPT, system=SYSTEM_ARCHITECT, inspiration=inspiration, genres=genres or "不限")
+    async def generate_story_suggestions(self, inspiration: str, genres: str = "", rejected_directions: str = "") -> list[dict]:
+        result = await self._ask(
+            STORY_SUGGESTIONS_PROMPT,
+            system=SYSTEM_ARCHITECT,
+            inspiration=inspiration,
+            genres=genres or "不限",
+            rejected_directions=rejected_directions or "无",
+        )
         if isinstance(result, list):
             return result
         if isinstance(result, dict) and "suggestions" in result:
@@ -2397,7 +2594,51 @@ class AIService:
             characters_summary=characters_summary, forces_summary=factions_summary,
             writing_style_guidance=writing_style_guidance or "未启用写作风格 Skill，按项目类型和通用网文写法规划。")
 
-    async def expand_volume_outline(self, title: str, genre: str, brief: str, core_theme: str, characters_summary: str, factions_summary: str, narrative_engine: dict, volume_data: dict, neighbor_volumes: list[dict]) -> dict:
+    async def extract_style_fingerprint(self, title: str, genre: str, samples: list[str]) -> dict:
+        clean_samples = [s.strip() for s in (samples or []) if isinstance(s, str) and s.strip()]
+        if not clean_samples:
+            raise RuntimeError("没有可分析的样本文本")
+        budget_per_sample = 2400
+        compact = []
+        for idx, s in enumerate(clean_samples[:4], start=1):
+            head = s[:budget_per_sample]
+            compact.append(f"【样本{idx}】\n{head}")
+        samples_text = "\n\n".join(compact)
+        return await self._ask(
+            STYLE_FINGERPRINT_PROMPT,
+            system=SYSTEM_EDITOR,
+            max_tokens=4096,
+            title=title or "未命名",
+            genre=genre or "未指定",
+            samples_text=samples_text,
+        )
+
+    async def revise_master_outline_chat(
+        self,
+        title: str,
+        genre: str,
+        brief: str,
+        characters_summary: str,
+        factions_summary: str,
+        current_outline: str,
+        current_volume_plan: list,
+        messages: list[dict],
+    ) -> dict:
+        return await self._ask(
+            MASTER_OUTLINE_REVISE_CHAT_PROMPT,
+            system=SYSTEM_ARCHITECT,
+            max_tokens=16384,
+            title=title or "未命名",
+            genre=genre or "未指定",
+            brief=brief or "",
+            characters_summary=characters_summary or "无",
+            factions_summary=factions_summary or "无",
+            current_outline=current_outline or "（当前还没有大纲）",
+            current_volume_plan_json=json.dumps(current_volume_plan or [], ensure_ascii=False, indent=2),
+            messages_json=json.dumps(messages or [], ensure_ascii=False, indent=2),
+        )
+
+    async def expand_volume_outline(self, title: str, genre: str, brief: str, core_theme: str, characters_summary: str, factions_summary: str, narrative_engine: dict, volume_data: dict, neighbor_volumes: list[dict], tone_arc_constraint: str = "无特殊情绪约束，按本卷自然节奏推进") -> dict:
         return await self._ask(
             EXPAND_VOLUME_OUTLINE_PROMPT,
             system=SYSTEM_ARCHITECT,
@@ -2411,6 +2652,7 @@ class AIService:
             narrative_engine=json.dumps(narrative_engine or {}, ensure_ascii=False, indent=2),
             volume_data=json.dumps(volume_data or {}, ensure_ascii=False, indent=2),
             neighbor_volumes=json.dumps(neighbor_volumes or [], ensure_ascii=False, indent=2),
+            tone_arc_constraint=tone_arc_constraint or "无特殊情绪约束，按本卷自然节奏推进",
         )
 
     async def expand_volume_arcs(
@@ -2428,6 +2670,9 @@ class AIService:
         length_control: str = "按全书体量和本卷复杂度自主判断",
         writing_style_guidance: str = "未启用写作风格 Skill，按本卷大纲和通用网文写法拆分。",
         volume_continuity_context: str = "无",
+        min_arc_count: int = 4,
+        single_arc_max_chapters: int = 12,
+        retry_note: str = "",
     ) -> list[dict]:
         return await self._ask_list(EXPAND_VOLUME_ARCS_PROMPT, system=SYSTEM_ARCHITECT, max_tokens=None,
             title=title, genre=genre,
@@ -2439,7 +2684,10 @@ class AIService:
             style_focus=style_focus,
             length_control=length_control,
             volume_continuity_context=volume_continuity_context or "无",
-            writing_style_guidance=writing_style_guidance or "未启用写作风格 Skill，按本卷大纲和通用网文写法拆分。")
+            writing_style_guidance=writing_style_guidance or "未启用写作风格 Skill，按本卷大纲和通用网文写法拆分。",
+            min_arc_count=min_arc_count,
+            single_arc_max_chapters=single_arc_max_chapters,
+            retry_note=retry_note or "无（首次拆分）")
 
     async def revise_volume_arc(
         self,

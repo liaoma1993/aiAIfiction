@@ -1,4 +1,4 @@
-from sqlalchemy import Column, String, Integer, ForeignKey, JSON
+from sqlalchemy import Column, String, Integer, ForeignKey, JSON, Text
 from sqlalchemy.orm import relationship
 from app.models import BaseModel
 
@@ -13,6 +13,8 @@ class Project(BaseModel):
     target_total_words = Column(Integer, default=500000)
     word_count_breakdown = Column(JSON, default=dict)
     story_brief = Column(String(2000), default="")
+    master_outline = Column(Text, default="")
+    pending_volume_plan = Column(JSON, default=None, nullable=True)
     writing_style = Column(JSON, default=dict)
     core_theme = Column(String(200), default="")
     secondary_themes = Column(JSON, default=list)

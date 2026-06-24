@@ -61,6 +61,95 @@ def _build_safe_state_snapshot(result: dict, total_budget: int = 3000) -> str:
         remaining -= len(json.dumps(safe[key], ensure_ascii=False))
     return json.dumps(safe, ensure_ascii=False)
 
+async def _collect_arc_anti_repetition_notes(
+    db: AsyncSession,
+    vol_id: str | None,
+    arc_name: str | None,
+    current_chapter_number: int | None,
+    lookback: int = 5,
+) -> str:
+    """扫同弧线最近 N 章已写章节，提取已发生事件 + 已用钩子，作为下一章 prompt 的负面参考。"""
+    if not vol_id or not arc_name or not current_chapter_number:
+        return ""
+    result = await db.execute(
+        select(Chapter)
+        .where(
+            Chapter.volume_id == vol_id,
+            Chapter.arc_name == arc_name,
+            Chapter.chapter_number < current_chapter_number,
+            Chapter.content != "",
+        )
+        .order_by(Chapter.chapter_number.desc())
+        .limit(lookback)
+    )
+    prev_chapters = list(reversed(result.scalars().all()))
+    if not prev_chapters:
+        return ""
+
+    titles_line = " · ".join(
+        f"第{ch.chapter_number}章《{ch.title or '无名'}》" for ch in prev_chapters
+    )
+    events_lines: list[str] = []
+    hooks_lines: list[str] = []
+    for ch in prev_chapters:
+        marker = f"第{ch.chapter_number}章"
+        if ch.key_events:
+            for ev in (ch.key_events or [])[:4]:
+                if isinstance(ev, str) and ev.strip():
+                    events_lines.append(f"- {marker}：{ev.strip()[:120]}")
+                elif isinstance(ev, dict):
+                    desc = ev.get("description") or ev.get("event") or ev.get("name") or ""
+                    if desc:
+                        events_lines.append(f"- {marker}：{str(desc).strip()[:120]}")
+        if ch.hook and ch.hook.strip():
+            hooks_lines.append(f"- {marker}：{ch.hook.strip()[:140]}")
+
+    if not events_lines and not hooks_lines:
+        return ""
+
+    sections = [
+        "【同弧线已写章节——禁止换皮重复】",
+        f"已写章节：{titles_line}",
+    ]
+    if events_lines:
+        sections.append("已发生的关键事件（不得在本章重复或换皮重写）：")
+        sections.extend(events_lines[:12])
+    if hooks_lines:
+        sections.append("已用过的章末钩子模式（本章钩子换不同套路）：")
+        sections.extend(hooks_lines[:5])
+    sections.append(
+        "执行规则：本章必须推进新的具体动作、信息、关系或物件状态；"
+        "避免重复相同情绪节奏（如反复'她攥紧拳头'/'风掠过……'/'记忆涌起'），换不同的感官或动作通道。"
+    )
+    return "\n".join(sections)
+
+
+def _critical_flow_issues(review: dict | None) -> list[dict]:
+    """从 audit 结果中只挑「流畅 / 重复 / 场景模糊 / AI 味 / 对话」维度的 critical 问题。
+    返回非空表示需要触发一次自动 revise；返回空表示通过。
+    """
+    if not isinstance(review, dict) or review.get("audit_error"):
+        return []
+    relevant_dims = {
+        "continuity", "连续性", "连贯",
+        "scene_clarity", "场景", "场面清晰",
+        "ai_flavor", "AI味", "ai味",
+        "dialogue", "对话",
+        "readability", "可读",
+        "repetition", "重复",
+    }
+    hits: list[dict] = []
+    for issue in review.get("issues") or []:
+        if not isinstance(issue, dict):
+            continue
+        if issue.get("severity") != "critical":
+            continue
+        dim = str(issue.get("dimension") or "").strip()
+        if any(token in dim for token in relevant_dims):
+            hits.append(issue)
+    return hits[:3]
+
+
 def _quality_needs_fix(review: dict | None) -> bool:
     if not isinstance(review, dict):
         return False
@@ -76,6 +165,170 @@ def _quality_needs_fix(review: dict | None) -> bool:
         if isinstance(issue, dict) and issue.get("severity") in {"critical", "high"}:
             return True
     return False
+
+def _format_style_fingerprint_for_prompt(fingerprint: dict) -> str:
+    """把已提取的风格指纹格式化为下一章 prompt 注入的硬约束文本。"""
+    lines: list[str] = []
+    field_labels = [
+        ("tone_anchor", "情绪基调"),
+        ("sentence_length_distribution", "句长分布"),
+        ("dialogue_density", "对白密度"),
+        ("psych_vs_action_ratio", "心理 vs 动作比例"),
+        ("narration_pov_habits", "叙事视角习惯"),
+    ]
+    for key, label in field_labels:
+        value = fingerprint.get(key)
+        if isinstance(value, str) and value.strip():
+            lines.append(f"- {label}：{value.strip()[:200]}")
+    speech_marks = fingerprint.get("character_speech_marks") or []
+    if isinstance(speech_marks, list) and speech_marks:
+        formatted = []
+        for entry in speech_marks[:6]:
+            if isinstance(entry, dict):
+                name = (entry.get("name") or "").strip()
+                habit = (entry.get("口头禅或表达习惯") or entry.get("habit") or "").strip()
+                if name and habit:
+                    formatted.append(f"{name}：{habit[:80]}")
+        if formatted:
+            lines.append("- 角色语言指纹（口头禅/表达习惯，必须保持）：" + "；".join(formatted))
+    patterns = fingerprint.get("typical_sentence_patterns") or []
+    if isinstance(patterns, list) and patterns:
+        lines.append("- 典型句式（可复用，不要在本章违背）：" + "；".join(str(p).strip()[:80] for p in patterns[:5]))
+    motifs = fingerprint.get("preferred_imagery_or_motifs") or []
+    if isinstance(motifs, list) and motifs:
+        lines.append("- 偏爱意象/感官通道：" + "；".join(str(m).strip()[:60] for m in motifs[:5]))
+    avoid = fingerprint.get("avoid_phrases") or []
+    if isinstance(avoid, list) and avoid:
+        lines.append("- 已被使用、本章必须避开的桥段/比喻/词组：" + "；".join(str(a).strip()[:60] for a in avoid[:8]))
+    return "\n".join(lines) if lines else "（指纹为空）"
+
+
+async def _do_extract_style_fingerprint(project_id: str) -> dict:
+    """读取项目最近写完的若干章节正文，调用 AI 提取语言指纹并写入 project.writing_style.fingerprint。"""
+    async with async_session() as db:
+        project = (await db.execute(select(Project).where(Project.id == project_id))).scalar_one_or_none()
+        if not project:
+            raise RuntimeError("项目不存在")
+        chapters_result = await db.execute(
+            select(Chapter)
+            .where(Chapter.project_id == project_id, Chapter.content != "")
+            .order_by(Chapter.chapter_number.asc())
+            .limit(4)
+        )
+        ch_list = list(chapters_result.scalars().all())
+        if not ch_list:
+            return {"status": "no_samples"}
+        samples = [c.content for c in ch_list if c.content and c.content.strip()]
+        if not samples:
+            return {"status": "no_samples"}
+        snapshot_title = project.title or "未命名"
+        snapshot_genre = project.genre or ""
+
+    ai = AIService()
+    try:
+        fingerprint = await ai.extract_style_fingerprint(snapshot_title, snapshot_genre, samples)
+    except Exception as exc:
+        return {"status": "failed", "error": str(exc)[:200]}
+
+    if not isinstance(fingerprint, dict) or not fingerprint:
+        return {"status": "empty_result"}
+
+    async with async_session() as db:
+        project = (await db.execute(select(Project).where(Project.id == project_id))).scalar_one_or_none()
+        if not project:
+            return {"status": "project_missing"}
+        style = {**(project.writing_style or {})}
+        style["fingerprint"] = fingerprint
+        style["fingerprint_locked_at_chapter"] = max(c.chapter_number for c in ch_list)
+        project.writing_style = style
+        await db.commit()
+    return {"status": "ok", "fields": list(fingerprint.keys())}
+
+
+async def _auto_flow_repetition_pass(
+    ai: AIService,
+    project: Project,
+    chapter: Chapter,
+    content: str,
+    previous_ending: str,
+    previous_hook: str,
+    story_state_snapshot: str,
+    arc_anti_repetition_notes: str,
+    controls: dict,
+) -> tuple[str, dict | None]:
+    """轻量自评：写完后跑一次 audit，仅当「流畅/重复/场景/AI味/对话」维度命中 critical 时
+    触发一次 revise。设计为默认开启，但只重写最痛的几类问题，避免成本爆炸。
+    与 auto_quality_check（严格审稿+light_fix）互斥：如果用户已开严格审稿，这里跳过。
+    """
+    if controls.get("auto_quality_check", False):
+        return content, None
+    if controls.get("auto_flow_critique") is False:
+        return content, None
+
+    try:
+        review = await ai.audit_chapter(previous_ending, previous_hook or "", story_state_snapshot, content)
+    except Exception as exc:
+        return content, {"audit_error": "auto_flow_critique 调用失败", "raw_error": str(exc)[:200]}
+
+    critical_hits = _critical_flow_issues(review)
+    if not critical_hits:
+        if isinstance(review, dict):
+            review["flow_critique_passed"] = True
+        return content, review
+
+    hit_summary = "；".join(
+        f"[{issue.get('dimension', '')}] {issue.get('description', '')[:120]}"
+        for issue in critical_hits
+    )
+    must_fix = "；".join(
+        (issue.get("fix_suggestion") or issue.get("description") or "")[:120]
+        for issue in critical_hits
+        if issue.get("fix_suggestion") or issue.get("description")
+    )
+    instruction_parts = [
+        "本章自动质检命中关键问题，必须修复后输出：",
+        hit_summary,
+    ]
+    if must_fix:
+        instruction_parts.append(f"修复要求：{must_fix}")
+    if arc_anti_repetition_notes:
+        instruction_parts.append(arc_anti_repetition_notes)
+    instruction_parts.append(
+        "约束：不得改变本章核心剧情、关键信息、人物关系和章末钩子；只修语感衔接、重复桥段、场景模糊、AI 味、对话失真。"
+    )
+    revise_instruction = "\n".join(instruction_parts)
+
+    try:
+        result = await ai.revise_chapter(
+            project.title,
+            project.genre,
+            chapter.chapter_number,
+            chapter.title or "",
+            chapter.summary or "",
+            content,
+            "quality_light_fix",
+            instruction=revise_instruction,
+            selection="",
+            previous_ending=previous_ending,
+            controls=controls,
+            repair_context=json.dumps({"critical_hits": critical_hits}, ensure_ascii=False),
+        )
+    except Exception as exc:
+        if isinstance(review, dict):
+            review["flow_critique_revise_error"] = str(exc)[:200]
+        return content, review
+
+    fixed = result.get("content") if isinstance(result, dict) else ""
+    if not fixed:
+        if isinstance(review, dict):
+            review["flow_critique_revise_skipped"] = "revise 未返回内容"
+        return content, review
+
+    if isinstance(review, dict):
+        review["flow_critique_applied"] = True
+        review["flow_critique_hits"] = critical_hits
+    return fixed, review
+
 
 async def _review_and_light_fix_chapter(
     ai: AIService,
@@ -379,13 +632,20 @@ async def _do_write_chapter(project_id: str, chapter_id: str, mode: str = "appen
 
         prev_chapter = await _get_previous_chapter(db, project_id, str(chapter.volume_id) if chapter.volume_id else None, chapter.chapter_number)
 
+        arc_anti_repetition_notes = await _collect_arc_anti_repetition_notes(
+            db,
+            str(chapter.volume_id) if chapter.volume_id else None,
+            chapter.arc_name,
+            chapter.chapter_number,
+        )
+
         previous_ending = "无（这是第一章）"
         previous_hook = ""
         story_state_snapshot = "无（这是第一章）"
         if prev_chapter and prev_chapter.content:
             opening = prev_chapter.content[:300] if len(prev_chapter.content) > 300 else prev_chapter.content
-            ending = prev_chapter.content[-500:] if len(prev_chapter.content) > 500 else prev_chapter.content
-            previous_ending = f"【开头】{opening}\n\n……\n\n【结尾】{ending}"
+            ending = prev_chapter.content[-1200:] if len(prev_chapter.content) > 1200 else prev_chapter.content
+            previous_ending = f"【开头】{opening}\n\n……\n\n【结尾原文（语感、地点、动作、未完成对话必须延续）】\n{ending}"
             if prev_chapter.hook:
                 previous_hook = prev_chapter.hook
                 previous_ending += f"\n\n【上章钩子——必须回应但禁止重复】{prev_chapter.hook}\n警告：绝对禁止重复钩子中的对话、场景或动作。跳过钩子描述的那个瞬间，直接从事件发生后的即刻反应或下一个动作开始。"
@@ -439,8 +699,15 @@ async def _do_write_chapter(project_id: str, chapter_id: str, mode: str = "appen
         if prewrite_guidance:
             chapter_summary = f"{chapter_summary}\n\n{prewrite_guidance}"
         chapter_summary = f"{chapter_summary}\n\n【章节连贯性硬约束】\n{_format_chapter_continuity_payload(chapter)}"
+        if arc_anti_repetition_notes:
+            chapter_summary = f"{chapter_summary}\n\n{arc_anti_repetition_notes}"
         if bridge_context and arc_idx > 0:
             chapter_summary = f"{chapter_summary}\n\n【跨弧线桥接要求】\n{bridge_context}"
+
+        fingerprint = (project.writing_style or {}).get("fingerprint") if isinstance(project.writing_style, dict) else None
+        if isinstance(fingerprint, dict) and fingerprint and chapter.chapter_number and chapter.chapter_number > 3:
+            chapter_summary = f"{chapter_summary}\n\n【全书语言指纹——必须保持，不得漂移】\n{_format_style_fingerprint_for_prompt(fingerprint)}"
+
         writing_style_guidance = _format_project_writing_guidance(project, await _active_writing_style_skill(db, project), "writing")
 
         # 新写章节硬闸：长度/hook存在性/重复上一章。失败重试一次（追加拒因到 instruction）。
@@ -477,7 +744,7 @@ async def _do_write_chapter(project_id: str, chapter_id: str, mode: str = "appen
                 checks_guard = chapter.continuity_checks or {}
                 checks_guard["fresh_chapter_guard_failed"] = fresh_failures_retry
                 chapter.continuity_checks = checks_guard
-        quality_review = {}
+        quality_review: dict | None = {}
         if controls.get("auto_quality_check", False):
             text, quality_review = await _review_and_light_fix_chapter(
                 ai,
@@ -487,6 +754,18 @@ async def _do_write_chapter(project_id: str, chapter_id: str, mode: str = "appen
                 previous_ending,
                 previous_hook,
                 story_state_snapshot,
+                controls,
+            )
+        elif controls.get("auto_flow_critique") is not False:
+            text, quality_review = await _auto_flow_repetition_pass(
+                ai,
+                project,
+                chapter,
+                text,
+                previous_ending,
+                previous_hook,
+                story_state_snapshot,
+                arc_anti_repetition_notes,
                 controls,
             )
         if preview:
@@ -516,6 +795,10 @@ async def _do_write_chapter(project_id: str, chapter_id: str, mode: str = "appen
         if controls.get("async_quality_check", True) and not controls.get("auto_quality_check", False):
             checks["quality_review_status"] = "queued"
             background_task_types.append("audit_chapter")
+        existing_fingerprint = (project.writing_style or {}).get("fingerprint") if isinstance(project.writing_style, dict) else None
+        if chapter.chapter_number and chapter.chapter_number == 3 and not existing_fingerprint:
+            background_task_types.append("extract_style_fingerprint")
+            checks["style_fingerprint_status"] = "queued"
         chapter.continuity_checks = checks
         if vol:
             await _refresh_volume_arc_bridges(db, vol)
@@ -547,6 +830,13 @@ async def _do_write_chapter(project_id: str, chapter_id: str, mode: str = "appen
                 "audit_chapter",
                 project_id,
                 {"chapter_id": str(chapter.id), "source": "post_write_async"},
+            )
+        if "extract_style_fingerprint" in background_task_types:
+            background_tasks["extract_style_fingerprint"] = start_task(
+                _do_extract_style_fingerprint(project_id),
+                "extract_style_fingerprint",
+                project_id,
+                {"trigger_chapter": chapter.chapter_number, "source": "post_write_async"},
             )
         return {
             "content": text,

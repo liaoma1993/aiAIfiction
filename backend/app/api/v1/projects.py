@@ -1,3 +1,6 @@
+import json
+from datetime import datetime, timezone
+
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
@@ -41,6 +44,13 @@ class ProjectPlanSessionRequest(BaseModel):
     selected_suggestion_index: int = 0
     next_questions: list[str] = []
     detail_options: list[str] = []
+    rejected_entries: list[dict] = []
+
+
+class RejectSuggestionRequest(BaseModel):
+    suggestion_index: int | None = None
+    suggestion: dict | None = None
+    reason: str = ""
 
 
 class UpdateProjectRequest(BaseModel):
@@ -80,6 +90,7 @@ def _session_payload(session: ProjectPlanSession | None) -> dict | None:
         "selected_suggestion_index": session.selected_suggestion_index or 0,
         "next_questions": session.next_questions or [],
         "detail_options": session.detail_options or [],
+        "rejected_entries": session.rejected_entries or [],
         "updated_at": tz_isoformat(updated_at) or None,
     }
 
@@ -95,6 +106,8 @@ async def _save_plan_session(user_id: str, body: ProjectPlanSessionRequest) -> d
         session.selected_suggestion_index = max(0, body.selected_suggestion_index or 0)
         session.next_questions = (body.next_questions or [])[:3]
         session.detail_options = (body.detail_options or [])[:5]
+        if body.rejected_entries:
+            session.rejected_entries = body.rejected_entries[-20:]
         payload = _session_payload(session) or {}
         await db.commit()
         return payload
@@ -169,14 +182,91 @@ async def _load_user_style_skill(db: AsyncSession, user_id: str, skill_id: str |
     )).scalar_one_or_none()
 
 
+def _draft_lookup(draft: dict | None, path: list[str]) -> str:
+    cur = draft or {}
+    for key in path:
+        if not isinstance(cur, dict):
+            return ""
+        cur = cur.get(key)
+        if cur is None:
+            return ""
+    return str(cur).strip() if not isinstance(cur, (list, dict)) else json.dumps(cur, ensure_ascii=False)
+
+
+def _detect_direction_drift(prev_draft: dict | None, new_draft: dict | None) -> list[str]:
+    """对比上一轮和本轮 project_draft 的核心方向字段；命中变化时返回可读的变动列表。"""
+    if not isinstance(prev_draft, dict) or not isinstance(new_draft, dict):
+        return []
+    watched = [
+        ("title", ["title"]),
+        ("primary_subgenre", ["type_model", "primary_subgenre"]),
+        ("core_engine", ["core_engine"]),
+        ("protagonist_first_move", ["first_volume_engine", "protagonist_first_move"]),
+    ]
+    diffs: list[str] = []
+    for label, path in watched:
+        prev_val = _draft_lookup(prev_draft, path)
+        new_val = _draft_lookup(new_draft, path)
+        if prev_val and new_val and prev_val != new_val:
+            diffs.append(f"{label}：{prev_val[:80]} → {new_val[:80]}")
+
+    prev_locks = prev_draft.get("boundary_locks") or []
+    new_locks = new_draft.get("boundary_locks") or []
+    if isinstance(prev_locks, list) and isinstance(new_locks, list):
+        removed = [str(x) for x in prev_locks if x not in new_locks]
+        added = [str(x) for x in new_locks if x not in prev_locks]
+        if removed:
+            diffs.append("移除的 boundary_locks：" + "、".join(removed[:3]))
+        if added:
+            diffs.append("新增的 boundary_locks：" + "、".join(added[:3]))
+    return diffs
+
+
+def _prepend_drift_warning(assistant_reply: str, diffs: list[str]) -> str:
+    if not diffs:
+        return assistant_reply
+    header = "【方向变动提醒】本轮 AI 调整了下列固定方向，如不打算改请告诉我：\n" + "\n".join(f"- {d}" for d in diffs)
+    return f"{header}\n\n{assistant_reply}"
+
+
+def _format_rejected_directions(rejected_entries: list[dict] | None) -> str:
+    if not rejected_entries:
+        return ""
+    lines: list[str] = []
+    for entry in rejected_entries[-10:]:
+        if not isinstance(entry, dict):
+            continue
+        parts = []
+        if entry.get("title"):
+            parts.append(f"《{entry.get('title')}》")
+        if entry.get("primary_subgenre"):
+            parts.append(f"[{entry.get('primary_subgenre')}]")
+        if entry.get("story_entry_type"):
+            parts.append(f"入口={entry.get('story_entry_type')}")
+        if entry.get("core_engine"):
+            parts.append(f"引擎={entry.get('core_engine')[:80]}")
+        if entry.get("reason"):
+            parts.append(f"理由={entry.get('reason')[:60]}")
+        if parts:
+            lines.append("- " + " · ".join(parts))
+    if not lines:
+        return ""
+    return "用户已经拒绝过下列方向，请避开类似入口、母题与冲突引擎：\n" + "\n".join(lines)
+
+
 async def _do_plan_chat(user_id: str, messages: list[dict], genres: str, current_draft: dict, intent: str = "chat", style_skill_id: str | None = None, style_preferences: str = "") -> dict:
     if style_preferences:
         current_draft = {**(current_draft or {}), "user_tone_preferences": style_preferences}
         genres = f"{genres}\n总体风格偏好：{style_preferences}" if genres else f"总体风格偏好：{style_preferences}"
     style_guidance = ""
-    if style_skill_id:
-        async with async_session() as db:
+    async with async_session() as db:
+        plan_session = (await db.execute(select(ProjectPlanSession).where(ProjectPlanSession.user_id == user_id))).scalar_one_or_none()
+        rejected_entries = list(plan_session.rejected_entries or []) if plan_session else []
+        if style_skill_id:
             style_guidance = _format_creation_style_skill(await _load_user_style_skill(db, user_id, style_skill_id))
+    rejected_text = _format_rejected_directions(rejected_entries)
+    if rejected_text:
+        current_draft = {**(current_draft or {}), "_user_rejected_directions": rejected_text}
     if style_guidance:
         current_draft = {**(current_draft or {}), "writing_style_skill_guidance": style_guidance}
     ai = AIService()
@@ -189,7 +279,7 @@ async def _do_plan_chat(user_id: str, messages: list[dict], genres: str, current
         latest_user_message = next((m.get("content", "") for m in reversed(messages) if m.get("role") == "user"), "")
         fallback_inspiration = latest_user_message or draft.get("brief") or (current_draft or {}).get("brief") or ""
         if fallback_inspiration:
-            extra = await ai.generate_story_suggestions(fallback_inspiration, genres)
+            extra = await ai.generate_story_suggestions(fallback_inspiration, genres, rejected_directions=rejected_text)
             seen_titles = {(s.get("title") or "").strip() for s in suggestions if isinstance(s, dict)}
             for item in extra:
                 title = (item.get("title") or "").strip()
@@ -206,6 +296,11 @@ async def _do_plan_chat(user_id: str, messages: list[dict], genres: str, current
         data["suggestions"] = suggestions[:6] if intent == "generate" else suggestions[:1]
         data["project_draft"] = draft
     assistant_reply = data.get("assistant_reply") or "我已经根据你的补充更新了项目草案。"
+    drift = _detect_direction_drift(current_draft, draft if isinstance(draft, dict) else None)
+    if drift:
+        assistant_reply = _prepend_drift_warning(assistant_reply, drift)
+        data["assistant_reply"] = assistant_reply
+        data["direction_drift"] = drift
     persisted_messages = [*messages, {"role": "assistant", "content": assistant_reply}]
     await _save_plan_session(user_id, ProjectPlanSessionRequest(
         messages=persisted_messages,
@@ -244,6 +339,33 @@ async def clear_plan_session(user: User = Depends(get_current_user), db: AsyncSe
     if session:
         await db.delete(session)
     return {"success": True}
+
+
+@router.post("/plan-session/reject")
+async def reject_plan_suggestion(body: RejectSuggestionRequest, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    session = await _get_or_create_plan_session(db, user.id)
+    suggestion = body.suggestion
+    if suggestion is None and body.suggestion_index is not None:
+        suggestions = session.suggestions or []
+        if 0 <= body.suggestion_index < len(suggestions):
+            suggestion = suggestions[body.suggestion_index]
+    if not isinstance(suggestion, dict):
+        raise HTTPException(400, "请提供 suggestion_index 或 suggestion 对象")
+
+    type_model = suggestion.get("type_model") or {}
+    entry = {
+        "title": (suggestion.get("title") or "").strip()[:60],
+        "story_entry_type": (suggestion.get("story_entry_type") or "").strip()[:40],
+        "primary_subgenre": (type_model.get("primary_subgenre") or type_model.get("primary_genre") or "").strip()[:40],
+        "core_engine": (suggestion.get("core_engine") or "").strip()[:200],
+        "reason": (body.reason or "").strip()[:200],
+        "rejected_at": datetime.now(timezone.utc).isoformat(),
+    }
+    existing = list(session.rejected_entries or [])
+    existing.append(entry)
+    session.rejected_entries = existing[-20:]
+    await db.commit()
+    return {"session": _session_payload(session)}
 
 
 @router.get("/plan-task/{task_id}")

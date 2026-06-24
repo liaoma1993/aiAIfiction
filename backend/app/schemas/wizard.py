@@ -57,6 +57,15 @@ class ApplyDraftRequest(BaseModel):
     draft_type: str
     payload: dict
 
+class ReviseOutlineChatRequest(BaseModel):
+    messages: list[dict] = []
+    latest_input: str = ""
+
+class ApplyOutlineRevisionRequest(BaseModel):
+    revised_outline: str
+    revised_volume_plan: list[dict] = []
+    force: bool = False
+
 class ApplyStateRequest(BaseModel):
     payload: dict
 

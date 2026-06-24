@@ -1,15 +1,17 @@
 from app.services.wizard.common import *
-from app.services.wizard.chapters import _do_write_chapter, _do_batch_write_arc, _do_split_chapter, _do_extract_state
+from app.services.wizard.chapters import _do_write_chapter, _do_batch_write_arc, _do_split_chapter, _do_extract_state, _do_extract_style_fingerprint
 from app.services.wizard.outline_arcs import (
     _do_adjust_outline,
     _do_adjust_outline_chat,
     _do_expand_arc_chapters,
     _do_expand_volume_arcs,
+    _do_generate_master_outline,
     _do_generate_outline_draft,
     _do_generate_story_bible,
-    _do_generate_volumes,
     _do_review_project_structure,
+    _do_revise_outline_chat,
     _do_revise_volume_arc,
+    _do_split_volumes,
     _format_volume_continuity_context,
 )
 from app.services.wizard.reviews_repairs import (
@@ -498,6 +500,16 @@ async def retry_task(project_id: str, task_id: str, user: User = Depends(get_cur
         )
         return {"task_id": new_task_id}
 
+    if task_type == "extract_style_fingerprint":
+        start_task(
+            _do_extract_style_fingerprint(project_id),
+            task_type,
+            project_id,
+            {**meta, "retry_of": task_id},
+            task_id=new_task_id,
+        )
+        return {"task_id": new_task_id}
+
     if task_type == "extract_state":
         chapter_id = meta.get("chapter_id")
         if not chapter_id:
@@ -577,7 +589,22 @@ async def retry_task(project_id: str, task_id: str, user: User = Depends(get_cur
         return {"task_id": new_task_id}
 
     if task_type == "generate_outline":
-        start_task(_do_generate_volumes(project_id), task_type, project_id, {**meta, "retry_of": task_id}, task_id=new_task_id)
+        force = bool(meta.get("force"))
+        start_task(_do_generate_master_outline(project_id, force=force), task_type, project_id, {**meta, "retry_of": task_id}, task_id=new_task_id)
+        return {"task_id": new_task_id}
+
+    if task_type == "split_volumes":
+        start_task(_do_split_volumes(project_id), task_type, project_id, {**meta, "retry_of": task_id}, task_id=new_task_id)
+        return {"task_id": new_task_id}
+
+    if task_type == "revise_outline_chat":
+        start_task(
+            _do_revise_outline_chat(project_id, meta.get("messages", []), meta.get("latest_input", "")),
+            task_type,
+            project_id,
+            {**meta, "retry_of": task_id},
+            task_id=new_task_id,
+        )
         return {"task_id": new_task_id}
 
     if task_type == "generate_outline_draft":

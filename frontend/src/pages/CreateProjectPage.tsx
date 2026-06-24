@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Card, Input, Button, Typography, Tag, Row, Col, Spin, message, Space, Alert, List, Divider, Select } from 'antd';
-import { ArrowLeftOutlined, ThunderboltOutlined, ReloadOutlined, LoadingOutlined, SendOutlined, CheckOutlined } from '@ant-design/icons';
+import { ArrowLeftOutlined, ThunderboltOutlined, ReloadOutlined, LoadingOutlined, SendOutlined, CheckOutlined, DislikeOutlined } from '@ant-design/icons';
 import { useProjectStore } from '@/stores/useProjectStore';
 import api from '@/services/api';
 import { writingStyleSkillApi } from '@/services/projectApi';
@@ -409,6 +409,28 @@ export default function CreateProjectPage() {
     setDraft(item);
   };
 
+  const rejectSuggestion = async (index: number) => {
+    const item = suggestions[index];
+    if (!item) return;
+    try {
+      await api.post('/projects/plan-session/reject', { suggestion_index: index });
+    } catch {
+      message.warning('记录失败，本地仍会移除');
+    }
+    const next = suggestions.filter((_, i) => i !== index);
+    setSuggestions(next);
+    if (next.length === 0) {
+      setSelectedSuggestionIndex(0);
+    } else if (index === selectedSuggestionIndex) {
+      const newIdx = Math.min(index, next.length - 1);
+      setSelectedSuggestionIndex(newIdx);
+      setDraft(next[newIdx]);
+    } else if (index < selectedSuggestionIndex) {
+      setSelectedSuggestionIndex(Math.max(0, selectedSuggestionIndex - 1));
+    }
+    message.success('已记录，下次生成会避开类似入口或母题');
+  };
+
   const confirmSuggestion = async (s: any) => {
     try {
       const totalWords = normalizeTotalWords(s.total_words) || 300000;
@@ -748,7 +770,12 @@ export default function CreateProjectPage() {
                       {s.core_engine && <Paragraph ellipsis={{ rows: 2 }} style={{ marginBottom: 8 }}><Text strong>引擎：</Text>{s.core_engine}</Paragraph>}
                       {s.reader_promise && <Paragraph ellipsis={{ rows: 2 }} style={{ marginBottom: 8 }}><Text strong>追读：</Text>{s.reader_promise}</Paragraph>}
                       <Paragraph ellipsis={{ rows: 4 }} style={{ marginBottom: 8 }}>{s.brief}</Paragraph>
-                      <div>{(s.tags || []).map((t: string) => <Tag key={t}>{t}</Tag>)}</div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
+                        <div style={{ flex: 1 }}>{(s.tags || []).map((t: string) => <Tag key={t}>{t}</Tag>)}</div>
+                        <Button size="small" icon={<DislikeOutlined />} onClick={(e) => { e.stopPropagation(); rejectSuggestion(i); }}>
+                          不喜欢这个方向
+                        </Button>
+                      </div>
                     </Card>
                   </List.Item>
                 )}

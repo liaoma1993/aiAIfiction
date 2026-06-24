@@ -1,5 +1,57 @@
+import math
+
 from app.services.wizard.common import *
 from app.services.wizard.state_tools import _serialize_snapshot, _serialize_summary
+
+def _compute_arc_constraints(volume_chapter_count: int) -> dict:
+    """根据本卷总章数推导弧线硬约束：
+    - single_arc_max_chapters：单条弧线最多承载多少章（不超过本卷的 35%，下限 8，上限 12）
+    - min_arc_count：本卷至少要拆出多少条弧线（约每 9 章一条，下限 4）
+    """
+    total = max(1, int(volume_chapter_count or 0))
+    single_max = max(8, min(12, math.ceil(total * 0.35)))
+    min_count = max(4, math.ceil(total / 9))
+    return {"single_arc_max_chapters": single_max, "min_arc_count": min_count}
+
+
+def _audit_arc_distribution(arcs: list[dict], single_arc_max_chapters: int, min_arc_count: int) -> list[str]:
+    """对 AI 拆出的弧线做硬闸校验，返回 violations 列表（非空表示需要 retry）。"""
+    if not isinstance(arcs, list):
+        return ["AI 没有返回弧线数组"]
+    violations: list[str] = []
+    if len(arcs) < min_arc_count:
+        violations.append(
+            f"弧线数 {len(arcs)} 少于硬下限 {min_arc_count}：本卷叙事段较多，颗粒度过粗，"
+            f"必须把覆盖多个独立叙事段的大弧线拆成同级小弧线。"
+        )
+
+    seen_objects: dict[str, list[int]] = {}
+    for idx, arc in enumerate(arcs):
+        if not isinstance(arc, dict):
+            continue
+        name = (arc.get("name") or f"弧线{idx + 1}").strip()
+        chapter_count = arc.get("chapter_count")
+        try:
+            ch_count = int(chapter_count or 0)
+        except (TypeError, ValueError):
+            ch_count = 0
+        if ch_count > single_arc_max_chapters:
+            violations.append(
+                f"弧线 {idx + 1}「{name}」章数 {ch_count} 超过硬上限 {single_arc_max_chapters}："
+                f"该弧线吞并了多个独立叙事段（如「转折阶段+高潮阶段」），必须拆成 2-3 条同级弧线。"
+            )
+        change_obj = (arc.get("main_change_object") or "").strip()
+        if change_obj:
+            key = change_obj[:40]
+            seen_objects.setdefault(key, []).append(idx + 1)
+
+    for obj, idxs in seen_objects.items():
+        if len(idxs) > 1:
+            violations.append(
+                f"main_change_object「{obj}」被弧线 {idxs} 重复使用：每条弧线必须有唯一的主要变化对象。"
+            )
+    return violations
+
 
 def _volume_outline_needs_completion(outline: str | None) -> bool:
     text = (outline or "").strip()
@@ -306,27 +358,64 @@ async def _do_expand_volume_arcs(
         }
 
     ai = AIService()
+    constraints = _compute_arc_constraints(snapshot["chapter_count"])
+    single_arc_max_chapters = constraints["single_arc_max_chapters"]
+    min_arc_count = constraints["min_arc_count"]
+
+    async def _call_expand(retry_note: str = "") -> list[dict]:
+        return await ai.expand_volume_arcs(
+            snapshot["title"],
+            snapshot["genre"],
+            snapshot["volume_title"],
+            snapshot["volume_outline"],
+            snapshot["chars_summary"],
+            snapshot["facs_summary"],
+            snapshot["chapter_count"],
+            arc_strategy=snapshot["arc_strategy"],
+            arc_density=snapshot["arc_density"],
+            style_focus=snapshot["style_focus"],
+            length_control=snapshot["length_control"],
+            writing_style_guidance=snapshot["writing_style_guidance"],
+            volume_continuity_context=snapshot["volume_continuity_context"],
+            min_arc_count=min_arc_count,
+            single_arc_max_chapters=single_arc_max_chapters,
+            retry_note=retry_note,
+        )
+
     if task_id:
         update_progress(task_id, 0.22, "AI 正在拆分本卷弧线并处理跨卷承接", {"stage": "generating_arcs", "volume_id": volume_id})
-    arcs = await ai.expand_volume_arcs(
-        snapshot["title"],
-        snapshot["genre"],
-        snapshot["volume_title"],
-        snapshot["volume_outline"],
-        snapshot["chars_summary"],
-        snapshot["facs_summary"],
-        snapshot["chapter_count"],
-        arc_strategy=snapshot["arc_strategy"],
-        arc_density=snapshot["arc_density"],
-        style_focus=snapshot["style_focus"],
-        length_control=snapshot["length_control"],
-        writing_style_guidance=snapshot["writing_style_guidance"],
-        volume_continuity_context=snapshot["volume_continuity_context"],
-    )
+    arcs = await _call_expand()
+
+    distribution_violations = _audit_arc_distribution(arcs, single_arc_max_chapters, min_arc_count)
+    distribution_retry_done = False
+    if distribution_violations:
+        if task_id:
+            update_progress(task_id, 0.55, f"弧线分布命中硬闸（{len(distribution_violations)} 项），AI 重做一次", {
+                "stage": "rewriting_arcs",
+                "volume_id": volume_id,
+                "violations": distribution_violations[:5],
+            })
+        retry_note_lines = [
+            "你上一次的弧线拆分被系统硬闸拒绝。具体问题：",
+            *[f"  · {v}" for v in distribution_violations[:6]],
+            f"修正要求：本卷至少 {min_arc_count} 条弧线，单条不超过 {single_arc_max_chapters} 章；"
+            f"每个独立叙事段（开篇/发展/转折/高潮/收束）拆成独立弧线；"
+            f"main_change_object 每条弧线唯一，不得重复。",
+            "本次完全重写，不要在原结果基础上微调。",
+        ]
+        arcs = await _call_expand(retry_note="\n".join(retry_note_lines))
+        distribution_retry_done = True
+
     if task_id:
         update_progress(task_id, 0.72, "正在校验弧线连续性和交接物", {"stage": "validating_arcs", "volume_id": volume_id})
     arcs = _normalize_narrative_arc_payload(arcs)
+    final_violations = _audit_arc_distribution(arcs, single_arc_max_chapters, min_arc_count)
     arc_quality = _score_arc_quality(arcs)
+    if final_violations:
+        # 重试后仍不达标：记录但不再 retry（避免成本爆炸）
+        arc_quality = arc_quality if isinstance(arc_quality, dict) else {}
+        arc_quality["distribution_violations"] = final_violations
+        arc_quality["distribution_retry_done"] = distribution_retry_done
 
     async with async_session() as db:
         if task_id:
@@ -707,14 +796,30 @@ async def _do_expand_arc_chapters(project_id: str, volume_id: str, arc_index: in
         await db.commit()
         return {"chapter_count": len(nodes), "chapters": nodes}
 
-async def _do_generate_volumes(project_id: str) -> dict:
+async def _do_generate_master_outline(project_id: str, force: bool = False) -> dict:
+    """
+    向导第 4 步：只产出项目级超长大纲 + 缓存卷轴草案。
+    不创建 Volume 记录、不做逐卷 expand_volume_outline。
+    后续由用户在工作台主动触发 split_volumes。
+
+    保护：默认 force=False 时，如果项目里已经有写过正文的章节，会拒绝执行，
+    防止用户在已经写过正文的情况下误触导致整本书被级联清空。
+    """
     async with async_session() as db:
         result = await db.execute(select(Project).where(Project.id == project_id))
         project = result.scalar_one_or_none()
         if not project:
             raise RuntimeError("项目不存在")
-        await _clear_project_volumes(db, project_id)
-        await db.commit()
+        if not force:
+            written_count = (await db.execute(
+                select(Chapter).where(Chapter.project_id == project_id, Chapter.content != "")
+            )).scalars().all()
+            written_count = len([c for c in written_count if c.content and c.content.strip()])
+            if written_count > 0:
+                raise RuntimeError(
+                    f"项目已有 {written_count} 章已写正文。重新生成超长大纲会清空所有卷和章节，"
+                    f"请显式传 force=true 才能继续。"
+                )
         chars_result = await db.execute(select(Character).where(Character.project_id == project_id))
         chars_summary = ", ".join([f"{c.name}({c.role_type})" for c in chars_result.scalars().all()])
         facs_result = await db.execute(select(Faction).where(Faction.project_id == project_id))
@@ -740,7 +845,73 @@ async def _do_generate_volumes(project_id: str) -> dict:
         facs_summary,
         writing_style_guidance=snapshot["writing_style_guidance"],
     )
+
     volume_data = data.get("volumes", []) if isinstance(data.get("volumes"), list) else []
+    story_overview = data.get("story_overview", "") or ""
+
+    async with _get_outline_write_lock(project_id):
+      async with async_session() as db:
+        project = (await db.execute(select(Project).where(Project.id == project_id))).scalar_one_or_none()
+        if not project:
+            raise RuntimeError("项目不存在")
+        await _clear_project_volumes(db, project_id)
+
+        project.master_outline = story_overview
+        project.pending_volume_plan = volume_data
+
+        if data.get("narrative_engine"):
+            style = {**(project.writing_style or {})}
+            style["narrative_engine"] = data["narrative_engine"]
+            project.writing_style = style
+
+        existing_foreshadowing = (await db.execute(select(ForeshadowingPlan).where(ForeshadowingPlan.project_id == project_id))).scalars().all()
+        for row in existing_foreshadowing:
+            await db.delete(row)
+        existing_events = (await db.execute(select(TimelineEvent).where(TimelineEvent.project_id == project_id))).scalars().all()
+        for row in existing_events:
+            await db.delete(row)
+
+        for fdata in data.get("foreshadowing", []):
+            db.add(ForeshadowingPlan(project_id=project_id, name=fdata.get("name", ""), description=fdata.get("description", ""), plant_stage=fdata.get("plant_stage", ""), reveal_stage=fdata.get("reveal_stage", ""), plant_chapter=0))
+
+        for edata in data.get("key_events", []):
+            db.add(TimelineEvent(project_id=project_id, description=edata.get("description", ""), event_type=edata.get("event_type", "event"), is_major_event=edata.get("is_major", False), time_point=edata.get("time_point", "")))
+
+        project.wizard_step = 4
+        await db.commit()
+        return {
+            "master_outline_length": len(story_overview),
+            "pending_volume_count": len(volume_data),
+            "story_overview": story_overview,
+        }
+
+
+async def _do_split_volumes(project_id: str) -> dict:
+    """
+    工作台手动操作：读取 pending_volume_plan，逐卷扩 outline，落表创建 Volume。
+    """
+    async with async_session() as db:
+        project = (await db.execute(select(Project).where(Project.id == project_id))).scalar_one_or_none()
+        if not project:
+            raise RuntimeError("项目不存在")
+        pending = project.pending_volume_plan or []
+        if not isinstance(pending, list) or not pending:
+            raise RuntimeError("没有可拆分的卷轴草案，请先生成超长大纲")
+        chars_result = await db.execute(select(Character).where(Character.project_id == project_id))
+        chars_summary = ", ".join([f"{c.name}({c.role_type})" for c in chars_result.scalars().all()])
+        facs_result = await db.execute(select(Faction).where(Faction.project_id == project_id))
+        facs_summary = ", ".join([f"{f.name}({f.faction_type})" for f in facs_result.scalars().all()])
+        narrative_engine = (project.writing_style or {}).get("narrative_engine", {}) or {}
+        snapshot = {
+            "title": project.title,
+            "genre": project.genre,
+            "story_brief": _wizard_story_brief(project),
+            "core_theme": project.core_theme,
+            "target_total_words": project.target_total_words,
+        }
+
+    ai = AIService()
+    volume_data = [dict(v) if isinstance(v, dict) else {} for v in pending]
     for idx, vdata in enumerate(volume_data):
         if not isinstance(vdata, dict) or not _volume_outline_needs_completion(vdata.get("outline", "")):
             continue
@@ -759,6 +930,20 @@ async def _do_generate_volumes(project_id: str) -> dict:
                 "summary": volume_data[idx + 1].get("summary", ""),
                 "mission": volume_data[idx + 1].get("narrative_mission", ""),
             })
+        tone_arc = (vdata.get("tone_arc") or "").strip()
+        primary_emotion = (vdata.get("primary_emotion") or "").strip()
+        buffer_required = bool(vdata.get("buffer_required"))
+        if tone_arc or primary_emotion or buffer_required:
+            parts = []
+            if tone_arc:
+                parts.append(f"tone_arc：{tone_arc}")
+            if primary_emotion:
+                parts.append(f"primary_emotion：{primary_emotion}")
+            parts.append(f"buffer_required：{'是（必须设计可见缓冲段，不得全程紧绷或压抑）' if buffer_required else '否'}")
+            tone_arc_constraint = "\n".join(parts)
+        else:
+            tone_arc_constraint = "无特殊情绪约束，按本卷自然节奏推进"
+
         expanded = await ai.expand_volume_outline(
             snapshot["title"],
             snapshot["genre"],
@@ -766,9 +951,10 @@ async def _do_generate_volumes(project_id: str) -> dict:
             snapshot["core_theme"],
             chars_summary,
             facs_summary,
-            data.get("narrative_engine", {}),
+            narrative_engine,
             vdata,
             neighbors,
+            tone_arc_constraint=tone_arc_constraint,
         )
         outline = expanded.get("outline") if isinstance(expanded, dict) else ""
         if outline and not _volume_outline_needs_completion(outline):
@@ -780,25 +966,8 @@ async def _do_generate_volumes(project_id: str) -> dict:
         if not project:
             raise RuntimeError("项目不存在")
         await _clear_project_volumes(db, project_id)
-        project.story_brief = project.story_brief or ""
-        if data.get("story_overview"):
-            project.story_brief = project.story_brief + "\n\n【全书大纲】\n" + data["story_overview"]
-        if data.get("narrative_engine"):
-            style = {**(project.writing_style or {})}
-            style["narrative_engine"] = data["narrative_engine"]
-            project.writing_style = style
-        else:
-            style = {**(project.writing_style or {})}
-            project.writing_style = style
-
-        for fdata in data.get("foreshadowing", []):
-            db.add(ForeshadowingPlan(project_id=project_id, name=fdata.get("name", ""), description=fdata.get("description", ""), plant_stage=fdata.get("plant_stage", ""), reveal_stage=fdata.get("reveal_stage", ""), plant_chapter=0))
-
-        for edata in data.get("key_events", []):
-            db.add(TimelineEvent(project_id=project_id, description=edata.get("description", ""), event_type=edata.get("event_type", "event"), is_major_event=edata.get("is_major", False), time_point=edata.get("time_point", "")))
 
         chapter_num = 1
-        volume_data = data.get("volumes", [])
         seen = set()
         deduped = []
         for vd in volume_data:
@@ -808,6 +977,7 @@ async def _do_generate_volumes(project_id: str) -> dict:
             seen.add(vn)
             deduped.append(vd)
 
+        total_volumes = max(1, len(deduped))
         for i, vdata in enumerate(deduped):
             vol_chapter_count = vdata.get("chapter_count", 30)
             volume = Volume(project_id=project_id, sort_order=i,
@@ -816,7 +986,7 @@ async def _do_generate_volumes(project_id: str) -> dict:
                 summary=vdata.get("summary", ""),
                 theme=vdata.get("theme", ""),
                 outline=vdata.get("outline", ""),
-                target_words=vdata.get("target_words", project.target_total_words // max(1, len(data.get("volumes", [1])))),
+                target_words=vdata.get("target_words", project.target_total_words // total_volumes),
                 default_chapter_words=vdata.get("default_chapter_words", 3500),
                 chapter_count=vol_chapter_count,
                 chapter_range_start=chapter_num,
@@ -827,9 +997,108 @@ async def _do_generate_volumes(project_id: str) -> dict:
             await db.flush()
             chapter_num += vol_chapter_count
 
-        project.wizard_step = 4
+        project.pending_volume_plan = None
         await db.commit()
-        return {"volume_count": len(data.get("volumes", [])), "chapter_count": chapter_num - 1, "story_overview": data.get("story_overview", "")}
+        return {"volume_count": len(deduped), "chapter_count": chapter_num - 1}
+
+
+async def _do_revise_outline_chat(project_id: str, messages: list[dict], latest_input: str) -> dict:
+    """对话式修订超长大纲：调用 AI 返回 assistant_reply + 可选的 revised_outline/volume_plan。
+    不写库——草案由前端管理，用户主动「应用这一版」才走 _do_apply_outline_revision 落库。
+    """
+    async with async_session() as db:
+        project = (await db.execute(select(Project).where(Project.id == project_id))).scalar_one_or_none()
+        if not project:
+            raise RuntimeError("项目不存在")
+        if not (project.master_outline or "").strip():
+            raise RuntimeError("项目还没有超长大纲，请先生成再来对话修订")
+        chars_result = await db.execute(select(Character).where(Character.project_id == project_id))
+        chars_summary = ", ".join([f"{c.name}({c.role_type})" for c in chars_result.scalars().all()]) or "无"
+        facs_result = await db.execute(select(Faction).where(Faction.project_id == project_id))
+        facs_summary = ", ".join([f"{f.name}({f.faction_type})" for f in facs_result.scalars().all()]) or "无"
+        snapshot = {
+            "title": project.title or "未命名",
+            "genre": project.genre or "",
+            "brief": _wizard_story_brief(project),
+            "current_outline": project.master_outline,
+            "current_volume_plan": project.pending_volume_plan or [],
+        }
+
+    convo = list(messages or [])
+    cleaned_latest = (latest_input or "").strip()
+    if cleaned_latest:
+        convo.append({"role": "user", "content": cleaned_latest})
+
+    if not any(m.get("role") == "user" for m in convo if isinstance(m, dict)):
+        raise RuntimeError("请先输入一条修订反馈")
+
+    ai = AIService()
+    result = await ai.revise_master_outline_chat(
+        snapshot["title"], snapshot["genre"], snapshot["brief"],
+        chars_summary, facs_summary,
+        snapshot["current_outline"],
+        snapshot["current_volume_plan"],
+        convo,
+    )
+
+    if not isinstance(result, dict):
+        result = {"assistant_reply": "AI 没有返回有效结构", "revised_outline": None, "revised_volume_plan": None, "change_summary": [], "next_questions": []}
+    result.setdefault("assistant_reply", "AI 没有返回有效结构")
+    result.setdefault("revised_outline", None)
+    result.setdefault("revised_volume_plan", None)
+    result.setdefault("change_summary", [])
+    result.setdefault("next_questions", [])
+    rev_outline = result.get("revised_outline")
+    if isinstance(rev_outline, str) and len(rev_outline.strip()) < 200:
+        result["revised_outline"] = None
+        result["revised_volume_plan"] = None
+        result["assistant_reply"] = (result["assistant_reply"] or "") + "\n\n（系统提示：AI 返回的修订过短，已视为无效草案，请补充更具体的反馈再试。）"
+
+    result["latest_user_input"] = cleaned_latest
+    result["echoed_messages"] = convo
+    return result
+
+
+async def _do_apply_outline_revision(project_id: str, revised_outline: str, revised_volume_plan: list, force: bool = False) -> dict:
+    """同步落库：把对话中某一版草案应用为正式 master_outline + pending_volume_plan。
+    复用 generate_master_outline 的 force 保护（有已写正文必须显式 force）。
+    """
+    if not (revised_outline or "").strip() or len(revised_outline.strip()) < 200:
+        raise RuntimeError("修订草案内容过短，无法应用")
+    if not isinstance(revised_volume_plan, list):
+        revised_volume_plan = []
+
+    async with async_session() as db:
+        project = (await db.execute(select(Project).where(Project.id == project_id))).scalar_one_or_none()
+        if not project:
+            raise RuntimeError("项目不存在")
+        if not force:
+            written = (await db.execute(
+                select(Chapter).where(Chapter.project_id == project_id, Chapter.content != "")
+            )).scalars().all()
+            written_count = len([c for c in written if (c.content or "").strip()])
+            if written_count > 0:
+                raise RuntimeError(
+                    f"项目已有 {written_count} 章已写正文。应用大纲修订会清空所有卷和章节，"
+                    f"请显式传 force=true 才能继续。"
+                )
+
+    async with _get_outline_write_lock(project_id):
+      async with async_session() as db:
+        project = (await db.execute(select(Project).where(Project.id == project_id))).scalar_one_or_none()
+        if not project:
+            raise RuntimeError("项目不存在")
+        await _clear_project_volumes(db, project_id)
+        project.master_outline = revised_outline.strip()
+        project.pending_volume_plan = revised_volume_plan
+        await db.commit()
+        return {
+            "ok": True,
+            "master_outline_length": len(project.master_outline),
+            "pending_volume_count": len(revised_volume_plan),
+            "force_used": bool(force),
+        }
+
 
 async def _do_review_project_structure(project_id: str) -> dict:
     async with async_session() as db:
@@ -1190,9 +1459,35 @@ async def revise_volume_arc(project_id: str, volume_id: str, body: ReviseVolumeA
     )
     return {"task_id": task_id}
 
-async def generate_outline(project_id: str, user: User = Depends(get_current_user)):
-    task_id = start_task(_do_generate_volumes(project_id), "generate_outline", project_id)
+async def generate_outline(project_id: str, user: User = Depends(get_current_user), force: bool = False):
+    task_id = start_task(_do_generate_master_outline(project_id, force=force), "generate_outline", project_id, {"force": force})
     return {"task_id": task_id}
+
+
+async def split_volumes(project_id: str, user: User = Depends(get_current_user)):
+    task_id = start_task(_do_split_volumes(project_id), "split_volumes", project_id)
+    return {"task_id": task_id}
+
+
+async def revise_outline_chat(project_id: str, body: ReviseOutlineChatRequest, user: User = Depends(get_current_user)):
+    messages = body.messages or []
+    latest_input = body.latest_input or ""
+    task_id = start_task(
+        _do_revise_outline_chat(project_id, messages, latest_input),
+        "revise_outline_chat",
+        project_id,
+        {"messages": messages, "latest_input": latest_input},
+    )
+    return {"task_id": task_id}
+
+
+async def apply_outline_revision(project_id: str, body: ApplyOutlineRevisionRequest, user: User = Depends(get_current_user)):
+    return await _do_apply_outline_revision(
+        project_id,
+        body.revised_outline,
+        body.revised_volume_plan or [],
+        force=bool(body.force),
+    )
 
 async def generate_outline_draft(project_id: str, user: User = Depends(get_current_user)):
     task_id = start_task(_do_generate_outline_draft(project_id), "generate_outline_draft", project_id)

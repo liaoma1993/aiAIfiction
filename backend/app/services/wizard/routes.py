@@ -8,6 +8,7 @@ from app.schemas.wizard import (
     AdjustOutlineChatRequest,
     AdjustOutlineRequest,
     ApplyDraftRequest,
+    ApplyOutlineRevisionRequest,
     ApplyStateRequest,
     ApplyStoryRequest,
     AuditChapterRequest,
@@ -18,6 +19,7 @@ from app.schemas.wizard import (
     ProjectPlanChatRequest,
     RepairFromReviewRequest,
     ReviseChapterRequest,
+    ReviseOutlineChatRequest,
     ReviseVolumeArcRequest,
     SplitChapterRequest,
     StorySuggestRequest,
@@ -92,8 +94,24 @@ async def split_chapter(project_id: str, chapter_id: str, body: SplitChapterRequ
     return await chapters.split_chapter(project_id=project_id, chapter_id=chapter_id, body=body, user=user)
 
 @router.post("/generate-outline")
-async def generate_outline(project_id: str, user: User=Depends(get_current_user)):
-    return await outline_arcs.generate_outline(project_id=project_id, user=user)
+async def generate_outline(project_id: str, force: bool=False, user: User=Depends(get_current_user)):
+    return await outline_arcs.generate_outline(project_id=project_id, user=user, force=force)
+
+@router.post("/split-volumes")
+async def split_volumes(project_id: str, user: User=Depends(get_current_user)):
+    return await outline_arcs.split_volumes(project_id=project_id, user=user)
+
+@router.post("/preview-sample-chapter")
+async def preview_sample_chapter(project_id: str, scene_brief: str="", user: User=Depends(get_current_user)):
+    return await project_creation.preview_sample_chapter(project_id=project_id, scene_brief=scene_brief, user=user)
+
+@router.post("/revise-outline-chat")
+async def revise_outline_chat(project_id: str, body: ReviseOutlineChatRequest, user: User=Depends(get_current_user)):
+    return await outline_arcs.revise_outline_chat(project_id=project_id, body=body, user=user)
+
+@router.post("/apply-outline-revision")
+async def apply_outline_revision(project_id: str, body: ApplyOutlineRevisionRequest, user: User=Depends(get_current_user)):
+    return await outline_arcs.apply_outline_revision(project_id=project_id, body=body, user=user)
 
 @router.post("/generate-outline-draft")
 async def generate_outline_draft(project_id: str, user: User=Depends(get_current_user)):

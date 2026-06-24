@@ -1,8 +1,8 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { Steps, Button, Card, Input, Slider, Typography, message, Tag, Row, Col, Spin, Descriptions, Progress, Modal, Alert } from 'antd';
-import { ThunderboltOutlined, EditOutlined, CheckOutlined, LoadingOutlined } from '@ant-design/icons';
-import { projectApi, volumeApi, characterApi, factionApi, chapterApi, worldSettingApi } from '@/services/projectApi';
+import { Steps, Button, Card, Input, Slider, Typography, message, Tag, Row, Col, Spin, Progress, Modal, Alert } from 'antd';
+import { ThunderboltOutlined, EditOutlined, CheckOutlined, LoadingOutlined, ReloadOutlined } from '@ant-design/icons';
+import { projectApi, characterApi, factionApi, worldSettingApi } from '@/services/projectApi';
 import api from '@/services/api';
 
 const LEGACY_ROLE_LABELS: Record<string, string> = {
@@ -14,7 +14,7 @@ const LEGACY_FACTION_LABELS: Record<string, string> = {
   dark_org: '暗组织', race: '种族', tribe: '部落', alliance: '联盟', temple: '神殿', academy: '学院', court: '朝廷',
 };
 
-const { Title, Paragraph } = Typography;
+const { Title, Paragraph, Text } = Typography;
 
 function useTaskPolling() {
   const [status, setStatus] = useState<'idle' | 'running' | 'completed' | 'failed'>('idle');
@@ -449,23 +449,22 @@ function StepCharacters({ projectId, onNext }: any) {
 }
 
 function StepOutline({ projectId, project, onComplete }: any) {
-  const [volumes, setVolumes] = useState<any[]>([]);
-  const [chapterCount, setChapterCount] = useState(0);
-  const [storyOverview, setStoryOverview] = useState('');
+  const [masterOutline, setMasterOutline] = useState<string>(project?.master_outline || '');
+  const [volumePlan, setVolumePlan] = useState<any[]>(Array.isArray(project?.pending_volume_plan) ? project.pending_volume_plan : []);
   const { status, elapsed, startPolling } = useTaskPolling();
+  const sample = useTaskPolling();
   const startedRef = useRef(false);
+  const [sampleModalOpen, setSampleModalOpen] = useState(false);
+  const [sampleContent, setSampleContent] = useState<{ content: string; hook: string; word_count: number } | null>(null);
+  const [sampleSceneBrief, setSampleSceneBrief] = useState('');
+  const sampleTaskIdRef = useRef<string | null>(null);
 
   useEffect(() => {
     if (startedRef.current) return;
-    volumeApi.list(projectId).then((vols) => {
-      if (vols.length > 0) {
-        setVolumes(vols);
-        setChapterCount(vols.reduce((s: number, v: any) => s + (v.chapter_count || 0), 0));
-        projectApi.get(projectId).then((p) => {
-          const brief = p.story_brief || '';
-          const idx = brief.indexOf('【全书大纲】');
-          if (idx >= 0) setStoryOverview(brief.slice(idx));
-        });
+    projectApi.get(projectId).then((p) => {
+      if (p.master_outline) {
+        setMasterOutline(p.master_outline);
+        if (Array.isArray(p.pending_volume_plan)) setVolumePlan(p.pending_volume_plan);
         return;
       }
       startedRef.current = true;
@@ -477,57 +476,127 @@ function StepOutline({ projectId, project, onComplete }: any) {
 
   useEffect(() => {
     if (status !== 'completed') return;
-    volumeApi.list(projectId).then((vols) => {
-      setVolumes(vols);
-      setChapterCount(vols.reduce((s: number, v: any) => s + (v.chapter_count || 0), 0));
-    });
     projectApi.get(projectId).then((p) => {
-      const brief = p.story_brief || '';
-      const idx = brief.indexOf('【全书大纲】');
-      if (idx >= 0) setStoryOverview(brief.slice(idx));
+      setMasterOutline(p.master_outline || '');
+      if (Array.isArray(p.pending_volume_plan)) setVolumePlan(p.pending_volume_plan);
     });
   }, [status, projectId]);
 
+  useEffect(() => {
+    if (sample.status !== 'completed' || !sampleTaskIdRef.current) return;
+    api.get(`/projects/${projectId}/wizard/task/${sampleTaskIdRef.current}`).then((res) => {
+      const r = res.data?.result || {};
+      setSampleContent({ content: r.content || '', hook: r.hook || '', word_count: r.word_count || 0 });
+    });
+  }, [sample.status, projectId]);
+
+  const regenerate = () => {
+    setMasterOutline('');
+    startedRef.current = true;
+    api.post(`/projects/${projectId}/wizard/generate-outline`).then((res) => {
+      startPolling(res.data.task_id, projectId);
+    });
+  };
+
+  const generateSample = () => {
+    setSampleContent(null);
+    setSampleModalOpen(true);
+    api.post(`/projects/${projectId}/wizard/preview-sample-chapter`, null, {
+      params: sampleSceneBrief.trim() ? { scene_brief: sampleSceneBrief.trim() } : undefined,
+    }).then((res) => {
+      sampleTaskIdRef.current = res.data.task_id;
+      sample.startPolling(res.data.task_id, projectId);
+    });
+  };
+
   if (status === 'running') {
-    return <GeneratingCard title="AI 正在规划全书结构" description="AI 正在自主决定卷数，生成全书大纲和每卷大纲…" elapsed={elapsed} />;
+    return <GeneratingCard title="AI 正在生成超长大纲" description="正在规划全书故事主线、关键事件和情绪弧线，约需 1-2 分钟…" elapsed={elapsed} />;
   }
 
-  if (volumes.length === 0) {
+  if (!masterOutline) {
     return <GeneratingCard title="正在准备生成大纲…" elapsed={0} />;
   }
 
+  const outlineLength = masterOutline.length;
+
   return (
+    <>
     <Card style={{ borderRadius: 'var(--radius-lg)' }}
-      title={`📋 全书结构：${volumes.length} 卷，${chapterCount} 章（AI 自主规划）`}>
-      {storyOverview && (
-        <Card size="small" style={{ borderRadius: 'var(--radius-md)', marginBottom: 16, background: 'var(--bg)' }}>
-          <Paragraph style={{ fontSize: 14, whiteSpace: 'pre-wrap', margin: 0 }}>{storyOverview}</Paragraph>
+      title={`📋 全书超长大纲 · 约 ${outlineLength} 字`}>
+      <Alert type="info" showIcon style={{ marginBottom: 16 }}
+        message="这是宏观超长大纲，不分卷叙述"
+        description="本页只展示全书弧度（主角变化、主题、对抗压力、关系演变、伏笔网、情绪曲线）+ 下方分卷骨架。分卷的详细内容会在工作台「拆分卷轴」时由 AI 逐卷扩写出来。"
+      />
+      <Card size="small" style={{ borderRadius: 'var(--radius-md)', background: 'var(--bg)', maxHeight: 520, overflowY: 'auto' }}>
+        <Paragraph style={{ fontSize: 14, whiteSpace: 'pre-wrap', margin: 0 }}>{masterOutline}</Paragraph>
+      </Card>
+      {volumePlan.length > 0 && (
+        <Card size="small" style={{ marginTop: 16, borderRadius: 'var(--radius-md)' }}
+          title={`📚 分卷骨架预览 · ${volumePlan.length} 卷（拆卷后由 AI 逐卷展开 ≥1000 字本卷大纲）`}>
+          {volumePlan.map((v: any, i: number) => (
+            <div key={i} style={{ marginBottom: 12, padding: 12, background: 'var(--bg)', borderRadius: 6 }}>
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', marginBottom: 6 }}>
+                <Text strong>卷{v.volume_number || i + 1} · {v.title || '未命名'}</Text>
+                {v.tone_arc && <Tag color="geekblue">{v.tone_arc}</Tag>}
+                {v.primary_emotion && <Tag color="purple">{v.primary_emotion}</Tag>}
+                {v.buffer_required && <Tag color="green">缓冲卷</Tag>}
+                {v.chapter_count && <Tag>{v.chapter_count}章</Tag>}
+              </div>
+              {v.narrative_mission && <Paragraph style={{ fontSize: 13, marginBottom: 4 }}><Text type="secondary">叙事使命：</Text>{v.narrative_mission}</Paragraph>}
+              {v.summary && <Paragraph style={{ fontSize: 13, marginBottom: 4 }}>{v.summary}</Paragraph>}
+              {v.volume_cliffhanger && <Paragraph type="secondary" style={{ fontSize: 12, margin: 0 }}>卷末钩子：{v.volume_cliffhanger}</Paragraph>}
+            </div>
+          ))}
         </Card>
       )}
-      {volumes.map((v) => (
-        <Card key={v.id} size="small" style={{ marginBottom: 12, borderRadius: 'var(--radius-md)' }}
-          title={`📚 卷${v.volume_number} · ${v.title} — ${v.chapter_count}章 · ${(v.target_words / 10000).toFixed(1)}万字`}>
-          <Descriptions size="small" column={2}>
-            <Descriptions.Item label="主题">{v.theme || '—'}</Descriptions.Item>
-            <Descriptions.Item label="情绪弧线">{v.emotional_arc_description || '—'}</Descriptions.Item>
-          </Descriptions>
-          {v.outline && (
-            <div style={{ marginTop: 12 }}>
-              <Paragraph strong style={{ fontSize: 13, marginBottom: 4 }}>📝 本卷大纲：</Paragraph>
-              <Paragraph style={{ fontSize: 13, whiteSpace: 'pre-wrap', color: 'var(--text-secondary)', background: 'var(--bg)', padding: 12, borderRadius: 8 }}>
-                {v.outline}
-              </Paragraph>
-            </div>
-          )}
-          <Paragraph type="secondary" style={{ fontSize: 12, marginTop: 8 }}>
-            第{v.chapter_range_start}章 ~ 第{v.chapter_range_end}章 · 每章{v.default_chapter_words}字
-          </Paragraph>
-        </Card>
-      ))}
-      <div style={{ display: 'flex', gap: 12, marginTop: 24 }}>
-        <Button type="primary" size="large" onClick={onComplete} icon={<CheckOutlined />}>确认大纲，开始写作！</Button>
-        <Button size="large" onClick={() => { setVolumes([]); setStoryOverview(''); startedRef.current = true; api.post(`/projects/${projectId}/wizard/generate-outline`).then((res) => startPolling(res.data.task_id, projectId)); }} icon={<ThunderboltOutlined />}>重新生成</Button>
+      <div style={{ display: 'flex', gap: 12, marginTop: 24, flexWrap: 'wrap' }}>
+        <Button type="primary" size="large" onClick={onComplete} icon={<CheckOutlined />}>确认大纲，进入工作台</Button>
+        <Button size="large" onClick={generateSample} icon={<EditOutlined />}>生成首章样章预览（不入库）</Button>
+        <Button size="large" onClick={regenerate} icon={<ThunderboltOutlined />}>重新生成</Button>
       </div>
     </Card>
+    <Modal
+      open={sampleModalOpen}
+      title="📝 首章样章预览（不入库）"
+      width={840}
+      onCancel={() => setSampleModalOpen(false)}
+      footer={[
+        <Button key="close" onClick={() => setSampleModalOpen(false)}>关闭</Button>,
+        <Button key="retry" icon={<ReloadOutlined />} loading={sample.status === 'running'} onClick={generateSample}>重新生成</Button>,
+      ]}
+    >
+      <Alert type="warning" showIcon style={{ marginBottom: 12 }}
+        message="样章用于校验文笔和风格，不会保存为正式章节"
+        description="如果文笔/语感对不上，回去重新生成超长大纲或改世界观/角色后再来。满意才进入工作台。"
+      />
+      <div style={{ marginBottom: 12 }}>
+        <Input
+          placeholder="（可选）指定开场场景，比如'雨夜的旧书摊'，留空则按大纲开篇推进"
+          value={sampleSceneBrief}
+          onChange={(e) => setSampleSceneBrief(e.target.value)}
+          disabled={sample.status === 'running'}
+        />
+      </div>
+      {sample.status === 'running' && (
+        <div style={{ textAlign: 'center', padding: 24 }}>
+          <Spin /> <span style={{ marginLeft: 8 }}>AI 正在生成约 2500 字样章…（{sample.elapsed} 秒）</span>
+        </div>
+      )}
+      {sample.status === 'failed' && (
+        <Alert type="error" showIcon message={sample.error || '样章生成失败'} />
+      )}
+      {sampleContent && (
+        <Card size="small" style={{ background: 'var(--bg)', maxHeight: 480, overflowY: 'auto' }}>
+          <Paragraph style={{ whiteSpace: 'pre-wrap', margin: 0, fontSize: 14 }}>{sampleContent.content}</Paragraph>
+          {sampleContent.hook && (
+            <div style={{ marginTop: 12, padding: 12, background: 'var(--card-bg, #fff7e6)', borderRadius: 6 }}>
+              <Text strong>章末钩子：</Text>{sampleContent.hook}
+            </div>
+          )}
+          <Paragraph type="secondary" style={{ fontSize: 12, marginTop: 8, marginBottom: 0 }}>共 {sampleContent.word_count} 字</Paragraph>
+        </Card>
+      )}
+    </Modal>
+    </>
   );
 }

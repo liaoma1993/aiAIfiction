@@ -39,7 +39,9 @@ const factionTypeColor = (t: string) => {
 };
 const TASK_LABELS: Record<string, string> = {
   suggest_stories: '构思故事方案', generate_world: '生成世界观', generate_characters: '生成角色势力',
-  generate_outline: '生成全书大纲', expand_vol: '展开卷', expand_volume_arcs: '展开卷弧线',
+  generate_outline: '生成全书大纲', split_volumes: '拆分卷轴', preview_sample_chapter: '样章预览',
+  extract_style_fingerprint: '提取语言指纹',
+  expand_vol: '展开卷', expand_volume_arcs: '展开卷弧线',
   expand_arc_chapters: '展开弧线章节', write_chapter: '写作章节', audit_chapter: '审计章节',
   review_arc: '评审弧线', review_volume: '评审卷轴合理性', review_arc_structure: '弧线结构评审',
   review_chapter_blueprints: '章节蓝图评审', review_project_structure: '项目结构评审',
@@ -47,6 +49,8 @@ const TASK_LABELS: Record<string, string> = {
   revise_chapter: '修订章节', generate_world_draft: '世界观草稿', generate_characters_draft: '角色草稿',
   repair_from_review: '按评审修复', split_chapter: '智能拆分章节', adjust_outline: 'AI调整大纲',
   adjust_outline_chat: '卷轴调整对话', revise_volume_arc: '调整弧线',
+  project_plan_chat: '项目策划对话', generate_outline_draft: '大纲草稿', generate_story_bible: '生成故事 Bible',
+  diagnose_chapter: '章前诊断',
 };
 const READABILITY_OPTIONS = [
   { value: 'easy', label: '通俗易懂' },
@@ -1618,6 +1622,17 @@ export default function WorkbenchPage() {
   const [rightPanelOpen, setRightPanelOpen] = useState(true);
   const [expandedVolume, setExpandedVolume] = useState<string | null>(null);
   const [expandedArc, setExpandedArc] = useState<number | null>(null);
+  const [splittingVolumes, setSplittingVolumes] = useState(false);
+  const [splitOutlineExpanded, setSplitOutlineExpanded] = useState(false);
+  const [regenOutlineOpen, setRegenOutlineOpen] = useState(false);
+  const [regenOutlineConfirm, setRegenOutlineConfirm] = useState('');
+  const [regenOutlineLoading, setRegenOutlineLoading] = useState(false);
+  const [masterOutlinePreviewOpen, setMasterOutlinePreviewOpen] = useState(false);
+  const [outlineChatMessages, setOutlineChatMessages] = useState<Array<{ role: 'user' | 'assistant'; content: string; payload?: { revised_outline?: string | null; revised_volume_plan?: any[] | null; change_summary?: string[]; next_questions?: string[] } }>>([]);
+  const [outlineChatInput, setOutlineChatInput] = useState('');
+  const [outlineChatSending, setOutlineChatSending] = useState(false);
+  const [outlineChatPreviewTab, setOutlineChatPreviewTab] = useState<'current' | 'latest'>('latest');
+  const [applyingMessageIdx, setApplyingMessageIdx] = useState<number | null>(null);
   const [expandModalOpen, setExpandModalOpen] = useState(false);
   const [expandVol, setExpandVol] = useState<any>(null);
   const [expandMode, setExpandMode] = useState<'arc' | 'chapters'>('arc');
@@ -1829,6 +1844,110 @@ export default function WorkbenchPage() {
     }
     throw new Error('超时');
   };
+
+  const splitVolumes = async () => {
+    if (!projectId) return;
+    setSplittingVolumes(true);
+    message.loading({ content: 'AI 正在拆分卷轴并逐卷扩写大纲…', key: 'split-volumes', duration: 0 });
+    try {
+      const res = await api.post(`/projects/${projectId}/wizard/split-volumes`);
+      await pollTask(res.data.task_id, 600, 'split-volumes');
+      loadAll();
+    } catch (e: any) {
+      message.error({ content: e.message || '拆分卷轴失败', key: 'split-volumes' });
+    } finally {
+      setSplittingVolumes(false);
+    }
+  };
+
+  const writtenChapterCount = chapters.filter((c: any) => (c.content || '').trim().length > 0).length;
+
+  const openOutlineChatModal = () => {
+    setOutlineChatMessages([]);
+    setOutlineChatInput('');
+    setOutlineChatSending(false);
+    setOutlineChatPreviewTab('latest');
+    setApplyingMessageIdx(null);
+    setRegenOutlineConfirm('');
+    setRegenOutlineOpen(true);
+  };
+
+  const closeOutlineChatModal = () => {
+    setRegenOutlineOpen(false);
+    setOutlineChatMessages([]);
+    setOutlineChatInput('');
+    setOutlineChatSending(false);
+    setApplyingMessageIdx(null);
+    setRegenOutlineConfirm('');
+  };
+
+  const sendOutlineFeedback = async () => {
+    if (!projectId) return;
+    const text = outlineChatInput.trim();
+    if (!text) {
+      message.warning('请输入你的修订反馈');
+      return;
+    }
+    const prior = outlineChatMessages.map(m => ({ role: m.role, content: m.content }));
+    const nextMessages = [...outlineChatMessages, { role: 'user' as const, content: text }];
+    setOutlineChatMessages(nextMessages);
+    setOutlineChatInput('');
+    setOutlineChatSending(true);
+    try {
+      const res = await api.post(`/projects/${projectId}/wizard/revise-outline-chat`, {
+        messages: prior,
+        latest_input: text,
+      });
+      const result: any = await pollTask(res.data.task_id, 300, 'revise-outline');
+      const assistantReply = (result?.assistant_reply || 'AI 没有返回内容').trim();
+      const payload = {
+        revised_outline: result?.revised_outline || null,
+        revised_volume_plan: Array.isArray(result?.revised_volume_plan) ? result.revised_volume_plan : null,
+        change_summary: Array.isArray(result?.change_summary) ? result.change_summary : [],
+        next_questions: Array.isArray(result?.next_questions) ? result.next_questions : [],
+      };
+      setOutlineChatMessages(prev => [...prev, { role: 'assistant', content: assistantReply, payload }]);
+      if (payload.revised_outline) setOutlineChatPreviewTab('latest');
+    } catch (e: any) {
+      setOutlineChatMessages(prev => [...prev, { role: 'assistant', content: `（AI 调用失败：${e.message || '未知错误'}）` }]);
+    } finally {
+      setOutlineChatSending(false);
+    }
+  };
+
+  const applyOutlineDraft = async (msgIdx: number) => {
+    if (!projectId) return;
+    const target = outlineChatMessages[msgIdx];
+    if (!target?.payload?.revised_outline) {
+      message.warning('该轮没有可应用的修订草案');
+      return;
+    }
+    const needsForce = volumes.length > 0 || writtenChapterCount > 0;
+    if (needsForce && regenOutlineConfirm.trim() !== '确认覆盖') {
+      message.warning('请在弹窗底部输入「确认覆盖」再点应用');
+      setApplyingMessageIdx(msgIdx);
+      return;
+    }
+    setApplyingMessageIdx(msgIdx);
+    setRegenOutlineLoading(true);
+    try {
+      await api.post(`/projects/${projectId}/wizard/apply-outline-revision`, {
+        revised_outline: target.payload.revised_outline,
+        revised_volume_plan: target.payload.revised_volume_plan || [],
+        force: needsForce,
+      });
+      message.success('已应用本轮修订草案');
+      closeOutlineChatModal();
+      loadAll();
+    } catch (e: any) {
+      message.error(e?.response?.data?.detail || e.message || '应用失败');
+    } finally {
+      setRegenOutlineLoading(false);
+      setApplyingMessageIdx(null);
+    }
+  };
+
+  const latestDraftMessage = [...outlineChatMessages].reverse().find(m => m.role === 'assistant' && m.payload?.revised_outline);
 
   const openTaskDetail = (task: any) => {
     setTaskDetail(task);
@@ -2546,7 +2665,10 @@ export default function WorkbenchPage() {
           <Button size="small" icon={<EditOutlined />} onClick={openProjectInfo}>项目信息</Button>
           <Link to={`/projects/${projectId}/characters`}><Button size="small" icon={<TeamOutlined />}>角色势力</Button></Link>
           <Link to={`/projects/${projectId}/world-setting`}><Button size="small" icon={<EnvironmentOutlined />}>世界观</Button></Link>
-          <Link to={`/projects/${projectId}/outline`}><Button size="small" icon={<BookOutlined />}>大纲</Button></Link>
+          {project?.master_outline && (
+            <Button size="small" icon={<FileSearchOutlined />} onClick={() => setMasterOutlinePreviewOpen(true)}>全书大纲</Button>
+          )}
+          <Link to={`/projects/${projectId}/outline`}><Button size="small" icon={<BookOutlined />}>分卷大纲</Button></Link>
           <Link to={`/projects/${projectId}/narrative-graph`}><Button size="small" icon={<BranchesOutlined />}>故事线</Button></Link>
           <Link to={`/projects/${projectId}/memory-center`}><Button size="small" icon={<DatabaseOutlined />}>记忆中枢</Button></Link>
           <Link to={`/projects/${projectId}/story-graph`}><Button size="small" icon={<NodeIndexOutlined />}>叙事图谱</Button></Link>
@@ -2562,10 +2684,63 @@ export default function WorkbenchPage() {
         {!isFullscreen && (
           <aside className="workbench-panel workbench-left">
             <div className="panel-head">
-              <div className="panel-title">目录</div>
+              <div className="panel-title">
+                目录
+                {project?.master_outline && (
+                  <Button size="small" type="text" icon={<ReloadOutlined />} style={{ float: 'right' }}
+                    title="对话式修订超长大纲（多轮聊天，应用前可预览）"
+                    onClick={openOutlineChatModal}>
+                    对话修订大纲
+                  </Button>
+                )}
+              </div>
               <div className="panel-desc">按卷、弧线和章节组织正文</div>
             </div>
             <div className="outline-scroll">
+              {volumes.length === 0 && project?.master_outline ? (
+                <section className="volume-card active" style={{ padding: 16 }}>
+                  <Title level={5} style={{ marginTop: 0 }}>📋 全书超长大纲</Title>
+                  <Paragraph type="secondary" style={{ fontSize: 12, marginBottom: 12 }}>
+                    这是全书宏观大纲（不分卷叙述）。下面是 AI 已规划好的分卷骨架。点「拆分卷轴」让 AI 把每卷扩写成 ≥1000 字本卷大纲并落表。
+                  </Paragraph>
+                  <Card size="small" style={{ background: 'var(--bg)', marginBottom: 12, maxHeight: 280, overflowY: 'auto' }}>
+                    <Paragraph style={{ whiteSpace: 'pre-wrap', margin: 0, fontSize: 13 }}>
+                      {splitOutlineExpanded || project.master_outline.length <= 600
+                        ? project.master_outline
+                        : project.master_outline.slice(0, 600) + '…'}
+                    </Paragraph>
+                    {project.master_outline.length > 600 && (
+                      <Button type="link" size="small" style={{ padding: 0, marginTop: 6 }} onClick={() => setSplitOutlineExpanded(!splitOutlineExpanded)}>
+                        {splitOutlineExpanded ? '收起' : '展开全文'}
+                      </Button>
+                    )}
+                  </Card>
+                  {Array.isArray(project.pending_volume_plan) && project.pending_volume_plan.length > 0 && (
+                    <div style={{ marginBottom: 12 }}>
+                      <Text strong style={{ fontSize: 12 }}>📚 分卷骨架（{project.pending_volume_plan.length} 卷）</Text>
+                      <div style={{ marginTop: 6 }}>
+                        {project.pending_volume_plan.map((v: any, i: number) => (
+                          <div key={i} style={{ padding: 8, marginBottom: 6, background: 'var(--bg)', borderRadius: 4, fontSize: 12 }}>
+                            <div>
+                              <Text strong>卷{v.volume_number || i + 1} · {v.title || '未命名'}</Text>
+                              {v.tone_arc && <Tag style={{ marginLeft: 6 }} color="geekblue">{v.tone_arc}</Tag>}
+                              {v.buffer_required && <Tag color="green">缓冲</Tag>}
+                              {v.chapter_count && <Tag>{v.chapter_count}章</Tag>}
+                            </div>
+                            {v.narrative_mission && <div style={{ marginTop: 2, color: 'var(--text-secondary)' }}>{v.narrative_mission}</div>}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  <Button type="primary" block icon={<ThunderboltOutlined />} loading={splittingVolumes} onClick={splitVolumes}>
+                    拆分卷轴
+                  </Button>
+                  <Button block style={{ marginTop: 8 }} icon={<ReloadOutlined />} onClick={openOutlineChatModal}>
+                    对话修订超长大纲
+                  </Button>
+                </section>
+              ) : null}
               {volumes.map((v: any) => {
                 const volChs = chapters.filter((c: any) => c.volume_id === v.id);
                 const arcs = v.narrative_arcs || [];
@@ -3843,7 +4018,7 @@ export default function WorkbenchPage() {
                       ) : null}
                     </Space>
                   ) },
-                { title: '时间', dataIndex: 'created_at', width: 96, render: (t: string) => t ? new Date(t).toLocaleString('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '' },
+                { title: '时间', dataIndex: 'created_at', width: 150, render: (t: string) => t ? new Date(t).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }) : '' },
                ]}
                expandable={tasks.some(t => t.error || (isActiveTaskStatus(t.status) && t.progress_label) || t.detail) ? {
                 expandedRowRender: (rec: any) => (
@@ -3981,14 +4156,198 @@ export default function WorkbenchPage() {
         </Space>
       </Modal>
 
+      <Modal
+        title={`📋 全书超长大纲 · 约 ${(project?.master_outline || '').length} 字`}
+        open={masterOutlinePreviewOpen}
+        onCancel={() => setMasterOutlinePreviewOpen(false)}
+        width={840}
+        footer={[
+          <Button key="close" onClick={() => setMasterOutlinePreviewOpen(false)}>关闭</Button>,
+          <Button key="regen" danger icon={<ReloadOutlined />} onClick={() => { setMasterOutlinePreviewOpen(false); openOutlineChatModal(); }}>对话修订大纲</Button>,
+        ]}
+      >
+        <Alert type="info" showIcon style={{ marginBottom: 12 }}
+          message="这是全书宏观大纲（不分卷叙述）"
+          description="顶部展示项目级超长大纲；下方是 AI 已规划好的分卷骨架（拆卷时会按这些骨架逐卷扩写）。"
+        />
+        <Card size="small" style={{ background: 'var(--bg)', maxHeight: 360, overflowY: 'auto', marginBottom: 16 }}>
+          <Paragraph style={{ whiteSpace: 'pre-wrap', margin: 0, fontSize: 14 }}>{project?.master_outline || ''}</Paragraph>
+        </Card>
+        {Array.isArray(project?.pending_volume_plan) && project.pending_volume_plan.length > 0 && (
+          <div>
+            <Text strong style={{ fontSize: 13 }}>📚 分卷骨架（{project.pending_volume_plan.length} 卷）</Text>
+            <div style={{ marginTop: 8, maxHeight: 280, overflowY: 'auto' }}>
+              {project.pending_volume_plan.map((v: any, i: number) => (
+                <div key={i} style={{ padding: 10, marginBottom: 8, background: 'var(--bg)', borderRadius: 6, fontSize: 12 }}>
+                  <div style={{ marginBottom: 4 }}>
+                    <Text strong>卷{v.volume_number || i + 1} · {v.title || '未命名'}</Text>
+                    {v.tone_arc && <Tag style={{ marginLeft: 6 }} color="geekblue">{v.tone_arc}</Tag>}
+                    {v.primary_emotion && <Tag color="purple">{v.primary_emotion}</Tag>}
+                    {v.buffer_required && <Tag color="green">缓冲卷</Tag>}
+                    {v.chapter_count && <Tag>{v.chapter_count}章</Tag>}
+                  </div>
+                  {v.narrative_mission && <div style={{ color: 'var(--text-secondary)', marginBottom: 2 }}>使命：{v.narrative_mission}</div>}
+                  {v.summary && <div style={{ marginBottom: 2 }}>{v.summary}</div>}
+                  {v.volume_cliffhanger && <div style={{ color: 'var(--text-secondary)' }}>卷末钩子：{v.volume_cliffhanger}</div>}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+        {volumes.length > 0 && (
+          <Alert type="warning" showIcon style={{ marginTop: 12 }}
+            message={`项目已经拆出 ${volumes.length} 卷，左侧目录可直接编辑各卷正文。`}
+            description="本预览仅展示创建期的宏观大纲与骨架——拆卷后的每卷大纲在左侧「卷详情」里。"
+          />
+        )}
+      </Modal>
+
+      <Modal
+        title="🗨️ 对话修订超长大纲"
+        open={regenOutlineOpen}
+        onCancel={closeOutlineChatModal}
+        width={1080}
+        footer={null}
+        destroyOnClose
+      >
+        <div style={{ display: 'flex', gap: 16, height: '70vh' }}>
+          <div style={{ flex: '0 0 60%', display: 'flex', flexDirection: 'column', borderRight: '1px solid var(--border, #f0f0f0)', paddingRight: 12 }}>
+            <Alert type="info" showIcon style={{ marginBottom: 8 }}
+              message="跟 AI 聊清楚你想改什么——情绪、入口、主角动机、节奏、加缓冲卷等都可以"
+              description={(volumes.length > 0 || writtenChapterCount > 0)
+                ? `⚠️ 本项目已有 ${volumes.length} 卷、${writtenChapterCount} 章已写正文。点「应用这一版」前需要在底部输入「确认覆盖」。`
+                : '当前还没拆卷/没正文，应用草案时直接落库。'}
+            />
+            <Space wrap size={4} style={{ marginBottom: 8 }}>
+              {['希望更轻松一些，不要这么黑暗压抑', '主角换成日常切入，不要被废/灭门套路', '加一段烟火气缓冲卷', '军饷案太重，挪到第二卷'].map((preset) => (
+                <Button key={preset} size="small" onClick={() => setOutlineChatInput(preset)} disabled={outlineChatSending}>{preset}</Button>
+              ))}
+            </Space>
+            <div style={{ flex: 1, overflowY: 'auto', background: 'var(--bg)', padding: 12, borderRadius: 6, marginBottom: 8 }}>
+              {outlineChatMessages.length === 0 ? (
+                <Empty description="还没有对话——下方输入你的修订反馈" />
+              ) : outlineChatMessages.map((m, i) => (
+                <div key={i} style={{ marginBottom: 12, textAlign: m.role === 'user' ? 'right' : 'left' }}>
+                  <div style={{ display: 'inline-block', maxWidth: '90%', padding: 10, borderRadius: 8, background: m.role === 'user' ? '#e6f4ff' : '#ffffff', border: '1px solid #f0f0f0', textAlign: 'left' }}>
+                    <Text type="secondary" style={{ fontSize: 11 }}>{m.role === 'user' ? '你' : 'AI 编辑'}</Text>
+                    <Paragraph style={{ whiteSpace: 'pre-wrap', margin: '4px 0 0', fontSize: 13 }}>{m.content}</Paragraph>
+                    {m.payload?.change_summary && m.payload.change_summary.length > 0 && (
+                      <div style={{ marginTop: 6 }}>
+                        <Text strong style={{ fontSize: 12 }}>本轮改动：</Text>
+                        <ul style={{ margin: '4px 0 0 20px', padding: 0, fontSize: 12 }}>
+                          {m.payload.change_summary.map((c, ci) => <li key={ci}>{c}</li>)}
+                        </ul>
+                      </div>
+                    )}
+                    {m.payload?.next_questions && m.payload.next_questions.length > 0 && (
+                      <div style={{ marginTop: 6 }}>
+                        <Text type="secondary" style={{ fontSize: 12 }}>可继续聊：</Text>
+                        <Space wrap size={4} style={{ marginTop: 4 }}>
+                          {m.payload.next_questions.map((q, qi) => (
+                            <Tag key={qi} style={{ cursor: 'pointer' }} onClick={() => setOutlineChatInput(q)}>{q}</Tag>
+                          ))}
+                        </Space>
+                      </div>
+                    )}
+                    {m.payload?.revised_outline && (
+                      <div style={{ marginTop: 8, padding: 8, background: '#fffbe6', borderRadius: 4 }}>
+                        <Text strong style={{ fontSize: 12, color: '#ad6800' }}>📋 已生成修订草案（约 {m.payload.revised_outline.length} 字）</Text>
+                        <Button type="primary" size="small" style={{ marginLeft: 8 }} loading={applyingMessageIdx === i && regenOutlineLoading} onClick={() => applyOutlineDraft(i)}>应用这一版</Button>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              ))}
+              {outlineChatSending && (
+                <div style={{ textAlign: 'left', marginTop: 8 }}>
+                  <Spin size="small" /> <Text type="secondary" style={{ fontSize: 12, marginLeft: 8 }}>AI 正在思考修订方案…</Text>
+                </div>
+              )}
+            </div>
+            {(volumes.length > 0 || writtenChapterCount > 0) && latestDraftMessage && (
+              <div style={{ marginBottom: 8 }}>
+                <Text type="danger" style={{ fontSize: 12 }}>有正文存在，应用前请输入「<Text code>确认覆盖</Text>」：</Text>
+                <Input
+                  size="small"
+                  value={regenOutlineConfirm}
+                  onChange={(e) => setRegenOutlineConfirm(e.target.value)}
+                  placeholder="确认覆盖"
+                  disabled={regenOutlineLoading}
+                />
+              </div>
+            )}
+            <div style={{ display: 'flex', gap: 8 }}>
+              <Input.TextArea
+                value={outlineChatInput}
+                onChange={(e) => setOutlineChatInput(e.target.value)}
+                placeholder="比如：希望情绪更柔和一些，第三卷加一段烟火气缓冲"
+                autoSize={{ minRows: 2, maxRows: 4 }}
+                disabled={outlineChatSending}
+                onPressEnter={(e) => { if (!e.shiftKey) { e.preventDefault(); sendOutlineFeedback(); } }}
+              />
+              <Button type="primary" icon={<SendOutlined />} loading={outlineChatSending} onClick={sendOutlineFeedback}>提交反馈</Button>
+            </div>
+          </div>
+
+          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+            <Radio.Group
+              value={outlineChatPreviewTab}
+              onChange={(e) => setOutlineChatPreviewTab(e.target.value)}
+              size="small"
+              style={{ marginBottom: 8 }}
+            >
+              <Radio.Button value="current">当前大纲（已落库）</Radio.Button>
+              <Radio.Button value="latest" disabled={!latestDraftMessage}>最新草案 {latestDraftMessage ? '✨' : ''}</Radio.Button>
+            </Radio.Group>
+            <div style={{ flex: 1, overflowY: 'auto', background: 'var(--bg)', padding: 12, borderRadius: 6, fontSize: 13 }}>
+              {outlineChatPreviewTab === 'current' ? (
+                <>
+                  <Text strong style={{ fontSize: 12 }}>📋 当前 master_outline · 约 {(project?.master_outline || '').length} 字</Text>
+                  <Paragraph style={{ whiteSpace: 'pre-wrap', marginTop: 6 }}>{project?.master_outline || '（当前还没有大纲）'}</Paragraph>
+                  {Array.isArray(project?.pending_volume_plan) && project.pending_volume_plan.length > 0 && (
+                    <>
+                      <Text strong style={{ fontSize: 12 }}>📚 分卷骨架（{project.pending_volume_plan.length} 卷）</Text>
+                      {project.pending_volume_plan.map((v: any, i: number) => (
+                        <div key={i} style={{ marginTop: 6, padding: 6, background: '#fff', borderRadius: 4, fontSize: 12 }}>
+                          <Text strong>卷{v.volume_number || i + 1} · {v.title || '未命名'}</Text>
+                          {v.tone_arc && <Tag style={{ marginLeft: 4 }} color="geekblue">{v.tone_arc}</Tag>}
+                          {v.summary && <div style={{ color: 'var(--text-secondary)' }}>{v.summary}</div>}
+                        </div>
+                      ))}
+                    </>
+                  )}
+                </>
+              ) : latestDraftMessage ? (
+                <>
+                  <Text strong style={{ fontSize: 12 }}>✨ 最新草案 · 约 {(latestDraftMessage.payload?.revised_outline || '').length} 字</Text>
+                  <Paragraph style={{ whiteSpace: 'pre-wrap', marginTop: 6 }}>{latestDraftMessage.payload?.revised_outline}</Paragraph>
+                  {Array.isArray(latestDraftMessage.payload?.revised_volume_plan) && latestDraftMessage.payload.revised_volume_plan!.length > 0 && (
+                    <>
+                      <Text strong style={{ fontSize: 12 }}>📚 草案分卷骨架（{latestDraftMessage.payload.revised_volume_plan!.length} 卷）</Text>
+                      {latestDraftMessage.payload.revised_volume_plan!.map((v: any, i: number) => (
+                        <div key={i} style={{ marginTop: 6, padding: 6, background: '#fff', borderRadius: 4, fontSize: 12 }}>
+                          <Text strong>卷{v.volume_number || i + 1} · {v.title || '未命名'}</Text>
+                          {v.tone_arc && <Tag style={{ marginLeft: 4 }} color="geekblue">{v.tone_arc}</Tag>}
+                          {v.summary && <div style={{ color: 'var(--text-secondary)' }}>{v.summary}</div>}
+                        </div>
+                      ))}
+                    </>
+                  )}
+                </>
+              ) : <Empty description="还没有草案，先在左侧提交反馈" />}
+            </div>
+          </div>
+        </div>
+      </Modal>
+
       <Modal title="任务详情" open={taskDetailOpen} onCancel={() => setTaskDetailOpen(false)} footer={null} width={900}>
         {taskDetail && (
           <div style={{ maxHeight: '70vh', overflow: 'auto' }}>
             <Descriptions size="small" column={2} bordered style={{ marginBottom: 16 }}>
               <Descriptions.Item label="类型">{TASK_LABELS[taskDetail.task_type] || taskDetail.task_type}</Descriptions.Item>
               <Descriptions.Item label="状态">{taskDetail.status}</Descriptions.Item>
-              <Descriptions.Item label="创建时间">{taskDetail.created_at ? new Date(taskDetail.created_at).toLocaleString('zh-CN') : '-'}</Descriptions.Item>
-              <Descriptions.Item label="更新时间">{taskDetail.updated_at ? new Date(taskDetail.updated_at).toLocaleString('zh-CN') : '-'}</Descriptions.Item>
+              <Descriptions.Item label="创建时间">{taskDetail.created_at ? new Date(taskDetail.created_at).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false }) : '-'}</Descriptions.Item>
+              <Descriptions.Item label="更新时间">{taskDetail.updated_at ? new Date(taskDetail.updated_at).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false }) : '-'}</Descriptions.Item>
             </Descriptions>
             {isActiveTaskStatus(taskDetail.status) && taskDetail.progress_label && <Paragraph>当前：{taskDetail.progress_label}</Paragraph>}
             {taskDetail.error && <Paragraph type="danger" style={{ whiteSpace: 'pre-wrap' }}>{taskDetail.error}</Paragraph>}

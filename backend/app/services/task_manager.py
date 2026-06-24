@@ -384,7 +384,15 @@ async def list_tasks_persisted(project_id: str | None = None) -> list[dict]:
             detail["interrupted_reason"] = "process_restart"
             task["detail"] = detail
     all_tasks = _dedupe_task_list(sorted(by_id.values(), key=_task_sort_key, reverse=True))
-    # 只展示最近 30 个，但正在运行的任务必须保留
-    running = [t for t in all_tasks if t.get("status") in {"running", "pending", "cancelling"}]
-    finished = [t for t in all_tasks if t.get("status") not in {"running", "pending", "cancelling"}]
-    return (running + finished[:max(0, 30 - len(running))]) if len(running) < 30 else running
+    # 纯按时间倒序遍历；所有 running/pending/cancelling 全保留，finished 取最近 50 个
+    running_states = {"running", "pending", "cancelling"}
+    result: list[dict] = []
+    finished_kept = 0
+    finished_limit = 50
+    for task in all_tasks:
+        if task.get("status") in running_states:
+            result.append(task)
+        elif finished_kept < finished_limit:
+            result.append(task)
+            finished_kept += 1
+    return result
