@@ -46,3 +46,6 @@ playwright-report/
 debug_output/
 .arkpilot-output/
 aif-app/
+
+# Runtime PIDs
+.pids/
